@@ -44,6 +44,13 @@ jobs:
           find $R -name 'splash*.png' -delete
           cp splash-logo.png $R/drawable-nodpi/splash_logo.png
           echo '<layer-list xmlns:android="http://schemas.android.com/apk/res/android"><item android:drawable="@color/fs_bg"/><item><bitmap android:src="@drawable/splash_logo" android:gravity="center"/></item></layer-list>' > $R/drawable/splash.xml
+      - name: Signing key
+        env:
+          KS: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          mkdir -p ~/.android
+          echo "$KS" | base64 -d > ~/.android/debug.keystore
+          test -s ~/.android/debug.keystore
       - name: Build APK
         run: cd android && chmod +x gradlew && ./gradlew assembleDebug
       - uses: actions/upload-artifact@v4

@@ -35,7 +35,7 @@ nav button.on{color:var(--ac);font-weight:700}
 <nav id="nav"></nav>
 <script>
 const KEY="resell_helper_v1";
-const DEF={rules:{maxPrice:50,minProfit:15,minRoi:30,budget:200,maxStock:150,minSales:5,feePct:12.8,feeFixed:0.30,staleDays:30},gate:[false,false,false,false,false],items:[],base:[],set:{url:"",key:""}};
+const DEF={rules:{maxPrice:50,minProfit:15,minRoi:30,budget:200,maxStock:150,minSales:5,feePct:12.8,feeFixed:0.30,staleDays:30,minPct:35},gate:[false,false,false,false,false],items:[],base:[],set:{url:"",key:""}};
 const STAGES=["Identified","Considered","Purchased","Received","Tested","Listed","Sold","Dispatched","Completed","Returned"];
 const PRE=["Identified","Considered"],HOLD=["Purchased","Received","Tested","Listed"],DONE=["Sold","Dispatched","Completed"];
 const GATE=["I can get UK eBay sold data through an authorised API or permitted export","It has enough history, dates and comparable-product detail","I can legally keep and analyse the data","The cost is sustainable for a small operation","The data quality is good enough to make buying decisions"];
@@ -194,7 +194,7 @@ function vDash(){
    <div class="mu" style="margin-top:6px">${m.err==null?"Sell some items first. Actual profit will be compared with what you expected.":`Across ${m.nErr} sale(s), actual profit averaged ${gbp(m.err)} ${m.err>=0?"above":"below"} the estimate. ${m.nErr<20?"That is too few sales to treat as a reliable pattern.":""}`}</div></div>`;
 }
 
-const FIELDS=[["maxPrice","Max price per item £"],["minProfit","Min expected profit £"],["minRoi","Min ROI %"],["budget","Total buying budget £"],["maxStock","Max money in unsold stock £"],["minSales","Min comparable sales"],["feePct","eBay fee % of sale"],["feeFixed","eBay fixed fee per sale £"],["staleDays","Days before stock counts as slow"]];
+const FIELDS=[["maxPrice","Max price per item £"],["minProfit","Min expected profit £"],["minRoi","Min ROI %"],["budget","Total buying budget £"],["maxStock","Max money in unsold stock £"],["minSales","Min comparable sales"],["feePct","eBay fee % of sale"],["feeFixed","eBay fixed fee per sale £"],["staleDays","Days before stock counts as slow"],["minPct","Scan: ignore listings cheaper than this % of the sold median (filters out cables, covers, parts)"]];
 function vRules(){
   return`<div class="card"><b>Your rules</b>
   ${FIELDS.map(f=>`<label>${f[1]}</label><input type="number" step="0.01" inputmode="decimal" id="r_${f[0]}" value="${S.rules[f[0]]}">`).join("")}
@@ -242,7 +242,7 @@ async function runScan(){
       const ex=(b.x||"").toLowerCase().split(/[,\s]+/).filter(Boolean);
       for(const l of d.items||[]){
         if(ex.some(w=>l.title.toLowerCase().includes(w)))continue;
-        const buy=l.price+(l.ship||0);if(buy>r.maxPrice)continue;
+        const buy=l.price+(l.ship||0);if(buy>r.maxPrice||buy<b.med*r.minPct/100)continue;
         const p=b.med-fee(b.med)-b.post-b.pack-buy,pc=b.cons-fee(b.cons)-b.post-b.pack-buy;
         const roi=(buy+b.pack)>0?p/(buy+b.pack)*100:0;
         if(p<r.minProfit||roi<r.minRoi)continue;

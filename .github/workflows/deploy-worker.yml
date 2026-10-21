@@ -3,14 +3,25 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [worker.js]
+    paths: [worker.js, .github/workflows/deploy-worker.yml]
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: cloudflare/wrangler-action@v3
+      - uses: actions/setup-node@v4
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy worker.js --name flipscout-search --compatibility-date 2024-09-23
+          node-version: 20
+      - name: Deploy worker with cloud backup storage
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npm i -g wrangler@3
+          findid() { wrangler kv namespace list | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s.slice(s.search(/^\[/m)));const n=a.find(x=>x.title.endsWith("flipscout-backup"));console.log(n?n.id:"")})'; }
+          ID=$(findid)
+          if [ -z "$ID" ]; then wrangler kv namespace create flipscout-backup; ID=$(findid); fi
+          test -n "$ID"
+          printf 'name = "flipscout-search"\nmain = "worker.js"\ncompatibility_date = "2024-09-23"\nkeep_vars = true\n\n[[kv_namespaces]]\nbinding = "BACKUP"\nid = "%s"\n' "$ID" > wrangler.toml
+          cat wrangler.toml
+          wrangler deploy

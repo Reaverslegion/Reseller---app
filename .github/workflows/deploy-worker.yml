@@ -1,47 +1,77 @@
-name: Deploy Scan worker
+name: Build FlipScout APK
 on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [worker.js, .github/workflows/deploy-worker.yml]
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Deploy worker with backup, hunting database and 5-minute schedule
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Prepare app
         run: |
-          npm i -g wrangler@3
-          pick() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const i=s.search(/^\[/m);const a=i<0?[]:JSON.parse(s.slice(i));const n=a.find(x=>(x.title||x.name||"").endsWith(process.argv[1]));console.log(n?(n.id||n.uuid):"")})' "$1"; }
-          KV=$(wrangler kv namespace list | pick flipscout-backup)
-          if [ -z "$KV" ]; then wrangler kv namespace create flipscout-backup; KV=$(wrangler kv namespace list | pick flipscout-backup); fi
-          test -n "$KV"
-          DB=$(wrangler d1 list --json | pick flipscout-db)
-          if [ -z "$DB" ]; then wrangler d1 create flipscout-db; DB=$(wrangler d1 list --json | pick flipscout-db); fi
-          test -n "$DB"
-          cat > wrangler.toml <<TOML
-          name = "flipscout-search"
-          main = "worker.js"
-          compatibility_date = "2024-09-23"
-          keep_vars = true
-
-          [[kv_namespaces]]
-          binding = "BACKUP"
-          id = "$KV"
-
-          [[d1_databases]]
-          binding = "DB"
-          database_name = "flipscout-db"
-          database_id = "$DB"
-
-          [triggers]
-          crons = ["*/5 * * * *"]
-          TOML
-          cat wrangler.toml
-          wrangler deploy
+          mkdir www
+          cp index.html www/index.html
+          npm init -y
+          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6 @capacitor/app@6 @capacitor/push-notifications@6
+          npx cap init "FlipScout" com.reaverslegion.flipscout --web-dir www
+          npx cap add android
+          npx cap sync android
+      - name: Icon and splash
+        continue-on-error: true
+        run: |
+          sudo apt-get install -y imagemagick
+          R=android/app/src/main/res
+          mkdir -p $R/mipmap-anydpi-v26 $R/values $R/drawable $R/drawable-nodpi
+          for d in "mdpi 48 108" "hdpi 72 162" "xhdpi 96 216" "xxhdpi 144 324" "xxxhdpi 192 432"; do
+            set -- $d
+            mkdir -p $R/mipmap-$1
+            convert icon-1024.png -resize ${2}x${2} $R/mipmap-$1/ic_launcher.png
+            cp $R/mipmap-$1/ic_launcher.png $R/mipmap-$1/ic_launcher_round.png
+            convert icon-foreground.png -resize ${3}x${3} $R/mipmap-$1/fs_foreground.png
+          done
+          echo '<resources><color name="fs_bg">#0D172C</color></resources>' > $R/values/fs_colors.xml
+          for n in ic_launcher ic_launcher_round; do
+            echo '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@color/fs_bg"/><foreground android:drawable="@mipmap/fs_foreground"/></adaptive-icon>' > $R/mipmap-anydpi-v26/$n.xml
+          done
+          find $R -name 'splash*.png' -delete
+          cp splash-logo.png $R/drawable-nodpi/splash_logo.png
+          echo '<layer-list xmlns:android="http://schemas.android.com/apk/res/android"><item android:drawable="@color/fs_bg"/><item><bitmap android:src="@drawable/splash_logo" android:gravity="center"/></item></layer-list>' > $R/drawable/splash.xml
+      - name: Notifications
+        run: |
+          R=android/app/src/main/res
+          if [ -f google-services.json ]; then cp google-services.json android/app/google-services.json; echo "Firebase config added"; else echo "No google-services.json yet: alerts will be off"; fi
+          mkdir -p $R/drawable-xxxhdpi
+          cp notif-icon.png $R/drawable-xxxhdpi/ic_stat_flipscout.png
+          for d in "mdpi 24" "hdpi 36" "xhdpi 48" "xxhdpi 72"; do
+            set -- $d
+            mkdir -p $R/drawable-$1
+            convert notif-icon.png -resize ${2}x${2} $R/drawable-$1/ic_stat_flipscout.png || true
+          done
+          mkdir -p $R/values
+          echo '<resources><color name="fs_accent">#22c55e</color></resources>' > $R/values/fs_notify.xml
+          sed -i 's#</application>#<meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_flipscout"/><meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/fs_accent"/><meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="deals"/></application>#' android/app/src/main/AndroidManifest.xml
+          grep -c ic_stat_flipscout android/app/src/main/AndroidManifest.xml
+      - name: Signing key
+        env:
+          KS: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          echo "$KS" | base64 -d > android/app/flipscout.keystore
+          test -s android/app/flipscout.keystore
+          keytool -list -v -keystore android/app/flipscout.keystore -storepass android | grep SHA256
+          cat >> android/app/build.gradle <<'EOF'
+          android { signingConfigs { debug { storeFile file('flipscout.keystore'); storePassword 'android'; keyAlias 'androiddebugkey'; keyPassword 'android' } } }
+          EOF
+      - name: Build APK
+        run: cd android && chmod +x gradlew && ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flipscout-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk

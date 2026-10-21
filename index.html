@@ -240,7 +240,10 @@ async function runScan(){
       if(!res.ok)throw new Error("error "+res.status);
       const d=await res.json();if(d.error)throw new Error(d.error);
       const ex=(b.x||"").toLowerCase().split(/[,\s]+/).filter(Boolean);
+      const need=b.q.toLowerCase().split(/\s+/).filter(Boolean),nz=w=>w.replace(/[^a-z0-9]/g,"");
       for(const l of d.items||[]){
+        const t=(l.title||"").toLowerCase(),tz=nz(t);
+        if(!need.every(w=>t.includes(w)||tz.includes(nz(w))))continue;
         if(ex.some(w=>l.title.toLowerCase().includes(w)))continue;
         if(/parts|not working/i.test(l.cond||"")&&!/faulty|incomplete/i.test(b.cond||""))continue;
         const buy=l.price+(l.ship||0);if(buy>r.maxPrice||buy<b.med*r.minPct/100)continue;

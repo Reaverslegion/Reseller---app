@@ -116,7 +116,34 @@ function load(){
     const items=(x.items||[]).map(i=>({...i,status:OLDMAP[i.status]||i.status}));
     return{rules,gate:x.gate||[],items,base:x.base||[],set:{...DEF.set,...x.set}}}}catch(e){}
   return JSON.parse(JSON.stringify(DEF))}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast("Couldn't save on this phone.")}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast("Couldn't save on this phone.")}cloudSoon()}
+/* ---------- automatic cloud backup (to your Scan service) ---------- */
+const CAKEY="flipscout_cloud_at";let cbT=null,cloudErr="";
+const connected=()=>!!(S.set.url&&S.set.key);
+const cloudAt=()=>{try{return+localStorage.getItem(CAKEY)||0}catch(e){return 0}};
+function cloudSoon(){clearTimeout(cbT);if(connected())cbT=setTimeout(cloudPush,4000)}
+async function cloudPush(manual){
+  if(!connected())return false;
+  if(!manual&&!S.items.length&&!S.base.length)return false;
+  try{const r=await fetch(`${S.set.url}?key=${encodeURIComponent(S.set.key)}&backup=1`,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(S)});const d=await r.json().catch(()=>({}));
+    if(!r.ok||d.error)throw new Error(d.error||"error "+r.status);
+    localStorage.setItem(CAKEY,String(Date.now()));cloudErr="";if(manual)toast("Backed up.");if(tab==="settings")render();return true}
+  catch(e){cloudErr=e.message==="Failed to fetch"?"no connection":e.message;if(manual)toast("Backup failed: "+cloudErr);return false}
+}
+async function cloudCheck(silentIfNone){
+  if(!connected())return;
+  try{const r=await fetch(`${S.set.url}?key=${encodeURIComponent(S.set.key)}&backup=1`),d=await r.json();
+    if(d.error)throw new Error(d.error);
+    if(d.none||!d.data||!Array.isArray(d.data.items)){if(!silentIfNone)toast("No cloud backup yet.");return}
+    window._cb=d.data;const n=d.data.items.length,t=(d.data.base||[]).length,when=d.at?new Date(d.at).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"recently";
+    openSheet(`<h2 style="margin-top:0">Restore your data?</h2><div class="mu">Found a cloud backup from <b>${when}</b> with ${n} deal/stock item${n===1?"":"s"} and ${t} tracked item${t===1?"":"s"}.</div><div class="btns"><button onclick="cloudRestore()">Restore it</button><button class="s" onclick="closeSheet()">Not now</button></div>`);
+  }catch(e){if(!silentIfNone)toast("Couldn't check: "+(e.message==="Failed to fetch"?"no connection":e.message))}
+}
+function cloudRestore(){
+  const x=window._cb;if(!x)return;const keep=JSON.stringify(S),conn={url:S.set.url,key:S.set.key};
+  localStorage.setItem(KEY,JSON.stringify(x));S=load();S.set.url=S.set.url||conn.url;S.set.key=S.set.key||conn.key;try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}
+  closeSheet();tab="deals";prev=[];render();toast("Restored.","Undo",()=>{localStorage.setItem(KEY,keep);S=load();render()});
+}
 function loadDraft(){try{return{...BLANK,...JSON.parse(localStorage.getItem(DKEY)||"{}")}}catch(e){return{...BLANK}}}
 function saveDraft(){try{localStorage.setItem(DKEY,JSON.stringify(F))}catch(e){}}
 
@@ -510,27 +537,34 @@ function vSettings(){
   <div class="card"><b>Appearance</b><div class="seg" style="margin-top:10px">${[["auto","Auto"],["light","Light"],["dark","Dark"]].map(t=>`<button class="${(s.theme||"auto")===t[0]?"on":""}" onclick="S.set.theme='${t[0]}';save();render()">${t[1]}</button>`).join("")}</div><div class="hint">Auto follows your phone's setting.</div></div>
   <div class="card"><b>Your buying rules</b><div class="mu">These decide what counts as a good buy. Changes save straight away.</div>
    ${FIELDS.map(f=>`<label for="r_${f[0]}">${f[1]}</label><input id="r_${f[0]}" inputmode="decimal" value="${r[f[0]]}" onchange="setRule('${f[0]}',this.value)">${f[2]?`<div class="hint">${f[2]}</div>`:""}`).join("")}</div>
-  <div class="card"><b>Backup</b><div class="mu">Your data lives only on this phone. Save a backup now and then.</div>
-   <div class="btns"><button onclick="backup()">Save backup</button><button class="s" onclick="restoreSheet()">Restore</button></div></div>
+  <div class="card"><b>Backup</b>
+   ${connected()?`<div class="li ${cloudErr?"warn":"ok"}">${cloudErr?"⚠":"✓"} <span>Automatic cloud backup is on. ${cloudErr?`Last try failed (${esc(cloudErr)}).`:cloudAt()?`Last saved ${new Date(cloudAt()).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}.`:"Saves a few seconds after each change."}</span></div>
+   <div class="btns"><button onclick="cloudPush(true)">Back up now</button><button class="s" onclick="cloudCheck()">Restore from cloud</button></div>`
+   :`<div class="mu">Connect Scan (Advanced, below) and your data backs up automatically.</div>`}
+   <details><summary>Manual backup (copy and paste)</summary><div class="btns" style="margin-top:-6px"><button class="s" onclick="backup()">Copy backup text</button><button class="s" onclick="restoreSheet()">Paste backup</button></div></details></div>
   <details class="card"><summary>Advanced: Scan connection</summary>
    <div class="mu">The address and key of your Scan service.</div>
-   <label for="s_url">Service address</label><input id="s_url" value="${esc(s.url)}" placeholder="https://something.workers.dev" onchange="S.set.url=this.value.trim();save();toast('Saved.')">
-   <label for="s_key">Key</label><input id="s_key" value="${esc(s.key)}" onchange="S.set.key=this.value.trim();save();toast('Saved.')">
+   <label for="s_url">Service address</label><input id="s_url" value="${esc(s.url)}" placeholder="https://something.workers.dev" onchange="setConn(this.value)">
+   <label for="s_key">Key</label><input id="s_key" value="${esc(s.key)}" onchange="S.set.key=this.value.trim();save();toast('Saved.');afterConn()">
    <label for="s_reg">Where sellers are</label><select id="s_reg" onchange="S.set.region=this.value;save();toast('Saved.')"><option value="uk"${s.region!=="any"?" selected":""}>UK sellers only</option><option value="any"${s.region==="any"?" selected":""}>Anywhere that posts to the UK</option></select>
-   <div class="hint">Overseas sellers may add import fees and slower delivery.</div></details>
+   <div class="hint">Overseas sellers may add import fees and slower delivery.</div>
+   ${connected()?`<button class="s" onclick="copySetup()">Copy setup code</button><div class="hint">Paste this setup code into the Service address box on a new install, and the address and key fill in together.</div>`:`<div class="hint">Tip: you can paste a setup code into the Service address box.</div>`}</details>
   <div class="card"><button class="s" onclick="ob=0;showOnb()">Show the welcome guide again</button><div class="mu" style="margin-top:10px">FlipScout ${VER}</div></div>`;
 }
+function setConn(v){v=String(v||"").trim();const i=v.indexOf("#");if(i>0){S.set.url=v.slice(0,i);S.set.key=v.slice(i+1)}else S.set.url=v;save();render();toast("Saved.");afterConn()}
+function afterConn(){if(connected()){CT=null;if(!S.items.length&&!S.base.length)cloudCheck(true);else cloudSoon()}}
+async function copySetup(){const t=S.set.url+"#"+S.set.key;try{await navigator.clipboard.writeText(t);toast("Setup code copied. Keep it somewhere private.")}catch(e){openSheet(`<h2 style="margin-top:0">Setup code</h2><div class="mu">Long-press and copy. Keep it private.</div><textarea readonly>${esc(t)}</textarea><button onclick="closeSheet()">Done</button>`)}}
 function setSeller(v){S.rules.seller=v;save();render();toast(v==="private"?"Private seller: no final value fee.":"Business seller fees on.")}
 function setRule(k,v){if(String(v).trim()===""){toast("Left unchanged.");render();return}const n=num(v);if(n<0){toast("Can't be negative.");render();return}S.rules[k]=n;save();toast("Saved.")}
 async function backup(){
   const t=JSON.stringify(S);
-  try{if(navigator.share){await navigator.share({title:"FlipScout backup "+today(),text:t});return}}catch(e){if(e&&e.name==="AbortError")return}
+  try{if(navigator.share){await navigator.share({text:t});return}}catch(e){if(e&&e.name==="AbortError")return}
   try{await navigator.clipboard.writeText(t);toast("Backup copied. Paste it into a private note.")}catch(e){openSheet(`<h2 style="margin-top:0">Your backup</h2><div class="mu">Long-press, Select all, Copy, then paste into a private note.</div><textarea readonly style="min-height:200px">${esc(t)}</textarea><button onclick="closeSheet()">Done</button>`)}
 }
 function restoreSheet(){openSheet(`<h2 style="margin-top:0">Restore a backup</h2><div class="mu">Paste your backup text. This replaces everything in the app.</div><textarea id="imp" style="min-height:160px"></textarea><div class="btns"><button onclick="restore()">Restore</button><button class="s" onclick="closeSheet()">Cancel</button></div>`)}
 function restore(){
-  try{const x=JSON.parse($("imp").value);if(!x.rules||!Array.isArray(x.items))throw 0;
-   const keep=JSON.stringify(S);localStorage.setItem(KEY,$("imp").value);S=load();save();closeSheet();tab="dash";render();
+  try{const raw=$("imp").value,txt=raw.slice(raw.indexOf("{"),raw.lastIndexOf("}")+1),x=JSON.parse(txt);if(!x.rules||!Array.isArray(x.items))throw 0;
+   const keep=JSON.stringify(S);localStorage.setItem(KEY,txt);S=load();save();closeSheet();tab="dash";render();
    toast("Backup restored.","Undo",()=>{localStorage.setItem(KEY,keep);S=load();render()})}
   catch(e){toast("That doesn't look like a FlipScout backup.")}
 }
@@ -614,6 +648,7 @@ function finishOnb(ex){try{localStorage.setItem(OKEY,"1")}catch(e){}$("onb").sty
 
 render();
 try{if(!localStorage.getItem(OKEY))showOnb()}catch(e){}
+if(connected()&&!S.items.length&&!S.base.length)cloudCheck(true);
 </script>
 </body>
 </html>

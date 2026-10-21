@@ -3,11 +3,13 @@
 // Search: ?key=...&q=search words&max=100&region=uk|any&cat=categoryId
 // Category ideas: ?key=...&suggest=search words
 // Full eBay UK category list: ?key=...&tree=1
+// Cloud backup: GET ?key=...&backup=1  /  POST ?key=...&backup=1 (body = app data)
+// Needs a KV namespace bound as BACKUP (the deploy workflow sets this up)
 let TOKEN = null, TOKEN_EXP = 0;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "*",
 };
 const json = (obj, status = 200) =>
@@ -35,6 +37,25 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     const u = new URL(request.url);
     if (!env.APP_KEY || u.searchParams.get("key") !== env.APP_KEY) return json({ error: "wrong key" }, 401);
+    if (u.searchParams.get("backup")) {
+      if (!env.BACKUP) return json({ error: "cloud backup not set up" }, 501);
+      try {
+        if (request.method === "POST") {
+          const body = await request.text();
+          if (body.length > 5000000) return json({ error: "backup too big" }, 413);
+          JSON.parse(body);
+          const prev = await env.BACKUP.get("backup-v1");
+          if (prev) await env.BACKUP.put("backup-prev", prev);
+          await env.BACKUP.put("backup-v1", body, { metadata: { at: Date.now() } });
+          return json({ ok: true, at: Date.now() });
+        }
+        const r = await env.BACKUP.getWithMetadata("backup-v1");
+        if (!r.value) return json({ none: true });
+        return json({ at: (r.metadata && r.metadata.at) || null, data: JSON.parse(r.value) });
+      } catch (e) {
+        return json({ error: e.message }, 500);
+      }
+    }
     if (u.searchParams.get("tree")) {
       try {
         const token = await getToken(env);

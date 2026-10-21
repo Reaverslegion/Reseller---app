@@ -224,7 +224,7 @@ function restore(){
 
 function track(){
   if(!calc)return;if(!F.q.trim()){alert("Fill in 'Search words for eBay' first.");return}
-  const b={id:Date.now(),name:F.n||F.q,q:F.q.trim(),x:F.x||"",med:calc.med,cons:calc.cons,count:calc.count,conf:calc.conf,post:calc.post,pack:calc.pack,on:today()};
+  const b={id:Date.now(),name:F.n||F.q,q:F.q.trim(),x:F.x||"",med:calc.med,cons:calc.cons,count:calc.count,conf:calc.conf,post:calc.post,pack:calc.pack,on:today(),cond:F.c};
   S.base=S.base.filter(x=>x.q.toLowerCase()!==b.q.toLowerCase());S.base.unshift(b);save();tab="scan";render();
 }
 function untrack(id){S.base=S.base.filter(b=>b.id!==id);save();render()}
@@ -242,6 +242,7 @@ async function runScan(){
       const ex=(b.x||"").toLowerCase().split(/[,\s]+/).filter(Boolean);
       for(const l of d.items||[]){
         if(ex.some(w=>l.title.toLowerCase().includes(w)))continue;
+        if(/parts|not working/i.test(l.cond||"")&&!/faulty|incomplete/i.test(b.cond||""))continue;
         const buy=l.price+(l.ship||0);if(buy>r.maxPrice||buy<b.med*r.minPct/100)continue;
         const p=b.med-fee(b.med)-b.post-b.pack-buy,pc=b.cons-fee(b.cons)-b.post-b.pack-buy;
         const roi=(buy+b.pack)>0?p/(buy+b.pack)*100:0;

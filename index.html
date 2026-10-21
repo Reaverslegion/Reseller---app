@@ -545,7 +545,7 @@ function vSettings(){
    :`<div class="li ok">✓ <span>Alerts are on for this phone.</span></div>
     <div class="btns"><button onclick="testAlert()">Send test alert</button><button class="s" onclick="H().alerts=false;save();pushConfig();render()">Turn off</button></div>
     <label for="as">Alert me for deals scoring</label><select id="as" onchange="H().alertScore=+this.value;save();pushConfig()">${[[60,"60+ (more alerts)"],[70,"70+ (recommended)"],[85,"85+ (only the best)"]].map(o=>`<option value="${o[0]}"${h.alertScore===o[0]?" selected":""}>${o[1]}</option>`).join("")}</select>
-    <details><summary>Not getting alerts?</summary><div class="mu">Some phones stop apps in the background to save battery. On Xiaomi, Redmi or POCO: open phone <b>Settings › Apps › FlipScout</b>, turn on <b>Autostart</b>, and set <b>Battery saver</b> to <b>No restrictions</b>. On Samsung: <b>Settings › Apps › FlipScout › Battery › Unrestricted</b>.</div></details>`}</div>
+    <details><summary>Not getting alerts?</summary><div class="mu">Some phones stop apps in the background to save battery. On Xiaomi, Redmi or POCO: open phone <b>Settings › Apps › FlipScout</b>, turn on <b>Autostart</b>, and set <b>Battery saver</b> to <b>No restrictions</b>. On Samsung: <b>Settings › Apps › FlipScout › Battery › Unrestricted</b>.<br><br>No sound? Open phone <b>Settings › Apps › FlipScout › Notifications › Deal alerts</b> and turn on <b>Sound</b> (Xiaomi also has <b>Allow sound</b> there).</div></details>`}</div>
   <div class="card"><b>Hunting</b><div class="mu">${h.cats.length?`Hunting in ${h.cats.map(c=>esc(c.name)).join(", ")}.`:"No categories picked yet."}</div><button class="s" onclick="go('cats')">My categories</button>
    <div class="row"><div><label for="hp">Your postage out £</label><input id="hp" inputmode="decimal" value="${h.post}" onchange="setHunt('post',this.value)"></div><div><label for="hk">Packaging £</label><input id="hk" inputmode="decimal" value="${h.pack}" onchange="setHunt('pack',this.value)"></div></div>
    <div class="hint">Used for deal profit. Typical medium parcel: about £5 to £7.</div>
@@ -676,7 +676,7 @@ function dealCard(d,i){
   return`<div class="card" style="cursor:pointer" onclick="openDeal(${i})" role="button" tabindex="0">
   <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">${dealBadge(d)}${sp?`<span class="chip" style="border-color:var(--warn);color:var(--warn)">Needs your judgement</span>`:`<span style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:13px">${ring(d.score)}${confWord(d.score)}</span>`}</div>
   <div style="display:flex;gap:12px;margin-top:10px">${d.img?`<img src="${esc(d.img)}" alt="" style="width:72px;height:72px;object-fit:cover;border-radius:12px;flex:none;background:var(--card2)" loading="lazy">`:""}
-   <div style="min-width:0"><div style="font-weight:700;line-height:1.3">${esc(d.title)}</div><div class="mu">${esc(d.cond||"")} · ${esc(d.catName||"")}</div></div></div>
+   <div style="min-width:0"><div style="font-weight:700;line-height:1.3">${esc(d.title)}</div><div class="mu">${esc(d.cond||"")} · ${esc(d.catName||"")}</div>${d.matchLabel?`<div class="mu" style="margin-top:2px">vs ${esc(d.matchLabel)}</div>`:""}</div></div>
   ${sp?`<div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:8px"><div class="stat">${gbp(d.cost)} now</div><div class="mu">working ones sell for ${gbp(d.workMed)}</div></div>`
    :`<div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:8px"><div class="stat ok" style="font-size:22px">${d.type==="AUC"?"Bid up to "+gbp(d.maxBid):"+"+gbp(d.profit)+" profit"}</div><div class="mu">${gbp(d.cost)} now · worth ${gbp(d.med)}</div></div>`}
   ${d.tags&&d.tags.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${d.tags.map(t=>`<span class="chip">${esc(t)}</span>`).join("")}</div>`:""}
@@ -724,7 +724,7 @@ function vDeal(){
    <div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin-top:12px"><div><div class="mu">Cost now</div><div class="stat">${gbp(d.cost)}</div></div><div><div class="mu">Worth ${ti("median")}</div><div class="stat">${gbp(d.med)}</div></div><div><div class="mu">Pay up to ${ti("maxpay")}</div><div class="stat">${gbp(d.maxPay)}</div></div></div></div>
   <div class="card"><b>Why it scores ${d.score}</b>
    ${bar("Price evidence",p.evidence/(d.src==="sold"?1:0.5)*(d.src==="sold"?1:0.6),ev)}
-   ${bar("Same item match",p.match,d.pkey&&d.pkey[0]==="e"?"Same eBay product as the sales it's compared with":"Matched by model details in the title. Check it's the same item")}
+   ${bar("Same item match",p.match,"Compared with: "+esc(d.matchLabel||"similar listings")+". Check the listing matches")}
    ${bar("Seller",p.seller,`${sel.pct||0}% positive from ${sel.fb||0} feedback`)}
    ${bar("Safety margin",p.margin,d.lowProfit>0?`Still ${gbp(d.lowProfit)} profit if it sells at the low end (${gbp(d.low)})`:"No profit if it sells at the low end")}
    ${bar("Competition",p.competition,(d.tags||[]).join(" · ")||"Normal")}</div>

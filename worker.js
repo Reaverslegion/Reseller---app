@@ -98,18 +98,166 @@ function maxPay(med, low, r) {
   return Math.min(N - r.minProfit, (N - k * r.pack) / (1 + k), low - sellFee(low, r) - out - 0.01);
 }
 
-/* ---------------- grouping identical products ---------------- */
+/* ---------------- grouping comparable items (by spec, not brand) ---------------- */
 const MODS = new Set(["ti", "super", "pro", "max", "plus", "mini", "lite", "oled", "xl", "ultra", "slim", "air", "se", "disc", "digital", "fe"]);
 function condBucket(id) { const n = +id || 0; if (n >= 7000) return "parts"; if (n && n < 2000) return "new"; return "used"; }
 function sig(title) {
-  const t = String(title || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(Boolean);
+  const t = String(title || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\b([a-z]{2,})\s+(\d{1,2})\b(?!\s*(gb|tb|mb|inch|in|cm|mm|pcs|pack|x)\b)/g, "$1$2").split(/\s+/).filter(Boolean);
   const keep = t.filter((w) => (/\d/.test(w) && w.length >= 2 && !/^\d{1,2}$/.test(w) && !/^\d+(x|pcs|pc|pack)$/.test(w) && !/^x\d+$/.test(w)) || MODS.has(w));
   return [...new Set(keep)].sort().join(" ");
 }
-function pkeyOf(it, cat, bucket) {
-  if (it.epid) return "e" + it.epid + "|" + bucket;
-  const s = sig(it.title);
-  return s ? "t" + cat + ":" + s + "|" + bucket : null;
+const LAPTOP_RE = /\b(laptop|notebook|macbook|chromebook|thinkpad|elitebook|probook|latitude|ideapad|thinkbook|zenbook|vivobook|inspiron|vostro|surface laptop|galaxy book|ultrabook)\b/i;
+const NOT_A_CARD = /\b(laptop|notebook|desktop|tower|gaming pc|pc build|full pc|computer|ssd|hdd|ram|i[3579][\s-]?\d|ryzen|bundle|job ?lot|joblot|pair of|waterblock|water block|heatsink|backplate|fan|fans|cooler|bracket|riser|cable|box only|empty box)\b/i;
+const MULTI_VRAM = new Set(["gtx 1060", "rtx 2060", "rtx 3050", "rtx 3060", "rtx 4060 ti", "rx 470", "rx 480", "rx 570", "rx 580", "rx 5500 xt", "rx 6500 xt"]);
+function gpuChip(t) {
+  let m = t.match(/\b(rtx|gtx|rx|arc)\s*-?\s*([ab]?\d{3,4})\s*(ti\s*super|super|ti|xtx|xt|gre)?(?![a-z0-9])/i);
+  let pre, num, suf;
+  if (m) { pre = m[1].toLowerCase(); num = m[2].toLowerCase(); suf = (m[3] || "").toLowerCase().replace(/\s+/g, " "); }
+  else if (/\b(geforce|nvidia)\b/i.test(t)) {
+    m = t.match(/\b(10[5-8]0|16[5-6]0|20[5-8]0|30[5-9]0|40[5-9]0|50[5-9]0)\s*(ti\s*super|super|ti)?(?![a-z0-9])/i);
+    if (!m) return null;
+    num = m[1]; suf = (m[2] || "").toLowerCase().replace(/\s+/g, " "); pre = /^1/.test(num) ? "gtx" : "rtx";
+  } else return null;
+  if (pre === "arc" && !/^[ab]/.test(num)) return null;
+  if (pre === "rx" && !/^\d{3,4}$/.test(num)) return null;
+  return [pre, num, suf].filter(Boolean).join(" ");
+}
+function gpuKey(title) {
+  const t = String(title || "");
+  if (NOT_A_CARD.test(t) || /^\s*[2-9]\s?x\s|\bx\s?[2-9]\s*$/i.test(t)) return null;
+  const chip = gpuChip(t);
+  if (!chip) return null;
+  let label = chip.toUpperCase().replace("SUPER", "Super").replace(" TI", " Ti").replace("ARC ", "Arc ");
+  let key = chip;
+  if (MULTI_VRAM.has(chip)) {
+    const g = t.match(/\b(\d{1,2})\s*gb\b/i);
+    if (g && +g[1] <= 24) { key += " " + g[1] + "gb"; label += " " + g[1] + "GB"; }
+  }
+  return { key: "gpu:" + key, label: label + " (any brand)", match: 0.85 };
+}
+function laptopKey(title) {
+  const t = String(title || "").toLowerCase();
+  let cpu = null, cpuL = "";
+  let m;
+  if (/macbook/.test(t)) {
+    const kind = /macbook\s*pro/.test(t) ? "pro" : /macbook\s*air/.test(t) ? "air" : "mb";
+    m = t.match(/\bm([1-5])\s*(pro|max|ultra)?\b/);
+    if (m) { cpu = `apple-${kind}-m${m[1]}${m[2] ? "-" + m[2] : ""}`; cpuL = `MacBook ${kind === "mb" ? "" : kind === "pro" ? "Pro " : "Air "}M${m[1]}${m[2] ? " " + m[2][0].toUpperCase() + m[2].slice(1) : ""}`; }
+    else { m = t.match(/\b(20[01]\d|202[0-4])\b/); cpu = `apple-${kind}-intel${m ? "-" + m[1] : ""}`; cpuL = `MacBook ${kind === "pro" ? "Pro " : kind === "air" ? "Air " : ""}Intel${m ? " " + m[1] : ""}`; }
+  } else if ((m = t.match(/\bi([3579])[\s-]*(\d{4,5})[a-z]{0,2}\d?\b/))) {
+    const gen = m[2].length === 5 ? m[2].slice(0, 2) : m[2][0];
+    cpu = `intel-i${m[1]}-g${gen}`; cpuL = `Intel i${m[1]} ${gen}th gen`;
+  } else if ((m = t.match(/\bi([3579])\b.*?\b(\d{1,2})(?:st|nd|rd|th)\s*gen/)) || (m = t.match(/\b(\d{1,2})(?:st|nd|rd|th)\s*gen\b.*?\bi([3579])\b/))) {
+    const a = /^\d{1,2}$/.test(m[1]) && /gen/.test(t.slice(t.indexOf(m[1]), t.indexOf(m[1]) + 8)) ? [m[2], m[1]] : [m[1], m[2]];
+    cpu = `intel-i${a[0]}-g${a[1]}`; cpuL = `Intel i${a[0]} ${a[1]}th gen`;
+  } else if ((m = t.match(/\bcore\s*ultra\s*([579])\b/))) {
+    cpu = `intel-ultra${m[1]}`; cpuL = `Intel Core Ultra ${m[1]}`;
+  } else if ((m = t.match(/\bryzen\s*([3579])\s*(?:pro\s*)?(\d)\d{3}[a-z]{0,2}\b/))) {
+    cpu = `amd-r${m[1]}-s${m[2]}`; cpuL = `Ryzen ${m[1]} ${m[2]}000 series`;
+  } else if (/\b(celeron|pentium|atom|n4020|n4500|n100|n200|athlon|mediatek|snapdragon)\b/.test(t)) {
+    cpu = "budget"; cpuL = "Budget processor";
+  }
+  if (!cpu) return null;
+  let ram = null;
+  const rm = t.match(/\b(4|6|8|12|16|20|24|32|36|48|64)\s*gb\s*(?:of\s*)?(?:ram|ddr\d?|lpddr\d?x?|memory|unified)\b/) || t.match(/\b(4|6|8|12|16|20|24|32|36|48|64)\s*gb\b(?!\s*(?:ssd|hdd|emmc|nvme|storage|m\.?2|flash))/);
+  if (rm) ram = +rm[1];
+  let st = null;
+  const sm = t.match(/\b(\d)\s*tb\b/) ? [null, t.match(/\b(\d)\s*tb\b/)[1] * 1000] : t.match(/\b(64|120|128|240|250|256|480|500|512|960|1000|1024|2048)\s*gb\b/);
+  if (sm) { const v = +sm[1]; st = v <= 128 ? 128 : v <= 256 ? 256 : v <= 512 ? 512 : 1000; }
+  const g = gpuChip(t);
+  const parts = [cpu, ram ? "r" + ram : "r?", st ? "s" + st : "s?", g ? g.replace(/\s+/g, "") : ""].filter(Boolean);
+  const label = [cpuL, ram ? ram + "GB RAM" : "", st ? (st >= 1000 ? "1TB+" : st + "GB") : "", g ? g.toUpperCase() : ""].filter(Boolean).join(" · ");
+  return { key: "lap:" + parts.join("|"), label: label + (cpu.startsWith("apple") ? "" : " (any brand)"), match: ram && st ? 0.65 : 0.5 };
+}
+const ACCESSORY = /\b(case|cover|protector|screen guard|tempered glass|charger|charging|cable|adapter|dock|stand|mount|holder|skin|sticker|strap|band|controller only|pad only|remote|box only|empty box|manual|replacement|lcd|digitiser|digitizer|housing|back glass|battery|motherboard|logic board|fan|heatsink|job ?lot|joblot|bundle of|lot of)\b/i;
+const storageOf = (t) => { let m = t.match(/\b(\d)\s*tb\b/i); if (m) return +m[1] * 1024; m = t.match(/\b(16|32|64|120|128|240|250|256|480|500|512|960|1000|1024)\s*gb\b/i); if (!m) return null; const g = +m[1]; return g >= 960 ? 1024 : g === 480 ? 500 : g === 500 ? 500 : g === 240 || g === 250 ? 256 : g === 120 ? 128 : g; };
+const stLabel = (g) => (g >= 1024 ? g / 1024 + "TB" : g + "GB");
+function phoneKey(t) {
+  if (ACCESSORY.test(t)) return null;
+  const l = t.toLowerCase(); let m, model = null;
+  if ((m = l.match(/\biphone\s*(\d{1,2}e?|se|xs|xr|x)\s*(pro\s*max|pro|plus|mini|max)?\b/))) model = "iphone " + m[1] + (m[2] ? " " + m[2].replace(/\s+/g, " ") : "");
+  else if ((m = l.match(/\bgalaxy\s*(s|a|note|z\s*fold|z\s*flip|m)\s*(\d{1,3})\s*(ultra|plus|\+|fe|lite|5g)?\b/))) model = "galaxy " + m[1].replace(/\s+/g, "") + m[2] + (m[3] && m[3] !== "5g" ? " " + m[3].replace("+", "plus") : "");
+  else if ((m = l.match(/\bpixel\s*(\d{1,2}a?)\s*(pro\s*xl|pro\s*fold|pro|xl|a)?\b/))) model = "pixel " + m[1] + (m[2] ? " " + m[2] : "");
+  if (!model) return null;
+  const st = storageOf(t);
+  return { key: "phone:" + model + (st ? " " + st : ""), label: model.replace(/\b\w/g, (c) => c.toUpperCase()).replace("Iphone", "iPhone") + (st ? " " + stLabel(st) : ""), match: st ? 0.9 : 0.7 };
+}
+function consoleKey(t) {
+  if (ACCESSORY.test(t) || (/\b(game|games only|disc only|controller|dualsense|dualshock|joy-?cons?|headset|pro controller|faceplate|shell)\b/i.test(t) && !/\b(console|with|\+|inc|includes?|bundle)\b/i.test(t))) return null;
+  const l = t.toLowerCase(); let m, k = null;
+  if ((m = l.match(/\b(ps5|playstation\s*5)\b/))) k = "ps5 " + (/\bpro\b/.test(l) ? "pro" : /digital/.test(l) ? "digital" : "disc") + (/\bslim\b/.test(l) ? " slim" : "");
+  else if ((m = l.match(/\b(ps4|playstation\s*4)\b/))) k = "ps4" + (/\bpro\b/.test(l) ? " pro" : /\bslim\b/.test(l) ? " slim" : "");
+  else if ((m = l.match(/\bxbox\s*series\s*(x|s)\b/))) k = "xbox series " + m[1];
+  else if ((m = l.match(/\bxbox\s*one\s*(x|s)?\b/))) k = "xbox one" + (m[1] ? " " + m[1] : "");
+  else if ((m = l.match(/\bnintendo\s*switch\b|\bswitch\s*(oled|lite)\b/))) k = "switch" + (/\boled\b/.test(l) ? " oled" : /\blite\b/.test(l) ? " lite" : /\bswitch\s*2\b/.test(l) ? " 2" : "");
+  else if ((m = l.match(/\bsteam\s*deck\b/))) k = "steam deck" + (/\boled\b/.test(l) ? " oled" : "") + ((m = l.match(/\b(64|256|512)\s*gb\b/)) ? " " + m[1] : "") + (/\b1\s*tb\b/.test(l) ? " 1tb" : "");
+  if (!k) return null;
+  return { key: "con:" + k, label: k.replace(/\b\w/g, (c) => c.toUpperCase()).replace(/^Ps/, "PS").replace("Oled", "OLED"), match: 0.9 };
+}
+function tabletKey(t) {
+  if (ACCESSORY.test(t)) return null;
+  const l = t.toLowerCase(); let m;
+  if (!(m = l.match(/\bipad\s*(pro|air|mini)?\b/))) return null;
+  const kind = m[1] || "ipad";
+  const gen = (l.match(/\b(\d{1,2})(?:st|nd|rd|th)\s*gen/) || [])[1] || (l.match(/\bm([1-4])\b/) ? "M" + l.match(/\bm([1-4])\b/)[1] : "");
+  const size = (l.match(/\b(7\.9|8\.3|9\.7|10\.2|10\.5|10\.9|11|12\.9|13)\s*(?:"|''|inch|in)?/) || [])[1] || "";
+  const st = storageOf(t);
+  if (!gen && !size) return null;
+  return { key: `tab:${kind}|${gen}|${size}|${st || "?"}`, label: `iPad ${kind === "ipad" ? "" : kind[0].toUpperCase() + kind.slice(1) + " "}${gen ? gen + (/^\d/.test(gen) ? "th gen" : "").replace(/^(\d+)th gen$/, "$1th gen") + " " : ""}${size ? size + '" ' : ""}${st ? stLabel(st) : ""}`.trim(), match: st && gen ? 0.85 : 0.6 };
+}
+function cpuKey(t, catName) {
+  if (!/processor|cpu/i.test(catName || "") && !/\b(processor|cpu)\b/i.test(t)) return null;
+  if (/\b(laptop|desktop|pc|computer|motherboard|bundle|combo)\b/i.test(t)) return null;
+  const l = t.toLowerCase(); let m;
+  if ((m = l.match(/\bi([3579])[\s-]*(\d{4,5}[a-z]{0,2})\b/))) return { key: "cpu:i" + m[1] + "-" + m[2], label: "Intel i" + m[1] + "-" + m[2].toUpperCase(), match: 0.95 };
+  if ((m = l.match(/\bryzen\s*([3579])\s*(\d{4}[a-z0-9]{0,3})\b/))) return { key: "cpu:r" + m[1] + "-" + m[2], label: "Ryzen " + m[1] + " " + m[2].toUpperCase(), match: 0.95 };
+  return null;
+}
+function ramKey(t, catName) {
+  if (!/memory|ram/i.test(catName || "") && !/\b(ram|ddr[345])\b/i.test(t)) return null;
+  if (/\b(laptop|desktop|pc|computer|motherboard|phone|tablet)\b/i.test(t)) return null;
+  const l = t.toLowerCase();
+  const type = (l.match(/\bddr([345])\b/) || [])[1];
+  if (!type) return null;
+  let cap = null, m;
+  if ((m = l.match(/\b(\d)\s*x\s*(\d{1,2})\s*gb\b/))) cap = +m[1] * +m[2];
+  else if ((m = l.match(/\b(\d{1,3})\s*gb\b/))) cap = +m[1];
+  if (!cap) return null;
+  const sp = (m = l.match(/\b(\d{4})\s*(?:mhz|mt\/s)?\b/)) ? Math.round(+m[1] / 400) * 400 : "";
+  const so = /\b(so-?dimm|laptop)\b/.test(l) ? " sodimm" : "";
+  return { key: `ram:ddr${type}|${cap}|${sp}${so}`, label: `DDR${type} ${cap}GB${sp ? " ~" + sp + "MHz" : ""}${so ? " laptop" : ""} (any brand)`, match: sp ? 0.75 : 0.6 };
+}
+function storageKey(t, catName) {
+  if (!/drive|ssd|storage|hard disk/i.test(catName || "") && !/\b(ssd|nvme|hdd|hard drive)\b/i.test(t)) return null;
+  if (/\b(laptop|desktop|pc|computer|console|ps5|ps4|xbox|enclosure|caddy|adapter)\b/i.test(t)) return null;
+  const l = t.toLowerCase();
+  const kind = /\bnvme|m\.?2\b/.test(l) ? "nvme" : /\bssd\b/.test(l) ? "ssd" : /\bhdd|hard (disk )?drive\b/.test(l) ? "hdd" : null;
+  const st = storageOf(t);
+  if (!kind || !st) return null;
+  const ext = /\b(external|portable|usb)\b/.test(l) ? " external" : "";
+  return { key: `sto:${kind}${ext}|${st}`, label: `${stLabel(st)} ${kind.toUpperCase()}${ext} (any brand)`, match: 0.65 };
+}
+function monitorKey(t, catName) {
+  if (!/monitor/i.test(catName || "") && !/\bmonitor\b/i.test(t)) return null;
+  if (ACCESSORY.test(t) || /\b(arm|baby|heart|tv)\b/i.test(t)) return null;
+  const l = t.toLowerCase();
+  const size = (l.match(/\b(2[0-9]|3[0-9]|4[0-9])(?:\.\d)?\s*(?:"|''|inch|in\b)/) || [])[1];
+  if (!size) return null;
+  const hz = (l.match(/\b(60|75|100|120|144|165|170|180|240|280|360)\s*hz\b/) || [])[1] || "";
+  const res = /\b(4k|uhd|2160p)\b/.test(l) ? "4k" : /\b(1440p|qhd|2k|wqhd)\b/.test(l) ? "1440p" : /\b(1080p|fhd|full hd)\b/.test(l) ? "1080p" : "";
+  return { key: `mon:${size}|${res}|${hz}`, label: `${size}" monitor${res ? " " + res : ""}${hz ? " " + hz + "Hz" : ""} (any brand)`, match: res && hz ? 0.6 : 0.45 };
+}
+
+function groupOf(it, cat, catName, bucket) {
+  const title = it.title || "";
+  const lapCat = /laptop|netbook|notebook/i.test(catName || "") || cat === "177" || cat === "111422";
+  let g = null;
+  if (lapCat || LAPTOP_RE.test(title)) g = laptopKey(title);
+  if (!g && !lapCat) g = gpuKey(title) || phoneKey(title) || consoleKey(title) || tabletKey(title) || cpuKey(title, catName) || ramKey(title, catName) || storageKey(title, catName) || monitorKey(title, catName);
+  if (g) return { key: g.key + "|" + bucket, label: g.label, match: g.match };
+  if (it.epid) return { key: "e" + it.epid + "|" + bucket, label: "Same eBay product", match: 1 };
+  const s = sig(title);
+  return s ? { key: "t" + cat + ":" + s + "|" + bucket, label: "Similar title", match: s.split(" ").length >= 2 ? 0.7 : 0.45 } : null;
 }
 
 /* ---------------- what the hunter avoids ---------------- */
@@ -151,6 +299,11 @@ async function sweep(env, manual) {
   await kvSet(env, "lastRun", now);
   const D = env.DB, r = cfg.rules, report = { checked: 0, newDeals: 0, hidden: 0, errors: [] };
 
+  // 0. matching rules changed (spec-based groups): start learning afresh once
+  if ((await kvGet(env, "keyver", 1)) < 3) {
+    await D.batch([D.prepare("DELETE FROM listings"), D.prepare("DELETE FROM sales"), D.prepare("DELETE FROM deals")]);
+    await kvSet(env, "keyver", 3);
+  }
   // 1. auctions that have ended become sold prices (only if they had bids)
   await D.batch([
     D.prepare("INSERT OR IGNORE INTO sales (id,pkey,cat,price,kind,at) SELECT id,pkey,cat,price+ship,'auction',end_at FROM listings WHERE status='live' AND type='AUC' AND end_at<? AND bids>0 AND pkey IS NOT NULL").bind(now),
@@ -194,7 +347,7 @@ async function sweep(env, manual) {
             seller: it.seller ? { name: it.seller.username || "", fb: +it.seller.feedbackScore || 0, pct: parseFloat(it.seller.feedbackPercentage) || 0 } : { name: "", fb: 0, pct: 0 },
             loc: (it.itemLocation && it.itemLocation.country) || "", img: it.image ? it.image.imageUrl : "",
             url: "https://www.ebay.co.uk/itm/" + id, bestOffer: (it.buyingOptions || []).includes("BEST_OFFER"),
-            pkey: pkeyOf(it, c.id, bucket), workKey: pkeyOf(it, c.id, "used"),
+            ...(() => { const g = groupOf(it, c.id, c.name, bucket), w = groupOf(it, c.id, c.name, "used"); return { pkey: g ? g.key : null, matchLabel: g ? g.label : "", matchQ: g ? g.match : 0, workKey: w ? w.key : null, workQ: w ? w.match : 0 }; })(),
           });
         }
         report.checked++;
@@ -226,15 +379,23 @@ async function sweep(env, manual) {
     const ar = await D.prepare(`SELECT pkey, id, price+ship AS t FROM listings WHERE pkey IN (${q}) AND type='BIN' AND status='live' AND last_seen>?`).bind(...chunk, now - 2 * DAY).all();
     for (const row of ar.results || []) (askBy[row.pkey] = askBy[row.pkey] || []).push([row.id, row.t]);
   }
-  function market(key, selfId) {
+  // Looser matches (e.g. "similar title") need more evidence before we trust a price.
+  function trim(a) {
+    if (a.length < 5) return a;
+    const m = median(a);
+    return a.filter((x) => x >= m * 0.4 && x <= m * 2.5);
+  }
+  function market(key, selfId, q = 0.5) {
     if (!key) return null;
-    const sold = (soldBy[key] || []).filter((x) => x > 0);
-    if (sold.length >= 3) {
+    const needSold = q >= 0.8 ? 3 : q >= 0.6 ? 5 : 8;
+    const sold = trim((soldBy[key] || []).filter((x) => x > 0));
+    if (sold.length >= needSold) {
       const med = median(sold), low = pct(sold, 0.25), iqr = pct(sold, 0.75) - low;
       return { med, low, n: sold.length, src: "sold", spread: med ? iqr / med : 1 };
     }
-    const ask = (askBy[key] || []).filter(([id]) => id !== selfId).map(([, t]) => t).filter((x) => x > 0);
-    if (ask.length >= 4) {
+    if (q < 0.65) return null; // asking prices are too noisy for loose matches
+    const ask = trim((askBy[key] || []).filter(([id]) => id !== selfId).map(([, t]) => t).filter((x) => x > 0));
+    if (ask.length >= (q >= 0.8 ? 4 : 6)) {
       const med = pct(ask, 0.3) * 0.95, low = pct(ask, 0.1) * 0.95;
       return { med, low, n: ask.length, src: "asking", spread: med ? (pct(ask, 0.75) - pct(ask, 0.25)) / med : 1 };
     }
@@ -248,15 +409,16 @@ async function sweep(env, manual) {
     const extra = r.bpf ? bpf(s.price) : 0;
     if (s.bucket === "parts") {
       if (!cfg.types.spares) continue;
-      const m = market(s.workKey, s.id);
+      const m = market(s.workKey, s.id, s.workQ || 0.5);
       if (!m || s.price + s.ship > m.med * 0.6) continue;
       if (SCAM_WORDS.test(s.title)) { hidden++; continue; }
       spares.push({ ...s, kind: "spares", tags: [], score: 0, cost: Math.round((s.price + s.ship + extra) * 100) / 100, workMed: Math.round(m.med), n: m.n, src: m.src });
       continue;
     }
     if (RISK_WORDS.test(s.title)) continue;
-    const m = market(s.pkey, s.id);
+    const m = market(s.pkey, s.id, s.matchQ || 0.5);
     if (!m) continue;
+    if (m.spread > 0.9 && (s.matchQ || 0.5) < 0.8) continue; // prices all over the place: not confident
     const cost = s.price + s.ship + extra;
     if (cost < m.med * 0.4 && (s.seller.fb < 5 || s.seller.pct < 95 || SCAM_WORDS.test(s.title))) { hidden++; continue; }
     if (SCAM_WORDS.test(s.title)) { hidden++; continue; }
@@ -290,7 +452,7 @@ async function sweep(env, manual) {
 
     // confidence score, built from parts the user can see
     const ev = (m.src === "sold" ? Math.min(1, m.n / 10) : Math.min(0.5, m.n / 16)) * Math.max(0.3, 1 - Math.min(1, m.spread));
-    const match = s.pkey.startsWith("e") ? 1 : s.pkey.split(" ").length >= 2 ? 0.75 : 0.5;
+    const match = s.matchQ || 0.5;
     const sel = s.seller.fb >= 50 && s.seller.pct >= 99 ? 1 : s.seller.fb >= 10 && s.seller.pct >= 98 ? 0.7 : s.seller.fb >= 5 ? 0.4 : 0.15;
     const mar = lowProfit <= 0 ? 0 : Math.min(1, lowProfit / Math.max(1, r.minProfit));
     let comp;
@@ -402,7 +564,7 @@ async function push(env, title, body, data) {
           token: dv.t,
           notification: { title, body },
           data: Object.fromEntries(Object.entries(data || {}).map(([k, v]) => [k, String(v)])),
-          android: { priority: "high", notification: { channel_id: "deals", icon: "ic_stat_flipscout", color: "#22c55e" } },
+          android: { priority: "high", notification: { channel_id: "deals", icon: "ic_stat_flipscout", color: "#22c55e", default_sound: true, default_vibrate_timings: true, notification_priority: "PRIORITY_MAX", visibility: "PUBLIC" } },
         } }),
       });
       if (r.ok) sent++;

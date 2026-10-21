@@ -456,7 +456,7 @@ export default {
     if (env.DB) ctx.waitUntil(sweep(env, false).catch(() => {}));
   },
 
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     const u = new URL(request.url), P = (k) => u.searchParams.get(k);
     if (!env.APP_KEY || P("key") !== env.APP_KEY) return json({ error: "wrong key" }, 401);
@@ -513,9 +513,12 @@ export default {
           return json({ ok: true, devices: Math.min(devices.length, 5), ready: !!env.FCM_SA });
         }
         if (P("test")) {
-          const r = await push(env, "FlipScout test alert", "Alerts are working. Deals will arrive like this.", { kind: "test" });
-          if (!r.sent) return json({ error: r.error || "couldn't reach your phone" }, 400);
-          return json({ ok: true, sent: r.sent });
+          // check alerts are possible now, then send the test 10 seconds later so the user can close the app and see a real notification
+          if (!env.FCM_SA) return json({ error: "alerts not set up on the service yet" }, 400);
+          if (!(await kvGet(env, "devices", [])).length) return json({ error: "no phone registered for alerts yet" }, 400);
+          const send = new Promise((res) => setTimeout(res, 10000)).then(() => push(env, "FlipScout test alert", "Alerts are working. Deals will arrive like this.", { kind: "test" }));
+          if (ctx && ctx.waitUntil) ctx.waitUntil(send); else await send;
+          return json({ ok: true, delayed: 10 });
         }
       } catch (e) {
         return json({ error: e.message }, 500);

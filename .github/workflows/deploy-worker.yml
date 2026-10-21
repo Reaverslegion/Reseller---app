@@ -12,16 +12,36 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Deploy worker with cloud backup storage
+      - name: Deploy worker with backup, hunting database and 5-minute schedule
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           npm i -g wrangler@3
-          findid() { wrangler kv namespace list | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s.slice(s.search(/^\[/m)));const n=a.find(x=>x.title.endsWith("flipscout-backup"));console.log(n?n.id:"")})'; }
-          ID=$(findid)
-          if [ -z "$ID" ]; then wrangler kv namespace create flipscout-backup; ID=$(findid); fi
-          test -n "$ID"
-          printf 'name = "flipscout-search"\nmain = "worker.js"\ncompatibility_date = "2024-09-23"\nkeep_vars = true\n\n[[kv_namespaces]]\nbinding = "BACKUP"\nid = "%s"\n' "$ID" > wrangler.toml
+          pick() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const i=s.search(/^\[/m);const a=i<0?[]:JSON.parse(s.slice(i));const n=a.find(x=>(x.title||x.name||"").endsWith(process.argv[1]));console.log(n?(n.id||n.uuid):"")})' "$1"; }
+          KV=$(wrangler kv namespace list | pick flipscout-backup)
+          if [ -z "$KV" ]; then wrangler kv namespace create flipscout-backup; KV=$(wrangler kv namespace list | pick flipscout-backup); fi
+          test -n "$KV"
+          DB=$(wrangler d1 list --json | pick flipscout-db)
+          if [ -z "$DB" ]; then wrangler d1 create flipscout-db; DB=$(wrangler d1 list --json | pick flipscout-db); fi
+          test -n "$DB"
+          cat > wrangler.toml <<TOML
+          name = "flipscout-search"
+          main = "worker.js"
+          compatibility_date = "2024-09-23"
+          keep_vars = true
+
+          [[kv_namespaces]]
+          binding = "BACKUP"
+          id = "$KV"
+
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "flipscout-db"
+          database_id = "$DB"
+
+          [triggers]
+          crons = ["*/5 * * * *"]
+          TOML
           cat wrangler.toml
           wrangler deploy

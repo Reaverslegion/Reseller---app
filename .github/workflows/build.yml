@@ -48,9 +48,12 @@ jobs:
         env:
           KS: ${{ secrets.KEYSTORE_B64 }}
         run: |
-          mkdir -p ~/.android
-          echo "$KS" | base64 -d > ~/.android/debug.keystore
-          test -s ~/.android/debug.keystore
+          echo "$KS" | base64 -d > android/app/flipscout.keystore
+          test -s android/app/flipscout.keystore
+          keytool -list -v -keystore android/app/flipscout.keystore -storepass android | grep SHA256
+          cat >> android/app/build.gradle <<'EOF'
+          android { signingConfigs { debug { storeFile file('flipscout.keystore'); storePassword 'android'; keyAlias 'androiddebugkey'; keyPassword 'android' } } }
+          EOF
       - name: Build APK
         run: cd android && chmod +x gradlew && ./gradlew assembleDebug
       - uses: actions/upload-artifact@v4

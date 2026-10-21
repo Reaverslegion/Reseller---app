@@ -1,7 +1,8 @@
 // FlipScout service: app <-> this worker <-> eBay Browse API (eBay UK)
 // Secrets: APP_KEY, EBAY_ID, EBAY_SECRET.  Bindings (set by the deploy workflow): DB (D1), BACKUP (KV)
 // Runs every 5 minutes (cron) to hunt for deals in the user's categories, learn sold prices from
-// ending auctions, watch followed listings and send phone alerts through ntfy.
+// ending auctions, watch followed listings and send FlipScout phone alerts (Firebase Cloud Messaging).
+// Push alerts need the secret FCM_SA (the Firebase service-account JSON), set by the deploy workflow.
 //
 // Endpoints (all need ?key=APP_KEY):
 //   search  ?q=&max=&region=&cat=        one-off keyword search (used by Check)
@@ -131,7 +132,7 @@ function cleanConfig(c) {
     rules: { ...DEFAULT_RULES, ...(c.rules || {}) },
     types: { bin: true, auction: true, misspelt: true, spares: false, ...(c.types || {}) },
     region: c.region === "any" ? "any" : "uk",
-    ntfy: typeof c.ntfy === "string" ? c.ntfy.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64) : "",
+    alerts: c.alerts !== false,
     interval: [5, 10, 15, 30, 60].includes(+c.interval) ? +c.interval : 10,
     paused: !!c.paused,
   };
@@ -343,7 +344,7 @@ async function sweep(env, manual) {
   await checkFollows(env, cfg);
 
   // 9. phone alerts for strong new deals
-  if (cfg.ntfy) {
+  if (cfg.alerts && env.FCM_SA) {
     const rows = await D.prepare("SELECT id, data FROM deals WHERE notified=0 AND score>=? ORDER BY score DESC LIMIT 5").bind(r.alertScore).all();
     for (const row of rows.results || []) {
       const d = JSON.parse(row.data);
@@ -351,7 +352,7 @@ async function sweep(env, manual) {
       const msg = d.type === "AUC"
         ? `Bid up to £${d.maxBid.toFixed(2)} (now £${d.price.toFixed(2)}). Score ${d.score}.`
         : `£${d.cost.toFixed(2)} now, about £${d.profit.toFixed(0)} profit. Score ${d.score}.`;
-      await notify(cfg.ntfy, d.title.slice(0, 80), msg, d.url, d.score >= 85 ? 5 : 4);
+      await push(env, d.title.slice(0, 80), msg, { url: d.url, id: d.id, kind: "deal" });
     }
     await D.prepare("UPDATE deals SET notified=1 WHERE notified=0").run();
   }
@@ -359,14 +360,57 @@ async function sweep(env, manual) {
   return report;
 }
 
-async function notify(topic, title, message, click, priority) {
-  try {
-    await fetch("https://ntfy.sh/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ topic, title, message, click, priority, tags: ["moneybag"] }),
-    });
-  } catch (e) {}
+/* ---------------- FlipScout push alerts (Firebase Cloud Messaging v1) ---------------- */
+const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const b64urlStr = (s) => b64url(new TextEncoder().encode(s));
+async function fcmAccess(env) {
+  const c = await kvGet(env, "fcmtok", null);
+  if (c && c.exp > Date.now()) return c;
+  const sa = JSON.parse(env.FCM_SA);
+  const iat = Math.floor(Date.now() / 1000);
+  const head = b64urlStr(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const body = b64urlStr(JSON.stringify({ iss: sa.client_email, scope: "https://www.googleapis.com/auth/firebase.messaging", aud: "https://oauth2.googleapis.com/token", iat, exp: iat + 3600 }));
+  const pem = sa.private_key.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
+  const der = Uint8Array.from(atob(pem), (ch) => ch.charCodeAt(0));
+  const key = await crypto.subtle.importKey("pkcs8", der, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(head + "." + body));
+  const r = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "grant_type=" + encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer") + "&assertion=" + head + "." + body + "." + b64url(sig),
+  });
+  if (!r.ok) throw new Error("alert sign-in failed (" + r.status + ")");
+  const d = await r.json();
+  const out = { t: d.access_token, project: sa.project_id, exp: Date.now() + (d.expires_in - 300) * 1000 };
+  await kvSet(env, "fcmtok", out);
+  return out;
+}
+async function push(env, title, body, data) {
+  if (!env.FCM_SA) return { sent: 0, error: "alerts not set up on the service yet" };
+  let devices = await kvGet(env, "devices", []);
+  if (!devices.length) return { sent: 0, error: "no phone registered for alerts yet" };
+  let tok;
+  try { tok = await fcmAccess(env); } catch (e) { return { sent: 0, error: e.message }; }
+  let sent = 0;
+  const dead = [];
+  for (const dv of devices) {
+    try {
+      const r = await fetch(`https://fcm.googleapis.com/v1/projects/${tok.project}/messages:send`, {
+        method: "POST",
+        headers: { Authorization: "Bearer " + tok.t, "Content-Type": "application/json" },
+        body: JSON.stringify({ message: {
+          token: dv.t,
+          notification: { title, body },
+          data: Object.fromEntries(Object.entries(data || {}).map(([k, v]) => [k, String(v)])),
+          android: { priority: "high", notification: { channel_id: "deals", icon: "ic_stat_flipscout", color: "#22c55e" } },
+        } }),
+      });
+      if (r.ok) sent++;
+      else if (r.status === 404 || r.status === 400) dead.push(dv.t);
+    } catch (e) {}
+  }
+  if (dead.length) await kvSet(env, "devices", devices.filter((d) => !dead.includes(d.t)));
+  return { sent };
 }
 
 async function checkFollows(env, cfg) {
@@ -397,10 +441,10 @@ async function checkFollows(env, cfg) {
         if (f.type === "AUC" && f.end - now < 60 * 60000 && f.price < row.max && row.alerted !== "ending") alert = "ending";
       }
       await D.prepare("UPDATE follows SET data=?, alerted=COALESCE(?, alerted) WHERE id=?").bind(JSON.stringify(f), alert || null, row.id).run();
-      if (alert && cfg.ntfy) {
-        await notify(cfg.ntfy, (f.title || "Followed listing").slice(0, 80),
+      if (alert && cfg.alerts) {
+        await push(env, (f.title || "Followed listing").slice(0, 80),
           alert === "under" ? `Now £${((f.price || 0) + (f.ship || 0)).toFixed(2)}, under your max of £${row.max.toFixed(2)}.`
-            : `Ends within the hour. Current bid £${f.price.toFixed(2)}, your max £${row.max.toFixed(2)}.`, f.url, 5);
+            : `Ends within the hour. Current bid £${f.price.toFixed(2)}, your max £${row.max.toFixed(2)}.`, { url: f.url, id: row.id, kind: "follow" });
       }
     } catch (e) {}
   }
@@ -418,7 +462,7 @@ export default {
     if (!env.APP_KEY || P("key") !== env.APP_KEY) return json({ error: "wrong key" }, 401);
 
     // ---- hunting (needs the database) ----
-    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "test"].some((k) => u.searchParams.has(k));
+    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "test", "device"].some((k) => u.searchParams.has(k));
     if (huntCall) {
       if (!env.DB) return json({ error: "hunting database not set up yet" }, 501);
       try {
@@ -459,11 +503,19 @@ export default {
           await env.DB.prepare("DELETE FROM follows WHERE id=?").bind(String(P("unfollow")).replace(/\D/g, "")).run();
           return json({ ok: true });
         }
+        if (P("device") && request.method === "POST") {
+          const b = JSON.parse(await request.text());
+          const t = String(b.token || "").slice(0, 400);
+          if (t.length < 20) return json({ error: "bad device token" }, 400);
+          let devices = (await kvGet(env, "devices", [])).filter((d) => d.t !== t);
+          devices.unshift({ t, at: Date.now(), name: String(b.name || "").slice(0, 60) });
+          await kvSet(env, "devices", devices.slice(0, 5));
+          return json({ ok: true, devices: Math.min(devices.length, 5), ready: !!env.FCM_SA });
+        }
         if (P("test")) {
-          const cfg = cleanConfig(await kvGet(env, "config", null));
-          if (!cfg.ntfy) return json({ error: "no alert topic saved yet" }, 400);
-          await notify(cfg.ntfy, "FlipScout test alert", "Alerts are working. You'll get deals like this.", "https://www.ebay.co.uk", 4);
-          return json({ ok: true });
+          const r = await push(env, "FlipScout test alert", "Alerts are working. Deals will arrive like this.", { kind: "test" });
+          if (!r.sent) return json({ error: r.error || "couldn't reach your phone" }, 400);
+          return json({ ok: true, sent: r.sent });
         }
       } catch (e) {
         return json({ error: e.message }, 500);

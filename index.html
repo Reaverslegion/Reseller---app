@@ -539,14 +539,13 @@ function vSettings(){
    <button class="choice ${r.seller==="private"?"on":""}" onclick="setSeller('private')">Private seller<small>No final value fee on most items (UK)</small></button>
    <button class="choice ${r.seller!=="private"?"on":""}" onclick="setSeller('business')">Business seller<small>${r.feePct}% + ${gbp(r.feeFixed)} per order</small></button>
    ${r.seller!=="private"?`<div class="row"><div><label for="r_feePct">Fee %</label><input id="r_feePct" inputmode="decimal" value="${r.feePct}" onchange="setRule('feePct',this.value)"></div><div><label for="r_feeFixed">Per-order fee £</label><input id="r_feeFixed" inputmode="decimal" value="${r.feeFixed}" onchange="setRule('feeFixed',this.value)"></div></div><div class="hint">Rates vary by category. Check eBay's fee page for yours.</div>`:`<div class="hint">If you buy to resell regularly, eBay and HMRC may treat you as a business.</div>`}</div>
-  ${(()=>{const h=H();return`<div class="card"><b>Phone alerts</b>${!connected()?`<div class="mu">Connect your Scan service first (Advanced, below).</div>`:!h.ntfy?`<div class="mu">Get a ping on your phone the moment a strong deal appears, even with FlipScout closed. Uses the free ntfy app.</div><button onclick="setupAlerts()">Set up phone alerts</button>`
-   :`<div class="mu" style="margin-top:4px">1. Install the free <b>ntfy</b> app: <a href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noopener" style="color:var(--ac);text-decoration:underline">open Play Store</a></div>
-    <div class="mu" style="margin-top:6px">2. Open ntfy, tap <b>+</b>, type this name exactly, then tap <b>Subscribe</b>:</div>
-    <div style="display:flex;gap:8px;align-items:center;margin-top:6px"><code style="flex:1;background:var(--card2);padding:10px 12px;border-radius:10px;font-size:15px;word-break:break-all;user-select:all">${esc(h.ntfy)}</code><button class="s" style="margin:0" onclick="copyTopic()">Copy</button></div>
-    <div class="mu" style="margin-top:6px">3. Tap <b>Send test alert</b> to check it works.</div>
-    <div class="btns"><button onclick="testAlert()">Send test alert</button></div>
+  ${(()=>{const h=H();return`<div class="card"><b>Phone alerts</b>${!connected()?`<div class="mu">Connect your Scan service first (Advanced, below).</div>`
+   :!PUSH.native?`<div class="mu">Alerts work in the installed FlipScout app on your phone.</div>`
+   :!(h.alerts&&PUSH.registered)?`<div class="mu">Get a FlipScout notification the moment a strong deal appears or a followed listing hits your price, even with the app closed.</div><button onclick="enableAlerts()">Turn on alerts</button>${PUSH.err?`<div class="hint warn">${esc(PUSH.err)}</div>`:""}`
+   :`<div class="li ok">✓ <span>Alerts are on for this phone.</span></div>
+    <div class="btns"><button onclick="testAlert()">Send test alert</button><button class="s" onclick="H().alerts=false;save();pushConfig();render()">Turn off</button></div>
     <label for="as">Alert me for deals scoring</label><select id="as" onchange="H().alertScore=+this.value;save();pushConfig()">${[[60,"60+ (more alerts)"],[70,"70+ (recommended)"],[85,"85+ (only the best)"]].map(o=>`<option value="${o[0]}"${h.alertScore===o[0]?" selected":""}>${o[1]}</option>`).join("")}</select>
-    <div class="hint">Keep the name private: anyone with it could see your alerts.</div>`}</div>
+    <details><summary>Not getting alerts?</summary><div class="mu">Some phones stop apps in the background to save battery. On Xiaomi, Redmi or POCO: open phone <b>Settings › Apps › FlipScout</b>, turn on <b>Autostart</b>, and set <b>Battery saver</b> to <b>No restrictions</b>. On Samsung: <b>Settings › Apps › FlipScout › Battery › Unrestricted</b>.</div></details>`}</div>
   <div class="card"><b>Hunting</b><div class="mu">${h.cats.length?`Hunting in ${h.cats.map(c=>esc(c.name)).join(", ")}.`:"No categories picked yet."}</div><button class="s" onclick="go('cats')">My categories</button>
    <div class="row"><div><label for="hp">Your postage out £</label><input id="hp" inputmode="decimal" value="${h.post}" onchange="setHunt('post',this.value)"></div><div><label for="hk">Packaging £</label><input id="hk" inputmode="decimal" value="${h.pack}" onchange="setHunt('pack',this.value)"></div></div>
    <div class="hint">Used for deal profit. Typical medium parcel: about £5 to £7.</div>
@@ -569,7 +568,7 @@ function vSettings(){
   <div class="card"><button class="s" onclick="ob=0;showOnb()">Show the welcome guide again</button><div class="mu" style="margin-top:10px">FlipScout ${VER}</div></div>`;
 }
 function setConn(v){v=String(v||"").trim();const i=v.indexOf("#");if(i>0){S.set.url=v.slice(0,i);S.set.key=v.slice(i+1)}else S.set.url=v;save();render();toast("Saved.");afterConn()}
-function afterConn(){if(connected()){CT=null;HD.deals=null;FL.list=null;if(H().cats.length)pushConfig();if(!S.items.length&&!S.base.length)cloudCheck(true);else cloudSoon()}}
+function afterConn(){if(connected()){CT=null;HD.deals=null;FL.list=null;if(H().cats.length)pushConfig();autoPush();if(!S.items.length&&!S.base.length)cloudCheck(true);else cloudSoon()}}
 async function copySetup(){const t=S.set.url+"#"+S.set.key;try{await navigator.clipboard.writeText(t);toast("Setup code copied. Keep it somewhere private.")}catch(e){openSheet(`<h2 style="margin-top:0">Setup code</h2><div class="mu">Long-press and copy. Keep it private.</div><textarea readonly>${esc(t)}</textarea><button onclick="closeSheet()">Done</button>`)}}
 function setHunt(k,v){if(String(v).trim()===""){toast("Left unchanged.");render();return}const n=num(v);if(n<0){toast("Can't be negative.");render();return}H()[k]=n;save();pushConfig();toast("Saved.")}
 function setSeller(v){S.rules.seller=v;save();pushConfig();render();toast(v==="private"?"Private seller: no final value fee.":"Business seller fees on.")}
@@ -647,14 +646,14 @@ function vScan(){
 }
 
 /* ---------- HUNTING (Today's Deals, Following, My categories, alerts) ---------- */
-const HDEF={cats:[],types:{bin:true,auction:true,misspelt:true,spares:false},ntfy:"",interval:10,alertScore:70,minScore:40,post:5,pack:1,bpf:true,paused:false};
+const HDEF={cats:[],types:{bin:true,auction:true,misspelt:true,spares:false},alerts:false,interval:10,alertScore:70,minScore:40,post:5,pack:1,bpf:true,paused:false};
 let HD={deals:null,report:null,learned:[],busy:false,err:"",filter:"all",at:0},FL={list:null,busy:false,err:""},DV=null;
 const H=()=>{S.hunt={...HDEF,...(S.hunt||{}),types:{...HDEF.types,...((S.hunt||{}).types||{})}};return S.hunt};
 const api=(q,body)=>fetch(`${S.set.url}?key=${encodeURIComponent(S.set.key)}&${q}`,body!==undefined?{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(body)}:{}).then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok||d.error)throw new Error(d.error||("error "+r.status));return d});
 const errText=e=>e.message==="Failed to fetch"?"no connection":e.message;
 let pcT=null;
 function pushConfig(now){clearTimeout(pcT);const go_=async()=>{if(!connected())return;const h=H(),r=S.rules;
-  try{await api("config=1",{cats:h.cats,types:h.types,ntfy:h.ntfy,interval:h.interval,paused:h.paused,region:S.set.region,
+  try{await api("config=1",{cats:h.cats,types:h.types,alerts:!!h.alerts,interval:h.interval,paused:h.paused,region:S.set.region,
    rules:{minProfit:r.minProfit,minRoi:r.minRoi,seller:r.seller,feePct:r.feePct,feeFixed:r.feeFixed,post:h.post,pack:h.pack,bpf:h.bpf,alertScore:h.alertScore,minScore:h.minScore}})}
   catch(e){toast("Couldn't save hunting settings: "+errText(e))}};
   if(now)return go_();pcT=setTimeout(go_,800)}
@@ -760,7 +759,7 @@ function vFollow(){
     ${!ended&&f.type==="AUC"?`<div class="hint" style="background:var(--card2);border-radius:12px;padding:10px 12px;color:var(--tx)">Put <b>${gbp(f.max)}</b> as your maximum bid on eBay. eBay then bids for you, only as much as needed.</div>`:""}
     <div class="btns">${ended?"":`<a href="${esc(ukUrl(f.url))}" target="_blank" rel="noopener"><button>${f.type==="AUC"?"Bid "+gbp(f.max)+" on eBay":"Open on eBay"}</button></a><button class="s" onclick="changeMax('${f.id}')">Change max</button>`}<button class="d" onclick="unfollow('${f.id}')">Remove</button></div></div>`};
   return`<h2>Following</h2>
-  ${connected()?`<div class="hint" style="margin:-6px 4px 12px">${H().ntfy?"Phone alerts are on.":"<span class='warn'>Phone alerts aren't set up yet.</span> <a href='#' onclick=\"go('settings');return false\">Set up</a>"}</div>`:""}
+  ${connected()?`<div class="hint" style="margin:-6px 4px 12px">${H().alerts&&PUSH.registered?"Phone alerts are on.":"<span class='warn'>Phone alerts are off.</span> <a href='#' onclick=\"go('settings');return false\">Set up</a>"}</div>`:""}
   ${FL.err?`<div class="card bad">${esc(FL.err)}</div>`:""}
   ${L.length?L.map(fcard).join(""):connected()?`<div class="card empty">${I.bell}<b>Not following anything yet</b><div class="mu">Open a deal and tap <b>Follow</b>, then set the most you'd pay. FlipScout watches it and alerts you.</div><button onclick="go('deals')">See today's deals</button></div>`:""}
   ${saved.length?`<h2 style="margin-top:20px">Saved checks</h2>`+saved.map(i=>`<div class="card"><b>${esc(i.name)}</b><div class="mu" style="margin-top:4px">${esc(i.cond||"")} · cost ${gbp(i.buy)} · profit ${gbp(i.expProfit||0)}${i.maxBuy!=null?` · pay up to ${gbp(i.maxBuy)}`:""}</div>
@@ -791,10 +790,30 @@ function addCat(){const id=CAT.h;if(!id||!CT||!CT[id]){toast("Pick a category fi
   h.cats.push({id,name:CT[id].n,path:catPathOf(id)});CAT.h="";save();pushConfig(true);render();toast(`Hunting in ${CT[id].n}.`)}
 function rmCat(i){const h=H(),[c]=h.cats.splice(i,1);save();pushConfig();render();toast("Removed.","Undo",()=>{h.cats.splice(i,0,c);save();pushConfig();render()})}
 /* alerts */
-function newTopic(){const a="abcdefghijkmnpqrstuvwxyz23456789";let t="flipscout-";const r=new Uint8Array(14);crypto.getRandomValues(r);r.forEach(x=>t+=a[x%a.length]);return t}
-function setupAlerts(){const h=H();if(!h.ntfy){h.ntfy=newTopic();save();pushConfig(true)}render()}
-async function copyTopic(){try{await navigator.clipboard.writeText(H().ntfy);toast("Copied.")}catch(e){toast("Long-press the name to copy it.")}}
-async function testAlert(){try{await pushConfig(true);await api("test=1");toast("Test alert sent. Check your phone.")}catch(e){toast("Couldn't send: "+errText(e))}}
+/* FlipScout's own push notifications (Firebase via the Capacitor plugin) */
+const PN=()=>window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform()&&window.Capacitor.Plugins&&window.Capacitor.Plugins.PushNotifications;
+const PUSH={native:!!PN(),registered:false,err:"",token:""};
+let pushReady=false;
+function pushListeners(){const P=PN();if(!P||pushReady)return;pushReady=true;
+  try{P.createChannel({id:"deals",name:"Deals and price alerts",description:"New deals and followed listings",importance:5,visibility:1,vibration:true})}catch(e){}
+  P.addListener("registration",async t=>{PUSH.token=t.value;PUSH.err="";
+    try{const r=await api("device=1",{token:t.value,name:"Android"});PUSH.registered=true;if(!r.ready)PUSH.err="Your service still needs its alert key. Finish the Firebase setup steps."}catch(e){PUSH.err="Couldn't register this phone: "+errText(e)}
+    if(tab==="settings"||tab==="follow")render()});
+  P.addListener("registrationError",e=>{PUSH.err="This phone couldn't register for alerts ("+((e&&e.error)||"unknown")+").";if(tab==="settings")render()});
+  P.addListener("pushNotificationReceived",n=>{toast((n.title||"FlipScout")+": "+(n.body||""),"View",()=>openPushed(n.data||{}))});
+  P.addListener("pushNotificationActionPerformed",a=>openPushed((a.notification&&a.notification.data)||{}));
+}
+function openPushed(d){if(d.kind==="follow"){FL.list=null;go("follow");return}
+  HD.deals=null;go("deals");loadDeals().then(()=>{const i=(HD.deals||[]).findIndex(x=>x.id===d.id);if(i>=0)openDeal(i)})}
+async function enableAlerts(){const P=PN();if(!P){toast("Alerts work in the installed app.");return}
+  pushListeners();PUSH.err="";
+  try{let st=await P.checkPermissions();if(st.receive!=="granted")st=await P.requestPermissions();
+    if(st.receive!=="granted"){PUSH.err="Notifications are blocked. Allow them for FlipScout in your phone's Settings › Apps › FlipScout › Notifications.";render();return}
+    H().alerts=true;save();pushConfig();await P.register();toast("Setting up alerts…")}
+  catch(e){PUSH.err="Couldn't turn on alerts: "+(e.message||e);render()}}
+async function autoPush(){const P=PN();if(!P||!connected()||!H().alerts)return;pushListeners();
+  try{const st=await P.checkPermissions();if(st.receive==="granted")await P.register()}catch(e){}}
+async function testAlert(){try{await api("test=1");toast("Test alert sent. It should pop up in a few seconds.")}catch(e){toast("Couldn't send: "+errText(e))}}
 
 /* ---------- WELCOME ---------- */
 const OB=[
@@ -816,6 +835,7 @@ function renderOnb(){
 function finishOnb(ex){try{localStorage.setItem(OKEY,"1")}catch(e){}$("onb").style.display="none";if(ex){F={...EXAMPLE};saveDraft();ED=null}tab=ex?"calc":(connected()?"deals":"calc");prev=[];render()}
 
 H();render();
+autoPush();
 try{if(!localStorage.getItem(OKEY))showOnb()}catch(e){}
 if(connected()&&!S.items.length&&!S.base.length)cloudCheck(true);
 </script>

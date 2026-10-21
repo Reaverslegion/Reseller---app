@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "290757458184",
+    "project_id": "flipscout-bc19a",
+    "storage_bucket": "flipscout-bc19a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:290757458184:android:3ea984c893de4dd19514bd",
+        "android_client_info": {
+          "package_name": "com.reaverslegion.flipscout"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCkkXOIgi7GhSDqgaHx2BgZYsPsxKh8V1I"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

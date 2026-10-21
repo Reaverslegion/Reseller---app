@@ -93,7 +93,7 @@ const KEY="resell_helper_v1",DKEY="flipscout_draft",OKEY="flipscout_seen_v1",VER
 const DEF={rules:{maxPrice:0,minProfit:15,minRoi:30,budget:200,maxStock:150,minSales:5,feePct:12.8,feeFixed:0.40,staleDays:30,minPct:35,seller:"business"},gate:[],items:[],base:[],set:{url:"",key:"",region:"uk",theme:"auto"}};
 const PRE=["Considered"],HOLD=["Bought","Listed","Returned"],DONE=["Sold","Done"],STOCK=["Bought","Listed","Sold","Done","Returned"];
 const OLDMAP={Identified:"Considered",Considered:"Considered",Purchased:"Bought",Received:"Bought",Tested:"Bought",Listed:"Listed",Sold:"Sold",Dispatched:"Sold",Completed:"Done",Returned:"Returned"};
-const BLANK={n:"",b:"",p:"",k:"",a:"",c:"Used",sp:"",q:"",x:""};
+const BLANK={n:"",b:"",p:"",k:"",a:"",c:"Used",sp:"",q:"",x:"",cat:"",catName:"",catPath:""};
 const EXAMPLE={n:"Sony WH-1000XM4 headphones",c:"Used",sp:"95\n102\n88\n110\n99\n105\n92\n97\n101\n94",b:"60",p:"4",k:"1",q:"sony wh-1000xm4",x:"case, box only, faulty, parts",a:""};
 
 /* ---------- icons ---------- */
@@ -247,12 +247,59 @@ function render(){
   $("gear").setAttribute("aria-label",tab==="settings"?"Back":"Settings");
   $("nav").innerHTML=TABS.map(t=>`<button class="${tab===t[0]?"on":""}" onclick="go('${t[0]}')" aria-label="${t[1]}"><span class="pill">${I[t[2]]}</span>${t[1]}</button>`).join("");
   $("app").innerHTML=({calc:vCalc,deals:vDeals,stock:vStock,dash:vDash,settings:vSettings,scan:vScan})[tab]();
-  if(tab==="calc")recalc();
+  if(tab==="calc"){recalc();catBox()}
   window.scrollTo(0,0);
 }
 
 /* ---------- CHECK ---------- */
 function upd(k,v){F[k]=v;saveDraft();recalc()}
+/* ---------- eBay category tree (cascading dropdowns, same as eBay UK) ---------- */
+const CKEY="flipscout_cats_v1";let CT=null,CTload=null;
+function buildCT(rows){const t={"0":{n:"All categories",p:null,c:[]}};rows.forEach(r=>{t[r[0]]={n:r[1],p:r[2],c:[]}});rows.forEach(r=>{const par=t[r[2]];if(par)par.c.push(r[0])});return t}
+function loadCats(force){
+  if(CT&&!force)return Promise.resolve(CT);
+  if(!force){try{const x=JSON.parse(localStorage.getItem(CKEY)||"null");if(x&&x.rows&&Date.now()-x.at<30*864e5){CT=buildCT(x.rows);return Promise.resolve(CT)}}catch(e){}}
+  const s=S.set;if(!s.url||!s.key)return Promise.reject(new Error("noconn"));
+  if(CTload)return CTload;
+  CTload=fetch(`${s.url}?key=${encodeURIComponent(s.key)}&tree=1`).then(async r=>{
+    if(r.status===401)throw new Error("wrong key");if(!r.ok)throw new Error("error "+r.status);
+    const d=await r.json();if(d.error)throw new Error(d.error);
+    const rows=[];(function walk(node,parent){(node.childCategoryTreeNodes||[]).forEach(ch=>{rows.push([ch.category.categoryId,ch.category.categoryName,parent]);walk(ch,ch.category.categoryId)})})(d.rootCategoryNode,"0");
+    if(!rows.length)throw new Error("empty category list");
+    try{localStorage.setItem(CKEY,JSON.stringify({at:Date.now(),rows}))}catch(e){}
+    CT=buildCT(rows);return CT}).finally(()=>{CTload=null});
+  return CTload;
+}
+function catChain(id){const out=[];let x=id;while(x&&x!=="0"&&CT[x]){out.unshift(x);x=CT[x].p}return out}
+const catPathOf=id=>catChain(id).map(x=>CT[x].n).join(" › ");
+const CAT={};/* holder key -> selected id */
+function catSelects(key){
+  const id=CAT[key]||"",chain=id?catChain(id):[],lv=[["0",chain[0]||""]];
+  chain.forEach((cid,i)=>{if(CT[cid].c.length)lv.push([cid,chain[i+1]||""])});
+  return lv.map(([par,sel],i)=>{const kids=CT[par].c.slice().sort((x,y)=>CT[x].n.localeCompare(CT[y].n));
+    return`<select aria-label="${i?"Subcategory":"Category"}" style="margin-top:${i?8:0}px" onchange="catPick('${key}',${i},this.value)"><option value="">${i?`All of ${esc(CT[par].n)}`:"Any category"}</option>${kids.map(k=>`<option value="${k}"${k===sel?" selected":""}>${esc(CT[k].n)}${CT[k].c.length?" ›":""}</option>`).join("")}</select>`}).join("");
+}
+function catPick(key,level,val){
+  const chain=CAT[key]?catChain(CAT[key]):[];
+  CAT[key]=val||(level>0?chain[level-1]:"");
+  if(key==="f"){F.cat=CAT.f;F.catName=CAT.f?CT[CAT.f].n:"";F.catPath=CAT.f?catPathOf(CAT.f):"";saveDraft()}
+  drawCat(key);
+}
+function drawCat(key){
+  const el=$(key==="f"?"catbox":"catsheet");if(!el)return;
+  if(!S.set.url||!S.set.key){el.innerHTML=`<div class="hint">Connect Scan (⚙️ Settings › Advanced) to choose an eBay category.</div>`;return}
+  if(!CT){el.innerHTML=`<div class="hint">Loading eBay's category list… (first time only, a few seconds)</div>`;
+    loadCats().then(()=>drawCat(key)).catch(e=>{const x=$(key==="f"?"catbox":"catsheet");if(x)x.innerHTML=`<div class="hint warn">Couldn't load eBay categories (${esc(e.message==="Failed to fetch"?"no connection":e.message)}).</div><button class="s" style="min-height:40px;padding:8px 14px" onclick="drawCat('${key}')">Try again</button>`});return}
+  el.innerHTML=catSelects(key)+`<div class="hint">${CAT[key]?`Scan searches only in <b>${esc(CT[CAT[key]].n)}</b> and its subcategories.`:"Pick the category, then subcategories, just like on eBay."}</div><button class="link" onclick="catSuggest('${key}')">Suggest from item name</button>`;
+}
+function catBox(){CAT.f=F.cat||"";drawCat("f")}
+async function catSuggest(key){
+  const s=S.set,q=key==="f"?(F.q||F.n).trim():(window._catQ||"");if(!q){toast("Add the item name first.");return}
+  try{const r=await fetch(`${s.url}?key=${encodeURIComponent(s.key)}&suggest=${encodeURIComponent(q)}`),d=await r.json();if(!r.ok||d.error)throw new Error(d.error||r.status);
+    const hit=(d.cats||[]).find(c=>CT&&CT[c.id]);if(!hit){toast("No suggestion found. Pick it from the list.");return}
+    const lv=catChain(hit.id).length-1;CAT[key]=hit.id;if(key==="f"){F.cat=hit.id;F.catName=CT[hit.id].n;F.catPath=catPathOf(hit.id);saveDraft()}drawCat(key);toast(`Suggested: ${CT[hit.id].n}. Change it if it's wrong.`)}
+  catch(e){toast("Couldn't get a suggestion right now.")}
+}
 let rT=null;
 function recalc(){clearTimeout(rT);rT=setTimeout(()=>{const el=$("res");if(el)el.innerHTML=vResult(evaluate(F))},120)}
 function vCalc(){
@@ -264,6 +311,7 @@ function vCalc(){
   ${blank&&!ei?`<div class="card"><b>New here?</b><div class="mu">See how a check works with a sample product.</div><button class="s" onclick="loadExample()">Try an example</button></div>`:""}
   <div class="card"><div class="step"><span class="num">1</span>What is it?</div>
    ${inp("n","Item name or model",'placeholder="e.g. RTX 2080, Sony WH-1000XM4"')}
+   <label>eBay category</label><div id="catbox"></div>
    <label for="f_c">Condition</label><select id="f_c" onchange="upd('c',this.value)">${["New","Used","Faulty","Incomplete / parts"].map(x=>`<option${F.c===x?" selected":""}>${x}</option>`).join("")}</select>
   </div>
   <div class="card"><div class="step"><span class="num">2</span>What does it sell for?</div>
@@ -323,7 +371,7 @@ function cancelEdit(){ED=null;F={...BLANK};saveDraft();render()}
 function addItem(status){
   const c=evaluate(F);if(c.empty){toast("Add some sold prices first.");return}
   if(!c.hasBuy){toast("Add the buy price first (step 3).");$("f_b")&&$("f_b").focus();return}
-  const d={name:F.n||"Unnamed item",cond:F.c,buy:c.buy,pack:c.pack,outPost:c.post,exp:c.med,expProfit:c.p,conf:c.conf,score:c.score,maxBuy:c.maxBuy,f:{...F}};
+  const d={name:F.n||"Unnamed item",cond:F.c,buy:c.buy,pack:c.pack,outPost:c.post,exp:c.med,expProfit:c.p,conf:c.conf,score:c.score,maxBuy:c.maxBuy,pricesOn:today(),f:{...F}};
   const old=ED&&S.items.find(i=>i.id===ED);
   if(old){Object.assign(old,d);if(status==="Bought"&&PRE.includes(old.status)){old.status="Bought";old.boughtOn=today()}
     if(DONE.includes(old.status)&&old.soldPrice!=null)old.profit=old.soldPrice-(old.fees||0)-(old.outPost||0)-old.buy-old.pack}
@@ -341,11 +389,40 @@ function edit(id){
 function track(){
   const c=evaluate(F);if(c.empty){toast("Add some sold prices first.");return}
   const q=(F.q||F.n).trim();if(!q){toast("Add the item name first.");return}
-  const b={id:Date.now(),name:F.n||q,q,x:F.x||"",med:c.med,cons:c.cons,count:c.count,conf:c.conf,post:c.post,pack:c.pack,on:today(),cond:F.c,sp:F.sp};
+  if(!F.cat&&!F.catAsked&&S.set.url&&S.set.key){F.catAsked=1;pickCat(null,true);return}
+  const b={id:Date.now(),name:F.n||q,q,x:F.x||"",med:c.med,cons:c.cons,count:c.count,conf:c.conf,post:c.post,pack:c.pack,on:today(),cond:F.c,sp:F.sp,cat:F.cat||"",catName:F.catName||""};
+  F.catAsked=0;
   S.base=S.base.filter(x=>x.q.toLowerCase()!==q.toLowerCase());S.base.unshift(b);save();toast(`Tracking "${q}". Scan pays up to ${gbp(prodMax(b))}.`,"Open Scan",()=>go("scan"));
 }
 
+/* category sheet for a tracked item (bid) or a saved deal (did) */
+function pickCat(bid,thenTrack,did){
+  const b=bid&&S.base.find(x=>x.id===bid),dl=did&&S.items.find(x=>x.id===did);
+  if(!S.set.url||!S.set.key){toast("Connect Scan first (Settings › Advanced).");return}
+  CAT.s=b?(b.cat||""):dl?((dl.f&&dl.f.cat)||""):(F.cat||"");window._catQ=b?b.q:dl?dealBase(dl).q:(F.q||F.n);
+  openSheet(`<h2 style="margin-top:0">Which eBay category?</h2><div class="mu">Scan will only search here, so you don't get accessories and parts.</div><div id="catsheet" style="margin-top:12px"></div>
+   <div class="btns"><button onclick="setCat(${bid||0},${thenTrack?1:0},${did||0})">${did?"Save and scan":thenTrack?"Save and track":"Save"}</button><button class="s" onclick="closeSheet()">Cancel</button></div>`);
+  drawCat("s");
+}
+function setCat(bid,thenTrack,did){
+  const id=CAT.s||"",name=id&&CT?CT[id].n:"",path=id&&CT?catPathOf(id):"";closeSheet();
+  if(did){const it=S.items.find(x=>x.id===did);if(it){it.f={...BLANK,...(it.f||{}),cat:id,catName:name,catPath:path,catAsked:1};save();scanDeal(did)}return}
+  if(bid){const b=S.base.find(x=>x.id===bid);if(b){b.cat=id;b.catName=name;save();render();toast(id?`Scanning only in ${name}.`:"Scanning all categories.")}return}
+  F.cat=id;F.catName=name;F.catPath=path;F.catAsked=1;saveDraft();if(tab==="calc")render();
+  if(thenTrack)track();
+}
 /* ---------- DEALS & STOCK ---------- */
+function dealBase(it){
+  const f={...BLANK,...(it.f||{})},c=evaluate(f);if(c.empty)return null;
+  return{id:"d"+it.id,deal:it.id,name:it.name,q:(f.q||f.n||it.name).trim(),x:f.x||"",med:c.med,cons:c.cons,count:c.count,conf:c.conf,post:num(f.p),pack:num(f.k),on:it.pricesOn||"saved deal",cond:f.c||it.cond,sp:f.sp,cat:f.cat||"",catName:f.catName||""};
+}
+function scanDeal(id){
+  const it=S.items.find(i=>i.id===id);if(!it)return;
+  if(!S.set.url||!S.set.key){go("settings");toast("Add the Scan connection under Advanced.");return}
+  const b=dealBase(it);if(!b){toast("No sold prices saved with this deal. Tap Edit and paste them in.");return}
+  if(!b.cat&&!(it.f&&it.f.catAsked)){pickCat(0,false,id);return}
+  go("scan");runScan([b],it.name);
+}
 function vDeals(){
   const l=S.items.filter(i=>PRE.includes(i.status)).sort((a,b)=>(b.score||0)-(a.score||0));
   if(!l.length)return`<h2>Deals</h2><div class="card empty">${I.deals}<b>Your watchlist is empty</b><div class="mu">Check an item and tap <b>Save to Deals</b> to keep it here. You can edit deals any time as prices change.</div><button onclick="go('calc')">Check an item</button></div>`;
@@ -353,7 +430,7 @@ function vDeals(){
     const good=i.maxBuy!=null?i.buy<=i.maxBuy:(i.expProfit||0)>=S.rules.minProfit;
     return`<div class="card"><div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><b>${esc(i.name)}</b><span class="chip ${good?"ok":"bad"}">${good?"Good buy":"Too pricey"}</span></div>
     <div class="mu" style="margin-top:4px">${esc(i.cond||"")} · cost ${gbp(i.buy)} · profit ${gbp(i.expProfit||0)}${i.maxBuy!=null?` · pay up to ${gbp(i.maxBuy)}`:""}</div>
-    <div class="btns"><button onclick="bought(${i.id})">I bought it</button><button class="s" onclick="edit(${i.id})">Edit</button>${i.url?`<a href="${esc(ukUrl(i.url))}" target="_blank" rel="noopener"><button class="s">Open on eBay</button></a>`:""}<button class="d" onclick="del(${i.id})">Delete</button></div></div>`}).join("");
+    <div class="btns"><button onclick="bought(${i.id})">I bought it</button><button class="s" onclick="scanDeal(${i.id})">Scan eBay</button><button class="s" onclick="edit(${i.id})">Edit</button>${i.url?`<a href="${esc(ukUrl(i.url))}" target="_blank" rel="noopener"><button class="s">Open on eBay</button></a>`:""}<button class="d" onclick="del(${i.id})">Delete</button></div></div>`}).join("");
 }
 function bought(id){const it=S.items.find(i=>i.id===id);if(!it)return;it.status="Bought";it.boughtOn=today();save();render();toast("Moved to Stock.","Undo",()=>{it.status="Considered";it.boughtOn="";save();render()})}
 const NEXT={Bought:["Listed","Mark as listed"],Listed:["Sold","Mark as sold"],Sold:["Done","Mark as done"],Returned:["Listed","Relist it"]};
@@ -461,17 +538,17 @@ function restore(){
 /* ---------- SCAN ---------- */
 function prodMax(b){return maxPay(b.med,b.cons,b.post,b.pack,false)}
 function untrack(id){const ix=S.base.findIndex(b=>b.id===id);if(ix<0)return;const [b]=S.base.splice(ix,1);save();render();toast("Stopped tracking.","Undo",()=>{S.base.splice(ix,0,b);save();render()})}
-async function runScan(){
-  const s=S.set,r=S.rules;
+async function runScan(list,label){
+  const s=S.set,r=S.rules;list=Array.isArray(list)?list:S.base;
   if(!s.url||!s.key){go("settings");toast("Add the Scan connection under Advanced.");return}
-  if(!S.base.length){toast("Track an item first: Check it, then tap Track for Scan.");return}
-  SC={res:[],busy:true,msg:"",prog:""};render();
+  if(!list.length){toast("Track an item first: Check it, then tap Track for Scan.");return}
+  SC={res:[],busy:true,msg:"",prog:"",label:label||""};render();
   const out=[],errs=[];let n=0;
-  for(const b of S.base){
-    n++;SC.prog=`Scanning ${n} of ${S.base.length}: ${b.name}`;const pe=$("prog");if(pe)pe.textContent=SC.prog;
+  for(const b of list){
+    n++;SC.prog=`Scanning ${n} of ${list.length}: ${b.name}`;const pe=$("prog");if(pe)pe.textContent=SC.prog;
     try{
       const lim=prodMax(b);if(lim<=0){errs.push(b.name+": no price passes your rules");continue}
-      const res=await fetch(`${s.url}?key=${encodeURIComponent(s.key)}&q=${encodeURIComponent(b.q)}&max=${Math.ceil(lim)}&region=${s.region||"uk"}`);
+      const res=await fetch(`${s.url}?key=${encodeURIComponent(s.key)}&q=${encodeURIComponent(b.q)}&max=${Math.ceil(lim)}&region=${s.region||"uk"}${b.cat?"&cat="+b.cat:""}`);
       if(res.status===401)throw new Error("wrong key (check Settings)");
       if(!res.ok)throw new Error("service error "+res.status);
       const d=await res.json();if(d.error)throw new Error(d.error);
@@ -489,19 +566,20 @@ async function runScan(){
     }catch(e){errs.push(b.name+": "+(e.message==="Failed to fetch"?"no connection":e.message))}
   }
   out.sort((a,b)=>b.p-a.p);
-  SC={res:out,busy:false,msg:errs.join(" · "),at:new Date().toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}),prog:""};render();
+  SC={res:out,busy:false,msg:errs.join(" · "),at:new Date().toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}),prog:"",label:label||"",list:label?list:null};render();
 }
 function addScan(i){
   const l=SC.res[i],b=l.b,r=S.rules;
-  S.items.unshift({id:Date.now(),url:l.url||"",f:{...BLANK,n:l.title,b:String(l.buy.toFixed(2)),p:String(b.post),k:String(b.pack),c:b.cond||"Used",sp:b.sp||"",q:b.q,x:b.x||""},name:l.title,cond:l.cond||b.cond||"",status:"Considered",buy:l.buy,pack:b.pack,outPost:b.post,exp:b.med,expProfit:l.p,conf:b.conf,maxBuy:l.lim,score:Math.round(Math.min(40,l.p/Math.max(1,r.minProfit)*20)+Math.min(20,l.roi/Math.max(1,r.minRoi)*10)+(b.conf==="High"?20:b.conf==="Medium"?10:0)),boughtOn:""});
+  S.items.unshift({id:Date.now(),url:l.url||"",f:{...BLANK,n:l.title,b:String(l.buy.toFixed(2)),p:String(b.post),k:String(b.pack),c:b.cond||"Used",sp:b.sp||"",q:b.q,x:b.x||"",cat:b.cat||"",catName:b.catName||""},name:l.title,cond:l.cond||b.cond||"",status:"Considered",buy:l.buy,pack:b.pack,outPost:b.post,exp:b.med,expProfit:l.p,conf:b.conf,maxBuy:l.lim,score:Math.round(Math.min(40,l.p/Math.max(1,r.minProfit)*20)+Math.min(20,l.roi/Math.max(1,r.minRoi)*10)+(b.conf==="High"?20:b.conf==="Medium"?10:0)),boughtOn:""});
   save();toast("Saved to Deals.","View",()=>go("deals"));
 }
 function vScan(){
   const ready=S.set.url&&S.set.key;
   let h=`<h2>Scan eBay</h2><div class="card"><div class="mu">Looks for live listings of your tracked items that are cheap enough to meet your rules${S.set.region==="any"?"":" (UK sellers only)"}.</div>
-   ${ready?`<button onclick="runScan()" ${SC.busy||!S.base.length?"disabled":""}>${SC.busy?"Scanning…":"Scan now"}</button><div id="prog" class="mu" style="margin-top:8px">${esc(SC.prog||"")}</div>`
+   ${ready?`<button onclick="runScan()" ${SC.busy||!S.base.length?"disabled":""}>${SC.busy&&!SC.label?"Scanning…":"Scan all tracked items"}</button><div id="prog" class="mu" style="margin-top:8px">${esc(SC.prog||"")}</div>`
    :`<div class="hint warn" style="margin-top:8px">Scan isn't connected yet.</div><button class="s" onclick="go('settings')">Open Settings</button>`}</div>`;
   if(SC.msg)h+=`<div class="card bad" style="font-size:15px">${esc(SC.msg)}</div>`;
+  if(SC.label)h+=`<div class="card" style="border-color:var(--ac)"><b>Results for ${esc(SC.label)}</b>${SC.list&&SC.list[0].cat?`<div class="mu">Category: ${esc(SC.list[0].catName)}</div>`:""}<div class="btns"><button onclick="runScan(SC.list,SC.label)" ${SC.busy||!SC.list?"disabled":""}>${SC.busy?"Scanning…":"Scan again"}</button>${SC.list&&SC.list[0].deal?`<button class="s" onclick="pickCat(0,false,${SC.list[0].deal})">Change category</button>`:""}</div></div>`;
   if(SC.res&&!SC.busy){
     h+=SC.res.length?`<div class="mu" style="margin:0 4px 10px">${SC.res.length} match${SC.res.length>1?"es":""} at ${SC.at}. Always read the listing before buying.</div>`:`<div class="card mu">No listings cheap enough right now (checked ${SC.at}). Try again later. Bargains come and go.</div>`;
     h+=SC.res.map((l,i)=>{const hr=l.end?new Date(l.end).getHours():null;
@@ -512,7 +590,7 @@ function vScan(){
      <div class="mu">Compared with ${l.b.count} sold prices saved ${l.b.on} (${l.b.conf} confidence)</div>
      <div class="btns"><a href="${esc(ukUrl(l.url))}" target="_blank" rel="noopener"><button>Open on eBay</button></a><button class="s" onclick="addScan(${i})">Save to Deals</button></div></div>`}).join("");
   }
-  h+=`<div class="card"><b>Tracked items</b>`+(S.base.length?S.base.map(b=>`<div style="padding:10px 0;border-top:1px solid var(--bd);margin-top:8px"><div><b>${esc(b.name)}</b></div><div class="mu">Pays up to <span class="ok" style="font-weight:700">${gbp(prodMax(b))}</span> · typical sold ${gbp(b.med)} · prices from ${b.on}</div><button class="d" style="min-height:40px;padding:8px 14px" onclick="untrack(${b.id})">Stop tracking</button></div>`).join(""):`<div class="mu" style="margin-top:6px">Nothing tracked yet. Check an item, then tap <b>Track for Scan</b>.</div><button class="s" onclick="go('calc')">Check an item</button>`)+`</div>`;
+  h+=`<div class="card"><b>Tracked items</b>`+(S.base.length?S.base.map(b=>`<div style="padding:10px 0;border-top:1px solid var(--bd);margin-top:8px"><div><b>${esc(b.name)}</b></div><div class="mu">Pays up to <span class="ok" style="font-weight:700">${gbp(prodMax(b))}</span> · typical sold ${gbp(b.med)} · prices from ${b.on}</div><div class="mu">Category: ${b.cat?esc(b.catName):`<span class="warn">any (may show accessories)</span>`}</div><div class="btns"><button class="s" style="min-height:40px;padding:8px 14px;margin-top:8px" onclick="pickCat(${b.id})">${b.cat?"Change category":"Set category"}</button><button class="d" style="min-height:40px;padding:8px 14px;margin-top:8px" onclick="untrack(${b.id})">Stop tracking</button></div></div>`).join(""):`<div class="mu" style="margin-top:6px">Nothing tracked yet. Check an item, then tap <b>Track for Scan</b>.</div><button class="s" onclick="go('calc')">Check an item</button>`)+`</div>`;
   return h;
 }
 

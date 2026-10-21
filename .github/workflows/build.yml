@@ -1,0 +1,51 @@
+name: Build FlipScout APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Prepare app
+        run: |
+          mkdir www
+          cp index.html www/index.html
+          sed -i 's/Resell Helper · eBay UK/FlipScout/; s/<title>Resell Helper/<title>FlipScout/' www/index.html
+          npm init -y
+          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
+          npx cap init "FlipScout" com.reaverslegion.flipscout --web-dir www
+          npx cap add android
+          npx cap sync android
+      - name: Make icon
+        continue-on-error: true
+        run: |
+          sudo apt-get install -y librsvg2-bin
+          mkdir assets
+          cat > icon.svg <<'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+            <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1e3a8a"/><stop offset="1" stop-color="#2563eb"/></linearGradient></defs>
+            <rect width="512" height="512" fill="url(#g)"/>
+            <circle cx="224" cy="224" r="120" fill="none" stroke="#ffffff" stroke-width="36"/>
+            <line x1="312" y1="312" x2="410" y2="410" stroke="#ffffff" stroke-width="44" stroke-linecap="round"/>
+            <polyline points="172,262 214,220 240,244 282,190" fill="none" stroke="#4ade80" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+            <polyline points="248,186 284,186 284,222" fill="none" stroke="#4ade80" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          EOF
+          rsvg-convert -w 1024 -h 1024 icon.svg -o assets/icon-only.png
+          npm install --save-dev @capacitor/assets
+          npx @capacitor/assets generate --android
+      - name: Build APK
+        run: cd android && chmod +x gradlew && ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flipscout-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk

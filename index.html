@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#2563eb">
+<title>Resell Helper</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--tx:#1b1d21;--mu:#6b7280;--ac:#2563eb;--ok:#15803d;--bad:#b91c1c;--warn:#b45309;--bd:#e2e5ea}
+@media (prefers-color-scheme:dark){:root{--bg:#111316;--card:#1c1f24;--tx:#eceef1;--mu:#9aa1ab;--ac:#60a5fa;--ok:#4ade80;--bad:#f87171;--warn:#fbbf24;--bd:#2d3239}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px system-ui,sans-serif;padding-bottom:76px}
+header{padding:14px 16px;font-weight:700;font-size:18px}
+main{padding:0 12px 12px;max-width:640px;margin:auto}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:12px}
+label{display:block;font-size:13px;color:var(--mu);margin:10px 0 4px}
+input,textarea,select{width:100%;padding:10px;font-size:16px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx)}
+textarea{min-height:90px}
+button{padding:10px 14px;font-size:15px;border:0;border-radius:8px;background:var(--ac);color:#fff;margin:8px 6px 0 0}
+button.s{background:var(--bd);color:var(--tx)}button.d{background:var(--bad)}
+.row{display:flex;gap:8px}.row>div{flex:1}
+.big{font-size:28px;font-weight:700}.stat{font-size:20px;font-weight:700}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.mu{color:var(--mu);font-size:13px}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--bd)}
+nav button{flex:1;margin:0;border-radius:0;background:none;color:var(--mu);padding:16px 0;font-size:14px}
+nav button.on{color:var(--ac);font-weight:700}
+.chk{margin:4px 0;font-size:14px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.chkrow{display:flex;gap:10px;align-items:flex-start;margin:10px 0;font-size:14px}.chkrow input{width:auto;margin-top:3px}
+</style>
+</head>
+<body>
+<header>Resell Helper · eBay UK</header>
+<main id="app"></main>
+<nav id="nav"></nav>
+<script>
+const KEY="resell_helper_v1";
+const DEF={rules:{maxPrice:50,minProfit:15,minRoi:30,budget:200,maxStock:150,minSales:5,feePct:12.8,feeFixed:0.30,staleDays:30},gate:[false,false,false,false,false],items:[],base:[],set:{url:"",key:""}};
+const STAGES=["Identified","Considered","Purchased","Received","Tested","Listed","Sold","Dispatched","Completed","Returned"];
+const PRE=["Identified","Considered"],HOLD=["Purchased","Received","Tested","Listed"],DONE=["Sold","Dispatched","Completed"];
+const GATE=["I can get UK eBay sold data through an authorised API or permitted export","It has enough history, dates and comparable-product detail","I can legally keep and analyse the data","The cost is sustainable for a small operation","The data quality is good enough to make buying decisions"];
+let S=load(),tab="calc",calc=null,F={n:"",b:"",p:"",k:"",a:"",c:"Used",sp:"",q:"",x:""},SC={res:null,busy:false,msg:""};
+
+function load(){try{const x=JSON.parse(localStorage.getItem(KEY));if(x&&x.rules)return{rules:{...DEF.rules,...x.rules},gate:x.gate||DEF.gate,items:x.items||[],base:x.base||[],set:{...DEF.set,...x.set}}}catch(e){}return JSON.parse(JSON.stringify(DEF))}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){alert("Could not save on this device.")}}
+const gbp=n=>(n<0?"-£":"£")+Math.abs(n).toFixed(2);
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const num=v=>{const n=parseFloat(v);return isNaN(n)?0:n};
+const $=id=>document.getElementById(id);
+const today=()=>new Date().toISOString().slice(0,10);
+const median=a=>{const s=[...a].sort((x,y)=>x-y),m=s.length>>1;return s.length%2?s[m]:(s[m-1]+s[m])/2};
+const pct=(a,p)=>{const s=[...a].sort((x,y)=>x-y),i=(s.length-1)*p,l=Math.floor(i),h=Math.ceil(i);return s[l]+(s[h]-s[l])*(i-l)};
+
+function parse(t){
+  return t.split(/\n|;/).map(l=>{
+    let d=null,m1=l.match(/\d{4}-\d{2}-\d{2}/),m2=l.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if(m1)d=new Date(m1[0]);else if(m2)d=new Date(m2[3]+"-"+m2[2].padStart(2,"0")+"-"+m2[1].padStart(2,"0"));
+    const rest=l.replace(/\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{4}/g,"").replace(/[£,]/g,"");
+    const m=rest.match(/\d+(\.\d+)?/);
+    return m?{p:parseFloat(m[0]),d:d&&!isNaN(d)?d:null}:null}).filter(Boolean);
+}
+
+function money(){
+  const r=S.rules,I=S.items;
+  const reserved=I.filter(i=>i.status==="Considered").reduce((t,i)=>t+i.buy,0);
+  const hold=I.filter(i=>HOLD.includes(i.status));
+  const committed=hold.reduce((t,i)=>t+i.buy+i.pack,0);
+  const done=I.filter(i=>DONE.includes(i.status));
+  const realised=done.reduce((t,i)=>t+i.profit,0);
+  const spent=done.reduce((t,i)=>t+i.buy+i.pack,0);
+  const days=done.filter(i=>i.boughtOn&&i.soldOn).map(i=>(new Date(i.soldOn)-new Date(i.boughtOn))/864e5);
+  const errs=done.filter(i=>i.expProfit!=null).map(i=>i.profit-i.expProfit);
+  const stale=hold.filter(i=>i.boughtOn&&(Date.now()-new Date(i.boughtOn))/864e5>r.staleDays).length;
+  return{reserved,committed,realised,hold,done,stale,
+    cash:r.budget+realised-committed-reserved,
+    avgDays:days.length?days.reduce((a,b)=>a+b,0)/days.length:null,
+    roi:spent>0?realised/spent*100:null,
+    err:errs.length?errs.reduce((a,b)=>a+b,0)/errs.length:null,nErr:errs.length};
+}
+
+function runCalc(){
+  F={n:$("n").value,b:$("b").value,p:$("p").value,k:$("k").value,a:$("a").value,c:$("c").value,sp:$("sp").value,q:$("q").value,x:$("x").value};
+  const r=S.rules,buy=num(F.b),post=num(F.p),pack=num(F.k),active=num(F.a);
+  const rows=parse(F.sp),prices=rows.map(x=>x.p);
+  if(!prices.length){alert("Paste at least one sold price.");return}
+  const med=median(prices),avg=prices.reduce((a,b)=>a+b,0)/prices.length,cons=pct(prices,.25);
+  const outl=prices.filter(x=>x>med*1.5||x<med*.5).length;
+  const fee=x=>x*r.feePct/100+r.feeFixed;
+  const prof=x=>x-buy-fee(x)-post-pack;
+  const p=prof(med),pc=prof(cons),inv=buy+pack,roi=inv>0?p/inv*100:0;
+  let conf="Low";
+  if(prices.length>=10&&outl<=prices.length*.2)conf="High";else if(prices.length>=r.minSales)conf="Medium";
+  const dated=rows.filter(x=>x.d);let freq="";
+  if(dated.length>=2){const ts=dated.map(x=>+x.d),span=Math.max(1,(Math.max(...ts)-Math.min(...ts))/864e5);freq=`${dated.length} dated sales over ${Math.round(span)} days (about ${(dated.length/span*30).toFixed(1)} per 30 days)`}
+  const st=active>0?prices.length/(prices.length+active)*100:null;
+  const m=money();
+  const checks=[
+   [buy<=r.maxPrice,`Price ${gbp(buy)} within max ${gbp(r.maxPrice)}`],
+   [p>=r.minProfit,`Expected profit ${gbp(p)} vs min ${gbp(r.minProfit)}`],
+   [pc>0,`Conservative profit ${gbp(pc)} stays above £0`],
+   [roi>=r.minRoi,`ROI ${roi.toFixed(0)}% vs min ${r.minRoi}%`],
+   [prices.length>=r.minSales,`${prices.length} comparable sales vs min ${r.minSales}`],
+   [conf!=="Low",`Valuation confidence ${conf}`],
+   [m.cash>=buy,`Cash available ${gbp(m.cash)}`],
+   [m.committed+inv<=r.maxStock,`Unsold stock after buying ${gbp(m.committed+inv)} vs cap ${gbp(r.maxStock)}`]];
+  const score=Math.round(Math.max(0,Math.min(40,p/Math.max(1,r.minProfit)*20))+Math.max(0,Math.min(20,roi/Math.max(1,r.minRoi)*10))+(conf==="High"?20:conf==="Medium"?10:0)+(st==null?0:Math.min(20,st/3)));
+  calc={buy,post,pack,med,avg,cons,count:prices.length,outl,p,pc,roi,conf,checks,pass:checks.every(c=>c[0]),fee:fee(med),min:Math.min(...prices),max:Math.max(...prices),freq,st,score};
+  render();
+}
+
+function addItem(status){
+  if(!calc)return;
+  S.items.unshift({id:Date.now(),name:F.n||"Unnamed item",cond:F.c,status,buy:calc.buy,pack:calc.pack,outPost:calc.post,exp:calc.med,expProfit:calc.p,conf:calc.conf,score:calc.score,boughtOn:status==="Purchased"?today():""});
+  save();calc=null;F={n:"",b:"",p:"",k:"",a:"",c:"Used",sp:""};tab=status==="Purchased"?"stock":"deals";render();
+}
+function setStatus(id,st){
+  const it=S.items.find(i=>i.id===id);if(!it)return;
+  if(st==="Sold"){
+    const sp=prompt("Actual sale price in £ (what the buyer paid for the item):");if(sp===null)return;
+    const fe=prompt("Total eBay fees in £:",(num(sp)*S.rules.feePct/100+S.rules.feeFixed).toFixed(2));if(fe===null)return;
+    const po=prompt("Postage you paid in £:",String(it.outPost||0));if(po===null)return;
+    Object.assign(it,{soldPrice:num(sp),fees:num(fe),outPost:num(po),soldOn:today()});
+    it.profit=it.soldPrice-it.fees-it.outPost-it.buy-it.pack;
+  }
+  if(st==="Purchased"&&!it.boughtOn)it.boughtOn=today();
+  it.status=st;save();render();
+}
+function del(id){if(confirm("Delete this item?")){S.items=S.items.filter(i=>i.id!==id);save();render()}}
+
+function vCalc(){
+  const c=calc;
+  let h=`<div class="card"><b>Check a deal</b>
+  <label>Item name / model number</label><input id="n" value="${esc(F.n)}">
+  <label>Search words for eBay (used by Scan)</label><input id="q" value="${esc(F.q)}" placeholder="e.g. sony wh-1000xm4">
+  <label>Skip listings containing these words</label><input id="x" value="${esc(F.x)}" placeholder="faulty, spares, parts, case, broken">
+  <label>Condition (only use sold prices in the same condition)</label>
+  <select id="c">${["New","Used","Faulty","Incomplete / parts"].map(x=>`<option${F.c===x?" selected":""}>${x}</option>`).join("")}</select>
+  <div class="row"><div><label>Buy price £</label><input id="b" type="number" step="0.01" inputmode="decimal" value="${esc(F.b)}"></div>
+  <div><label>Postage out £</label><input id="p" type="number" step="0.01" inputmode="decimal" value="${esc(F.p)}"></div>
+  <div><label>Packaging £</label><input id="k" type="number" step="0.01" inputmode="decimal" value="${esc(F.k)}"></div></div>
+  <label>Sold prices from Seller Hub Product Research, one sale per line. Add the date if you have it, e.g. 42 2026-09-30</label>
+  <textarea id="sp" placeholder="40&#10;42 2026-09-30&#10;43&#10;45&#10;90">${esc(F.sp)}</textarea>
+  <label>Current competing listings (optional, for sell-through)</label>
+  <input id="a" type="number" inputmode="numeric" value="${esc(F.a)}">
+  <button onclick="runCalc()">Calculate</button></div>`;
+  if(c)h+=`<div class="card"><div class="mu">Expected net profit</div>
+    <div class="big ${c.p>=S.rules.minProfit?"ok":"bad"}">${gbp(c.p)}</div>
+    <div class="mu">Conservative (25th percentile price): ${gbp(c.pc)} · ROI ${c.roi.toFixed(0)}% · Deal score ${c.score}/100</div>
+    <div class="grid" style="margin-top:12px">
+     <div><div class="mu">Median sold</div><div class="stat">${gbp(c.med)}</div></div>
+     <div><div class="mu">Average sold</div><div class="stat">${gbp(c.avg)}</div></div>
+     <div><div class="mu">Sales used</div><div class="stat">${c.count}</div></div>
+     <div><div class="mu">Confidence</div><div class="stat ${c.conf==="High"?"ok":c.conf==="Low"?"bad":"warn"}">${c.conf}</div></div></div>
+    <div class="mu" style="margin-top:8px">Range ${gbp(c.min)} to ${gbp(c.max)} · estimated fees ${gbp(c.fee)}.
+    ${c.freq?"<br>"+c.freq+".":""}${c.st!=null?`<br>Simple sell-through: ${c.st.toFixed(0)}% (sold ÷ sold + active listings).`:""}
+    ${c.outl?`<br><span class="warn">${c.outl} price(s) far from the median. Check they are truly comparable.</span>`:""}</div></div>
+    <div class="card"><b class="${c.pass?"ok":"bad"}">${c.pass?"Meets all your rules":"Fails at least one rule"}</b>
+    ${c.checks.map(x=>`<div class="chk ${x[0]?"ok":"bad"}">${x[0]?"✓":"✗"} ${x[1]}</div>`).join("")}
+    <button onclick="track()">Track for scanning</button><button onclick="addItem('Purchased')">I bought it</button><button class="s" onclick="addItem('Considered')">Save as a deal</button></div>`;
+  return h;
+}
+
+function card(i,nx){
+  return`<div class="card"><b>${esc(i.name)}</b> <span class="mu">· ${i.status} · ${esc(i.cond||"")}</span>
+  <div class="mu">Cost ${gbp(i.buy)}${i.boughtOn?" · bought "+i.boughtOn:""} · expected profit ${gbp(i.expProfit||0)} · confidence ${i.conf||"?"}${i.score!=null?" · score "+i.score:""}</div>
+  ${DONE.includes(i.status)?`<div class="${i.profit>=0?"ok":"bad"}">Actual profit ${gbp(i.profit)} (sold ${gbp(i.soldPrice)}, fees ${gbp(i.fees)})</div>`:""}
+  ${nx?`<button onclick="setStatus(${i.id},'${nx}')">Move to ${nx}</button>`:""}
+  ${(i.status==="Listed"||DONE.includes(i.status))?`<button class="s" onclick="setStatus(${i.id},'Returned')">Returned</button>`:""}
+  <button class="d" onclick="del(${i.id})">Delete</button></div>`;
+}
+function vDeals(){
+  const l=S.items.filter(i=>PRE.includes(i.status)).sort((a,b)=>(b.score||0)-(a.score||0));
+  if(!l.length)return`<div class="card mu">No saved deals. Check a deal and tap "Save as a deal". Deals are ranked by score, highest first.</div>`;
+  return l.map(i=>card(i,i.status==="Identified"?"Considered":"Purchased")).join("");
+}
+function vStock(){
+  const l=S.items.filter(i=>!PRE.includes(i.status));
+  if(!l.length)return`<div class="card mu">No stock yet.</div>`;
+  return l.map(i=>{const k=STAGES.indexOf(i.status),nx=i.status==="Returned"||i.status==="Completed"?null:STAGES[k+1];return card(i,nx)}).join("");
+}
+function vDash(){
+  const m=money(),r=S.rules;
+  return`<div class="card"><div class="grid">
+   <div><div class="mu">Cash available</div><div class="stat ${m.cash<0?"bad":""}">${gbp(m.cash)}</div></div>
+   <div><div class="mu">Reserved for deals</div><div class="stat">${gbp(m.reserved)}</div></div>
+   <div><div class="mu">Tied up in stock</div><div class="stat">${gbp(m.committed)}</div></div>
+   <div><div class="mu">Realised profit</div><div class="stat ${m.realised>=0?"ok":"bad"}">${gbp(m.realised)}</div></div>
+   <div><div class="mu">Items sold</div><div class="stat">${m.done.length}</div></div>
+   <div><div class="mu">Realised ROI</div><div class="stat">${m.roi==null?"–":m.roi.toFixed(0)+"%"}</div></div>
+   <div><div class="mu">Avg days to sell</div><div class="stat">${m.avgDays==null?"–":m.avgDays.toFixed(1)}</div></div>
+   <div><div class="mu">Stock older than ${r.staleDays} days</div><div class="stat ${m.stale?"warn":""}">${m.stale}</div></div></div>
+   <div class="mu" style="margin-top:10px">Cash = budget ${gbp(r.budget)} + realised profit − stock cost − money reserved for saved deals.</div></div>
+   <div class="card"><b>How accurate were my estimates?</b>
+   <div class="mu" style="margin-top:6px">${m.err==null?"Sell some items first. Actual profit will be compared with what you expected.":`Across ${m.nErr} sale(s), actual profit averaged ${gbp(m.err)} ${m.err>=0?"above":"below"} the estimate. ${m.nErr<20?"That is too few sales to treat as a reliable pattern.":""}`}</div></div>`;
+}
+
+const FIELDS=[["maxPrice","Max price per item £"],["minProfit","Min expected profit £"],["minRoi","Min ROI %"],["budget","Total buying budget £"],["maxStock","Max money in unsold stock £"],["minSales","Min comparable sales"],["feePct","eBay fee % of sale"],["feeFixed","eBay fixed fee per sale £"],["staleDays","Days before stock counts as slow"]];
+function vRules(){
+  return`<div class="card"><b>Your rules</b>
+  ${FIELDS.map(f=>`<label>${f[1]}</label><input type="number" step="0.01" inputmode="decimal" id="r_${f[0]}" value="${S.rules[f[0]]}">`).join("")}
+  <div class="mu" style="margin-top:8px">The fee numbers are assumptions. Check your own eBay fees for your account and category, then edit them here.</div>
+  <button onclick="saveRules()">Save rules</button></div>
+  <div class="card"><b>Scan connection</b><div class="mu">Your Cloudflare Worker address and the secret key you chose for it.</div><label>Worker address</label><input id="s_url" value="${esc(S.set.url)}" placeholder="https://something.workers.dev"><label>Key</label><input id="s_key" value="${esc(S.set.key)}"><button onclick="saveRules()">Save</button></div>
+  <div class="card"><b>Data-source checklist</b><div class="mu">Tick these only once each is true. Until then, keep pasting sold prices by hand from Seller Hub.</div>
+  ${GATE.map((g,i)=>`<label class="chkrow"><input type="checkbox" ${S.gate[i]?"checked":""} onchange="S.gate[${i}]=this.checked;save()"><span>${g}</span></label>`).join("")}</div>
+  <div class="card"><b>Backup</b><div class="mu">Your data lives only on this phone. Back it up now and then.</div>
+  <button onclick="backup()">Export backup</button>
+  <label>Restore: paste backup text</label><textarea id="imp"></textarea>
+  <button class="s" onclick="restore()">Restore</button></div>`;
+}
+function saveRules(){FIELDS.forEach(f=>S.rules[f[0]]=num($("r_"+f[0]).value));S.set.url=$("s_url").value.trim();S.set.key=$("s_key").value.trim();save();alert("Saved.")}
+async function backup(){
+  const t=JSON.stringify(S);
+  try{if(navigator.share){await navigator.share({title:"Resell Helper backup",text:t});return}}catch(e){}
+  try{await navigator.clipboard.writeText(t);alert("Backup copied. Paste it into Notes.")}catch(e){prompt("Copy this backup:",t)}
+}
+function restore(){
+  try{const x=JSON.parse($("imp").value);if(!x.rules||!Array.isArray(x.items))throw 0;
+   if(!confirm("Replace current data with this backup?"))return;
+   S={rules:{...DEF.rules,...x.rules},gate:x.gate||DEF.gate,items:x.items,base:x.base||[],set:{...DEF.set,...x.set}};save();tab="dash";render()}
+  catch(e){alert("That doesn't look like a valid backup.")}
+}
+
+
+function track(){
+  if(!calc)return;if(!F.q.trim()){alert("Fill in 'Search words for eBay' first.");return}
+  const b={id:Date.now(),name:F.n||F.q,q:F.q.trim(),x:F.x||"",med:calc.med,cons:calc.cons,count:calc.count,conf:calc.conf,post:calc.post,pack:calc.pack,on:today()};
+  S.base=S.base.filter(x=>x.q.toLowerCase()!==b.q.toLowerCase());S.base.unshift(b);save();tab="scan";render();
+}
+function untrack(id){S.base=S.base.filter(b=>b.id!==id);save();render()}
+async function runScan(){
+  const s=S.set,r=S.rules;
+  if(!s.url||!s.key){alert("Add your Worker address and key on the Rules tab first.");return}
+  if(!S.base.length){alert("Track a product first (Check tab).");return}
+  SC={res:[],busy:true,msg:""};render();
+  const out=[],errs=[],fee=x=>x*r.feePct/100+r.feeFixed;
+  for(const b of S.base){
+    try{
+      const res=await fetch(`${s.url}?key=${encodeURIComponent(s.key)}&q=${encodeURIComponent(b.q)}&max=${r.maxPrice}`);
+      if(!res.ok)throw new Error("error "+res.status);
+      const d=await res.json();if(d.error)throw new Error(d.error);
+      const ex=(b.x||"").toLowerCase().split(/[,\s]+/).filter(Boolean);
+      for(const l of d.items||[]){
+        if(ex.some(w=>l.title.toLowerCase().includes(w)))continue;
+        const buy=l.price+(l.ship||0);if(buy>r.maxPrice)continue;
+        const p=b.med-fee(b.med)-b.post-b.pack-buy,pc=b.cons-fee(b.cons)-b.post-b.pack-buy;
+        const roi=(buy+b.pack)>0?p/(buy+b.pack)*100:0;
+        if(p<r.minProfit||roi<r.minRoi)continue;
+        out.push({...l,buy,p,pc,roi,b});
+      }
+    }catch(e){errs.push(b.name+": "+e.message)}
+  }
+  out.sort((a,b)=>b.p-a.p);
+  SC={res:out,busy:false,msg:errs.join("; "),at:new Date().toLocaleTimeString()};render();
+}
+function addScan(i){
+  const l=SC.res[i],b=l.b,r=S.rules;
+  S.items.unshift({id:Date.now(),name:l.title,cond:l.cond||"",status:"Considered",buy:l.buy,pack:b.pack,outPost:b.post,exp:b.med,expProfit:l.p,conf:b.conf,score:Math.round(Math.min(40,l.p/Math.max(1,r.minProfit)*20)+Math.min(20,l.roi/Math.max(1,r.minRoi)*10)+(b.conf==="High"?20:b.conf==="Medium"?10:0)),boughtOn:""});
+  save();alert("Saved to Deals.");
+}
+function vScan(){
+  let h=`<div class="card"><b>Scan eBay UK</b>
+  <div class="mu">Searches live listings for each tracked product and shows those that beat your rules against the sold-price median you saved for it.</div>
+  <button onclick="runScan()" ${SC.busy?"disabled":""}>${SC.busy?"Scanning...":"Scan now"}</button></div>`;
+  if(SC.msg)h+=`<div class="card bad">${esc(SC.msg)}</div>`;
+  if(SC.res&&!SC.busy){
+    h+=`<div class="mu" style="margin:0 4px 8px">${SC.res.length} match(es) at ${SC.at}. Always read the listing before buying.</div>`;
+    h+=SC.res.map((l,i)=>{const hr=l.end?new Date(l.end).getHours():null;
+     return`<div class="card"><b>${esc(l.title)}</b>
+     <div class="mu">${l.auction?"Auction, current bid (will likely rise)":"Buy It Now"} · ${esc(l.cond||"")}${hr!==null&&hr<6?" · ends midnight–6am":""}</div>
+     <div>Cost ${gbp(l.buy)} (incl. ${gbp(l.ship||0)} postage)</div>
+     <div class="${l.p>=S.rules.minProfit?"ok":"bad"}">Expected profit ${gbp(l.p)} · ROI ${l.roi.toFixed(0)}% · conservative ${gbp(l.pc)}</div>
+     <div class="mu">vs median ${gbp(l.b.med)} from ${l.b.count} sales (${l.b.conf} confidence, saved ${l.b.on})</div>
+     <a href="${esc(l.url)}" target="_blank" rel="noopener"><button>Open on eBay</button></a><button class="s" onclick="addScan(${i})">Save as deal</button></div>`}).join("");
+  }
+  h+=`<div class="card"><b>Tracked products</b>`+(S.base.length?S.base.map(b=>`<div class="chk">${esc(b.name)} · median ${gbp(b.med)} · ${b.count} sales · saved ${b.on} <button class="d" onclick="untrack(${b.id})">Remove</button></div>`).join(""):`<div class="mu">None yet. On the Check tab, calculate a product then tap "Track for scanning".</div>`)+`</div>`;
+  return h;
+}
+
+const TABS=[["calc","Check"],["deals","Deals"],["stock","Stock"],["dash","Money"],["scan","Scan"],["rules","Rules"]];
+function render(){
+  $("nav").innerHTML=TABS.map(t=>`<button class="${tab===t[0]?"on":""}" onclick="tab='${t[0]}';render()">${t[1]}</button>`).join("");
+  $("app").innerHTML={calc:vCalc,deals:vDeals,stock:vStock,dash:vDash,rules:vRules,scan:vScan}[tab]();
+  window.scrollTo(0,0);
+}
+render();
+</script>
+</body>
+</html>

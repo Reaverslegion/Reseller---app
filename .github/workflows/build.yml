@@ -20,7 +20,7 @@ jobs:
           mkdir www
           cp index.html www/index.html
           npm init -y
-          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6 @capacitor/app@6
+          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6 @capacitor/app@6 @capacitor/push-notifications@6
           npx cap init "FlipScout" com.reaverslegion.flipscout --web-dir www
           npx cap add android
           npx cap sync android
@@ -44,6 +44,21 @@ jobs:
           find $R -name 'splash*.png' -delete
           cp splash-logo.png $R/drawable-nodpi/splash_logo.png
           echo '<layer-list xmlns:android="http://schemas.android.com/apk/res/android"><item android:drawable="@color/fs_bg"/><item><bitmap android:src="@drawable/splash_logo" android:gravity="center"/></item></layer-list>' > $R/drawable/splash.xml
+      - name: Notifications
+        run: |
+          R=android/app/src/main/res
+          if [ -f google-services.json ]; then cp google-services.json android/app/google-services.json; echo "Firebase config added"; else echo "No google-services.json yet: alerts will be off"; fi
+          mkdir -p $R/drawable-xxxhdpi
+          cp notif-icon.png $R/drawable-xxxhdpi/ic_stat_flipscout.png
+          for d in "mdpi 24" "hdpi 36" "xhdpi 48" "xxhdpi 72"; do
+            set -- $d
+            mkdir -p $R/drawable-$1
+            convert notif-icon.png -resize ${2}x${2} $R/drawable-$1/ic_stat_flipscout.png || true
+          done
+          mkdir -p $R/values
+          echo '<resources><color name="fs_accent">#22c55e</color></resources>' > $R/values/fs_notify.xml
+          sed -i 's#</application>#<meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_flipscout"/><meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/fs_accent"/><meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="deals"/></application>#' android/app/src/main/AndroidManifest.xml
+          grep -c ic_stat_flipscout android/app/src/main/AndroidManifest.xml
       - name: Signing key
         env:
           KS: ${{ secrets.KEYSTORE_B64 }}

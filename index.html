@@ -80,6 +80,14 @@ nav button.on .pill{background:var(--acbg)}
 .seg button{flex:1;margin:0;background:none;color:var(--mu);min-height:42px;padding:8px}
 .seg button.on{background:var(--card);color:var(--tx);box-shadow:var(--shadow)}
 a{color:inherit;text-decoration:none}
+
+.fac{padding:14px 0 2px;border-top:1px solid var(--bd);margin-top:12px}
+.fac-h{display:flex;justify-content:space-between;align-items:baseline}
+.fac-n{font-weight:700;font-size:16px}.fac-p{font-weight:800;font-size:17px}.fac-p small{font-weight:600;font-size:12px;color:var(--mu);margin-left:1px}
+.fac-w{color:var(--mu);font-size:14px;margin-top:2px}
+.meter{height:6px;border-radius:99px;background:var(--bd);margin-top:10px;overflow:hidden}
+.meter i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#10d98a,#a3e635)}
+.fac-d{font-size:14px;margin-top:8px}
 </style>
 </head>
 <body>
@@ -112,7 +120,7 @@ bell:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2
 chart:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-6"/></svg>'};
 
 /* ---------- state ---------- */
-let S=load(),tab=(S.set.url&&S.set.key?"deals":"calc"),prev=[],F=loadDraft(),ED=null,SC={res:null,busy:false,msg:"",prog:""},UNDO=null,sheetOn=false,ob=0;
+let S=load(),tab="deals",prev=[],F=loadDraft(),ED=null,SC={res:null,busy:false,msg:"",prog:""},UNDO=null,sheetOn=false,ob=0;
 function load(){
   try{const x=JSON.parse(localStorage.getItem(KEY));if(x&&x.rules){
     const old=x.rules.seller==null,rules={...DEF.rules,...x.rules};
@@ -256,7 +264,7 @@ function tip(k){const t=TIPS[k];openSheet(`<h2 style="margin-top:0">${t[0]}</h2>
 const ti=k=>`<button class="tip" aria-label="What is this?" onclick="event.stopPropagation();tip('${k}')">?</button>`;
 
 /* ---------- navigation ---------- */
-const TABS=[["deals","Deals","bolt"],["follow","Following","bell"],["calc","Check","check"],["book","Prices","chart"],["stock","Sell","stock"],["dash","Money","money"]];
+const TABS=[["deals","Deals","bolt"],["follow","Following","bell"],["book","Prices","chart"],["stock","Sell","stock"],["dash","Money","money"]];
 function go(t){if(t===tab)return;prev.push(tab);if(prev.length>20)prev.shift();tab=t;render()}
 function onBack(){
   if(sheetOn){closeSheet();return true}
@@ -413,7 +421,8 @@ function addItem(status){
   save();ED=null;F={...BLANK};saveDraft();prev=[];tab=PRE.includes(st)?"follow":"stock";render();
   toast(old?"Updated.":st==="Bought"?"Added to Sell.":"Saved. It's under Following.");
 }
-function edit(id){
+function edit(id){itemSheet(id)}
+function editOld(id){
   const it=S.items.find(i=>i.id===id);if(!it)return;
   F={...BLANK,n:it.name,b:String(it.buy??""),p:String(it.outPost??""),k:String(it.pack??""),c:it.cond||"Used",...(it.f||{})};
   ED=id;saveDraft();if(tab==="calc")render();else go("calc");
@@ -458,7 +467,7 @@ function scanDeal(id){
 }
 function vDeals(){
   const l=S.items.filter(i=>PRE.includes(i.status)).sort((a,b)=>(b.score||0)-(a.score||0));
-  if(!l.length)return`<h2>Deals</h2><div class="card empty">${I.deals}<b>Your watchlist is empty</b><div class="mu">Check an item and tap <b>Save to Deals</b> to keep it here. You can edit deals any time as prices change.</div><button onclick="go('calc')">Check an item</button></div>`;
+  if(!l.length)return`<h2>Deals</h2><div class="card empty">${I.deals}<b>Your watchlist is empty</b><div class="mu">Check an item and tap <b>Save to Deals</b> to keep it here. You can edit deals any time as prices change.</div><button onclick="go('book')">Check an item</button></div>`;
   return`<h2>Deals <span class="mu">· ${l.length} saved, best first</span></h2>`+l.map(i=>{
     const good=i.maxBuy!=null?i.buy<=i.maxBuy:(i.expProfit||0)>=S.rules.minProfit;
     return`<div class="card"><div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><b>${esc(i.name)}</b><span class="chip ${good?"ok":"bad"}">${good?"Good buy":"Too pricey"}</span></div>
@@ -469,9 +478,9 @@ function bought(id){const it=S.items.find(i=>i.id===id);if(!it)return;it.status=
 const NEXT={Bought:["Listed","Mark as listed"],Listed:["Sold","Mark as sold"],Sold:["Done","Mark as done"],Returned:["Listed","Relist it"]};
 function vStock(){
   const l=S.items.filter(i=>!PRE.includes(i.status));
-  if(!l.length)return`<h2>Sell</h2><div class="card empty">${I.stock}<b>Nothing to sell yet</b><div class="mu">When you buy something, tap <b>I bought it</b> and it appears here. Move it along as you list and sell it.</div><button onclick="go('calc')">Check an item</button></div>`;
+  if(!l.length)return`<h2>Sell</h2><div class="card empty">${I.stock}<b>Nothing to sell yet</b><div class="mu">Add things you've bought, then move them along as you list and sell them. Your profit shows in Money.</div><button onclick="itemSheet()">Add an item</button></div>`;
   const ord=s=>({Bought:0,Listed:1,Returned:2,Sold:3,Done:4})[s]??5;
-  return`<h2>Sell <span class="mu">· ${l.filter(i=>HOLD.includes(i.status)).length} unsold</span></h2>`+[...l].sort((a,b)=>ord(a.status)-ord(b.status)).map(i=>{
+  return`<div style="display:flex;justify-content:space-between;align-items:center;margin:6px 4px 12px"><h2 style="margin:0">Sell <span class="mu">· ${l.filter(i=>HOLD.includes(i.status)).length} unsold</span></h2><button style="margin:0" onclick="itemSheet()">+ Add</button></div>`+[...l].sort((a,b)=>ord(a.status)-ord(b.status)).map(i=>{
     const nx=NEXT[i.status],old=i.boughtOn&&HOLD.includes(i.status)&&(Date.now()-new Date(i.boughtOn))/864e5>S.rules.staleDays;
     const cls={Bought:"",Listed:"warn",Sold:"ok",Done:"ok",Returned:"bad"}[i.status];
     return`<div class="card"><div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><b>${esc(i.name)}</b><span class="chip ${cls}">${i.status}</span></div>
@@ -515,7 +524,7 @@ function del(id){
 /* ---------- MONEY ---------- */
 function vDash(){
   const m=money(),r=S.rules;
-  if(!S.items.length)return`<h2>Money</h2><div class="card empty">${I.chart}<b>Nothing to count yet</b><div class="mu">Once you buy and sell items, your cash, profit and how fast things sell show here. Your budget is ${gbp(r.budget)} (change it in Settings).</div><button onclick="go('calc')">Check an item</button></div>`;
+  if(!S.items.length)return`<h2>Money</h2><div class="card empty">${I.chart}<b>Nothing to count yet</b><div class="mu">Once you buy and sell items, your cash, profit and how fast things sell show here. Your budget is ${gbp(r.budget)} (change it in Settings).</div><button onclick="go('stock')">Go to Sell</button></div>`;
   return`<h2>Money</h2><div class="card"><div class="mu">Cash available to spend</div><div class="big ${m.cash<0?"bad":"ok"}">${gbp(m.cash)}</div>
    <div class="mu">Your budget ${gbp(r.budget)} + profit made ${gbp(m.realised)} − money in unsold stock ${gbp(m.committed)}</div></div>
    <div class="card"><div class="grid">
@@ -532,7 +541,7 @@ function vDash(){
 }
 
 /* ---------- SETTINGS ---------- */
-const FIELDS=[["minProfit","Minimum profit per item £","Skip anything that makes less than this."],["minRoi","Minimum return %","Profit as a % of what you spend. 30 means £30 back for every £100."],["budget","Total buying budget £","The money you're willing to have in reselling."],["maxStock","Max money in unsold stock £","Stops you tying up too much cash in stock."],["maxPrice","Overall max price per item £","Never pay more than this for one item. 0 means no limit."],["minSales","Minimum sold prices needed","Fewer than this and the price data isn't trusted."],["staleDays","Days before stock counts as slow",""],["minPct","Scan: ignore listings under this % of the typical price","Filters out cases, cables and parts. 35 is a good start."]];
+const FIELDS=[["minProfit","Minimum profit per item £","Skip anything that makes less than this."],["minRoi","Minimum return %","Profit as a % of what you spend. 30 means £30 back for every £100."],["budget","Total buying budget £","The money you're willing to have in reselling."],["maxStock","Max money in unsold stock £","Stops you tying up too much cash in stock."],["maxPrice","Overall max price per item £","Never pay more than this for one item. 0 means no limit."],["staleDays","Days before stock counts as slow",""]];
 function vSettings(){
   const r=S.rules,s=S.set;
   return`<h2>Settings</h2>
@@ -642,7 +651,7 @@ function vScan(){
      <div class="mu">Compared with ${l.b.count} sold prices saved ${l.b.on} (${l.b.conf} confidence)</div>
      <div class="btns"><a href="${esc(ukUrl(l.url))}" target="_blank" rel="noopener"><button>Open on eBay</button></a><button class="s" onclick="addScan(${i})">Save to Deals</button></div></div>`}).join("");
   }
-  h+=`<div class="card"><b>Tracked items</b>`+(S.base.length?S.base.map(b=>`<div style="padding:10px 0;border-top:1px solid var(--bd);margin-top:8px"><div><b>${esc(b.name)}</b></div><div class="mu">Pays up to <span class="ok" style="font-weight:700">${gbp(prodMax(b))}</span> · typical sold ${gbp(b.med)} · prices from ${b.on}</div><div class="mu">Category: ${b.cat?esc(b.catName):`<span class="warn">any (may show accessories)</span>`}</div><div class="btns"><button class="s" style="min-height:40px;padding:8px 14px;margin-top:8px" onclick="pickCat(${b.id})">${b.cat?"Change category":"Set category"}</button><button class="d" style="min-height:40px;padding:8px 14px;margin-top:8px" onclick="untrack(${b.id})">Stop tracking</button></div></div>`).join(""):`<div class="mu" style="margin-top:6px">Nothing tracked yet. Check an item, then tap <b>Track for Scan</b>.</div><button class="s" onclick="go('calc')">Check an item</button>`)+`</div>`;
+  h+=`<div class="card"><b>Tracked items</b>`+(S.base.length?S.base.map(b=>`<div style="padding:10px 0;border-top:1px solid var(--bd);margin-top:8px"><div><b>${esc(b.name)}</b></div><div class="mu">Pays up to <span class="ok" style="font-weight:700">${gbp(prodMax(b))}</span> · typical sold ${gbp(b.med)} · prices from ${b.on}</div><div class="mu">Category: ${b.cat?esc(b.catName):`<span class="warn">any (may show accessories)</span>`}</div><div class="btns"><button class="s" style="min-height:40px;padding:8px 14px;margin-top:8px" onclick="pickCat(${b.id})">${b.cat?"Change category":"Set category"}</button><button class="d" style="min-height:40px;padding:8px 14px;margin-top:8px" onclick="untrack(${b.id})">Stop tracking</button></div></div>`).join(""):`<div class="mu" style="margin-top:6px">Nothing tracked yet. Check an item, then tap <b>Track for Scan</b>.</div><button class="s" onclick="go('book')">Check an item</button>`)+`</div>`;
   return h;
 }
 
@@ -717,8 +726,26 @@ function openDeal(i){DV=(HD.deals||[])[i];if(!DV)return;const d=DV;d.live=undefi
     if(!r.live||r.tooDear){d.gone=r.live?"dear":"ended";HD.deals=(HD.deals||[]).filter(x=>x.id!==d.id)}
     else if(r.price!=null&&Math.abs(r.price+r.ship-(d.price+d.ship))>0.009){d.changed=true;d.price=r.price;d.ship=r.ship;d.bids=r.bids}
     if(tab==="deal"&&DV===d)render()}).catch(()=>{d.live=true;if(tab==="deal"&&DV===d)render()})}
-function bar(label,v,txt){const w=Math.round(Math.max(0,Math.min(1,v))*100),c=v>=0.7?"var(--ok)":v>=0.4?"var(--warn)":"var(--bad)";
-  return`<div style="margin-top:12px"><div style="display:flex;justify-content:space-between;font-size:15px"><span>${label}</span><span style="font-weight:700">${v>=0.85?"Strong":v>=0.6?"Good":v>=0.4?"Fair":"Weak"}</span></div><div style="height:8px;border-radius:9px;background:var(--bd);margin-top:6px"><div style="width:${w}%;height:8px;border-radius:9px;background:${c}"></div></div><div class="mu" style="margin-top:4px">${txt}</div></div>`}
+// "Why it scores": each part of the score, what it means in plain words, and the points it earned
+const FACTORS=[
+  ["evidence","Price evidence",25,"How sure FlipScout is about what this really sells for."],
+  ["match","Same item",20,"How closely this listing matches the items it's priced against."],
+  ["seller","Seller",15,"How trustworthy the seller looks from their feedback."],
+  ["margin","Safety margin",20,"Whether you'd still make money if it sells at the cheap end."],
+  ["competition","Your chances",10,"How likely you are to get it before other buyers."],
+  ["demand","Demand",10,"How quickly items like this sell."]];
+function scoreCard(d,ev){const p=d.parts||{},sel=d.seller||{};
+  const detail={evidence:ev,match:"Compared with "+(d.matchLabel||"similar listings")+". Check it's the same thing.",
+    seller:`${sel.pct||0}% positive from ${sel.fb||0} feedback`,
+    margin:d.lowProfit>0?`Still ${gbp(d.lowProfit)} profit if it sells for ${gbp(d.low)}`:`No profit if it sells for ${gbp(d.low)}`,
+    competition:(d.tags||[]).filter(t=>/new listing|bid|overnight|misspelt|best offer/i.test(t)).join(" · ")||"Nothing special",
+    demand:d.st!=null?`${Math.round(d.st)}% of listings sell${d.trend?" · prices "+d.trend:""}`:"Not known yet. Look up the sold prices to add it."};
+  const rows=FACTORS.filter(f=>p[f[0]]!=null||f[0]==="demand").map(([k,name,max,what])=>{
+    const v=Math.max(0,Math.min(1,p[k]!=null?+p[k]:0.6)),pts=Math.round(v*max),w=Math.round(v*100);
+    return`<div class="fac"><div class="fac-h"><span class="fac-n">${name}</span><span class="fac-p">${pts}<small>/${max}</small></span></div>
+      <div class="fac-w">${what}</div><div class="meter"><i style="width:${w}%"></i></div><div class="fac-d">${esc(detail[k])}</div></div>`}).join("");
+  return`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><b style="font-size:17px">Why it scores ${d.score}</b><span class="chip">${confWord(d.score)}</span></div>
+   <div class="mu" style="margin-top:4px">Out of 100. 70 or more is a strong deal and sends you an alert.</div>${rows}</div>`}
 function vDeal(){
   const d=DV;if(!d)return`<div class="card">That deal has gone.</div>`;
   const sp=d.kind==="spares",p=d.parts||{},sel=d.seller||{};
@@ -741,47 +768,61 @@ function vDeal(){
     ${d.type==="AUC"?`<div class="mu">Now ${gbp(d.price)} + ${gbp(d.ship)} postage · ${d.bids} bid${d.bids===1?"":"s"} · ${left(d.end)}</div>`:""}</div>
     <div style="text-align:center">${ring(d.score,true)}<div style="font-weight:700;font-size:13px;margin-top:4px">${confWord(d.score)}</div></div></div>
    <div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin-top:12px"><div><div class="mu">Cost now</div><div class="stat">${gbp(d.cost)}</div></div><div><div class="mu">Worth ${ti("median")}</div><div class="stat">${gbp(d.med)}</div></div><div><div class="mu">Pay up to ${ti("maxpay")}</div><div class="stat">${gbp(d.maxPay)}</div></div></div></div>
-  <div class="card"><b>Why it scores ${d.score}</b>
-   ${bar("Price evidence",d.src==="book"?p.evidence:p.evidence/(d.src==="sold"?1:0.5)*(d.src==="sold"?1:0.6),ev)}
-   ${bar("Same item match",p.match,"Compared with: "+esc(d.matchLabel||"similar listings")+". Check the listing matches")}
-   ${bar("Seller",p.seller,`${sel.pct||0}% positive from ${sel.fb||0} feedback`)}
-   ${bar("Safety margin",p.margin,d.lowProfit>0?`Still ${gbp(d.lowProfit)} profit if it sells at the low end (${gbp(d.low)})`:"No profit if it sells at the low end")}
-   ${bar("Competition",p.competition,(d.tags||[]).filter(t=>!/price|seller|falling/i.test(t)).join(" · ")||"Normal")}
-   ${p.demand!=null?bar("Demand",p.demand,d.st!=null?`${Math.round(d.st)}% of listings sell${d.trend?` · prices ${d.trend}`:""}`:"Not known yet. Look up the sold price below to add it."):""}</div>
+  ${scoreCard(d,ev)}
   ${bookCard(d)}
   <div class="card"><b>Costs</b>
    <div class="li"><span style="flex:1">Item + postage to you</span><span>${gbp(d.price+d.ship)}</span></div>
    <div class="li"><span style="flex:1">Buyer protection fee (estimate) ${ti("bpf")}</span><span>${gbp(d.extra||0)}</span></div>
    <div class="li"><span style="flex:1">eBay fees when you sell</span><span>${gbp(d.sellFee||0)}</span></div>
    <div class="li"><span style="flex:1">Postage + packaging out</span><span>${gbp(d.out||0)}</span></div></div>
-  <div class="btns"><a href="${esc(ukUrl(d.url))}" target="_blank" rel="noopener"><button>${d.type==="AUC"?"Bid on eBay":"Buy on eBay · "+gbp(d.price+d.ship)}</button></a><button class="s" onclick="followSheet()">Follow</button></div>
+  <div class="btns"><a href="${esc(ukUrl(d.url))}" target="_blank" rel="noopener"><button>${d.type==="AUC"?"Bid on eBay":"Buy on eBay · "+gbp(d.price+d.ship)}</button></a><button class="s" onclick="followSheet()">Follow</button><button class="s" onclick="itemSheet(0,{name:DV.title,buy:DV.price+DV.ship,exp:DV.med,url:DV.url})">I bought it</button></div>
   <div class="hint">Always read the listing before you pay.</div>`;
 }
-/* ---------- PRICE BOOK ---------- */
-// The user searches (or taps Look up on a deal). eBay's research page opens in the eBay app with the search already
-// built (leave-out words included). They read the numbers, come back, and FlipScout asks for them.
-let BK={list:null,busy:false,err:"",cur:null,trend:"steady",pend:null,q:"",cond:"used",finding:false};
+/* ---------- PRICES (price book + the old Check, in one place) ---------- */
+// Search any item, open eBay Research in the eBay app with the search built for you, then type in what it showed:
+// either eBay's averages or several sold prices. Every saved item shows the most you can pay, and a quick profit check.
+let BK={list:null,busy:false,err:"",cur:null,trend:"steady",pend:null,q:"",cond:"used",finding:false,mode:"avg",open:-1};
+const bpfA=p=>0.1+Math.min(p,20)*0.07+Math.max(0,Math.min(p,300)-20)*0.04+Math.max(0,Math.min(p,4000)-300)*0.02;
+function priceMaths(p){const h=H(),post=p.post!=null?+p.post:+h.post,pack=+h.pack,med=+p.avg+(p.post!=null?+p.post:0);
+  const low=med*(p.trend==="falling"||(p.st!=null&&p.st<25)?0.8:0.85);
+  let mp=maxPay(med,low,post,pack,false);
+  if(h.bpf&&mp>0){let x=mp;for(let i=0;i<5;i++)x=mp-bpfA(x);mp=Math.floor(x*100)/100}
+  return{med,post,pack,payUpTo:mp}}
+function askProfit(p,ask){const m=priceMaths(p),extra=H().bpf?bpfA(ask):0,profit=m.med-fee(m.med)-m.post-m.pack-ask-extra,inv=ask+extra+m.pack;
+  return{profit,roi:inv>0?profit/inv*100:0,ok:profit>=S.rules.minProfit&&inv>0&&profit/inv*100>=S.rules.minRoi}}
 function bookCard(d){const L=d.look;if(!L)return"";
-  if(d.src==="book")return`<div class="card"><b>Price book</b><div class="mu">You checked this price ${ago(d.bookAt)}. FlipScout uses it for 30 days.</div><button class="s" onclick="lookUp(DV.look)">Check it again</button></div>`;
-  return`<div class="card"><b>Confirm the price</b><div class="mu">${d.src==="asking"?"This value is only a guess from asking prices. ":""}See what it really sells for. FlipScout opens it in the eBay app with the search done. Come back and type in what it shows.</div><button onclick="lookUp(DV.look)">Look up sold price</button></div>`}
-// eBay's research page only shows averages in the eBay app, so hand the link to the eBay app.
+  if(d.src==="book")return`<div class="card"><b>Price checked by you</b><div class="mu">You checked this price ${ago(d.bookAt)}. FlipScout uses it for 30 days.</div><button class="s" onclick="lookUp(DV.look)">Check it again</button></div>`;
+  return`<div class="card"><b>Confirm the price</b><div class="mu">${d.src==="asking"?"This value is only a guess from asking prices. ":""}See what it really sells for. The eBay app opens with the search done. Come back and type in what it shows.</div><button onclick="lookUp(DV.look)">Look up sold prices</button></div>`}
+// eBay's Research page only shows averages in the eBay app, so hand the link to the eBay app.
 // When the user comes back to FlipScout, the entry screen opens by itself.
 let lookWait=false,lookHooked=false;
 function lookHook(){if(lookHooked)return;lookHooked=true;
   try{const A=window.Capacitor.Plugins.App;A.addListener("appStateChange",s=>{if(s.isActive&&lookWait){lookWait=false;setTimeout(priceSheet,250)}})}catch(e){}}
-async function lookUp(L){if(!L)return;BK.cur=L;BK.trend="steady";
+async function lookUp(L){if(!L)return;BK.cur=L;BK.trend="steady";BK.mode="avg";
   const P=window.Capacitor&&window.Capacitor.Plugins,AL=PUSH.native&&P&&P.AppLauncher;
   if(AL){try{lookHook();lookWait=true;await AL.openUrl({url:L.url});return}catch(e){lookWait=false}}
   window.open(L.url,"_blank");setTimeout(priceSheet,300)}
-// FlipScout's entry screen: the user types what the eBay app showed
-function priceSheet(){const L=BK.cur;if(!L)return;
+// FlipScout's entry screen: eBay's averages, or sold prices typed or pasted one per line
+function priceSheet(){const L=BK.cur;if(!L)return;const avg=BK.mode==="avg";
   openSheet(`<h2 style="margin-top:0">What did eBay show?</h2><div class="mu">${esc(L.label)}</div>
-  <label for="pb_a">Avg sold price £</label><input id="pb_a" inputmode="decimal" placeholder="e.g. 202.05">
+  <div class="seg" style="margin-top:12px">${[["avg","eBay's averages"],["sold","Sold prices"]].map(m=>`<button class="${BK.mode===m[0]?"on":""}" onclick="BK.mode='${m[0]}';priceSheet()">${m[1]}</button>`).join("")}</div>
+  ${avg?`<label for="pb_a">Avg sold price £</label><input id="pb_a" inputmode="decimal" placeholder="e.g. 202.05">
   <div class="row"><div><label for="pb_s">Sell-through %</label><input id="pb_s" inputmode="decimal" placeholder="e.g. 34"></div><div><label for="pb_p">Avg postage £</label><input id="pb_p" inputmode="decimal" placeholder="e.g. 8.95"></div></div>
   <label>Price change (the arrow next to the average)</label><div class="seg" style="margin-top:6px">${[["rising","▲ Up"],["steady","About the same"],["falling","▼ Down"]].map(t=>`<button class="${BK.trend===t[0]?"on":""}" onclick="BK.trend='${t[0]}';this.parentNode.querySelectorAll('button').forEach(b=>b.classList.remove('on'));this.classList.add('on')">${t[1]}</button>`).join("")}</div>
+  <div class="hint">Pick "About the same" if it's under 5%.</div>`
+  :`<label for="pb_sp">Sold prices, one per line</label><textarea id="pb_sp" rows="6" inputmode="decimal" placeholder="172.50&#10;165&#10;180" oninput="pbSold()" style="width:100%"></textarea>
+  <div id="pb_sr" class="hint">Type the prices of items that sold. 5 or more is best.</div>
+  <label for="pb_p">Typical postage £ (optional)</label><input id="pb_p" inputmode="decimal" placeholder="e.g. 8.95">`}
   <div class="btns"><button onclick="savePrice()">Save price</button><button class="s" onclick="lookUp(BK.cur)">Open eBay again</button></div>`)}
-function savePrice(){const a=num($("pb_a").value);if(!(a>0)){toast("Type the Avg sold price.");return}
-  const st=String($("pb_s").value).trim()===""?null:num($("pb_s").value),po=String($("pb_p").value).trim()===""?null:num($("pb_p").value);
+function soldStats(t){const p=parse(t).rows.map(x=>x.p);if(!p.length)return null;const m=median(p),keep=p.length>=4?p.filter(x=>x>=m*0.5&&x<=m*1.5):p;
+  return{n:keep.length,dropped:p.length-keep.length,typical:median(keep)}}
+function pbSold(){const s=soldStats($("pb_sp").value),el=$("pb_sr");if(!el)return;
+  el.innerHTML=s?`<b>${s.n} price${s.n>1?"s":""}</b> · typical <b>${gbp(s.typical)}</b>${s.dropped?` · ${s.dropped} odd one${s.dropped>1?"s":""} left out`:""}${s.n<5?" · add a few more if you can":""}`:"Type the prices of items that sold. 5 or more is best."}
+function savePrice(){const po=String($("pb_p").value).trim()===""?null:num($("pb_p").value);
+  if(BK.mode==="sold"){const s=soldStats($("pb_sp").value);if(!s){toast("Type some sold prices.");return}
+    submitPrice({avg:Math.round(s.typical*100)/100,st:null,post:po,trend:"steady"});return}
+  const a=num($("pb_a").value);if(!(a>0)){toast("Type the Avg sold price.");return}
+  const st=String($("pb_s").value).trim()===""?null:num($("pb_s").value);
   submitPrice({avg:a,st,post:po,trend:BK.trend})}
 async function submitPrice(x,force){const L=BK.cur;if(!L)return;
   let v=BK.pend;
@@ -792,39 +833,64 @@ async function submitPrice(x,force){const L=BK.cur;if(!L)return;
     if(L.expect&&(tot<L.expect*0.6||tot>L.expect*1.6)){openSheet(`<h2 style="margin-top:0">Is that right?</h2><div class="mu" style="font-size:16px">${gbp(tot)} is very different from the ${gbp(L.expect)} FlipScout expected for ${esc(L.label)}.</div>
       <div class="mu" style="margin-top:8px">Did the sold items on eBay look like this one?</div>
       <div class="btns"><button onclick="submitPrice(null,true)">Yes, save it</button><button class="s" onclick="closeSheet();toast('Not saved.')">No, don't save</button></div>`);return}}
-  try{await api("price=1",v);closeSheet();BK.list=null;BK.pend=null;
-    toast(`Saved ${gbp(v.avg)} for ${v.label}. Used from the next scan.`);if(tab==="book"||tab==="deal")render()}
+  try{await api("price=1",v);closeSheet();BK.pend=null;
+    const p={pkey:v.key,label:v.label,q:v.q,avg:v.avg,st:v.st,post:v.post,trend:v.trend,at:Date.now(),fresh:true,url:L.url};
+    BK.list=[p,...(BK.list||[]).filter(x=>x.pkey!==v.key)];BK.open=0;
+    toast(`Saved. Pay up to ${gbp(priceMaths(p).payUpTo)} for ${v.label}.`);if(tab==="book"||tab==="deal")render()}
   catch(e){toast("Couldn't save: "+errText(e))}}
-async function bookFind(){const t=String(($("bk_q")||{}).value||BK.q).trim();BK.q=t;
+async function bookFind(manual){const t=String(($("bk_q")||{}).value||BK.q).trim();BK.q=t;
   if(t.length<2){toast("Type what you want to price, like rtx 3070.");return}
   if(BK.finding)return;BK.finding=true;
-  try{const L=await api("lookfor="+encodeURIComponent(t)+"&cond="+BK.cond);lookUp(L)}catch(e){toast("Couldn't search: "+errText(e))}
+  try{const L=await api("lookfor="+encodeURIComponent(t)+"&cond="+BK.cond);if(manual){BK.cur=L;BK.mode="sold";BK.trend="steady";priceSheet()}else lookUp(L)}catch(e){toast("Couldn't search: "+errText(e))}
   BK.finding=false}
 async function loadBook(){if(!connected()||BK.busy)return;BK.busy=true;BK.err="";
   try{const a=await api("prices=1");BK.list=a.prices||[]}catch(e){BK.err=errText(e)}
   BK.busy=false;if(tab==="book")render()}
-async function unprice(i){const p=(BK.list||[])[i];if(!p)return;try{await api("unprice="+encodeURIComponent(p.pkey));BK.list.splice(i,1);render();toast("Removed.")}catch(e){toast("Couldn't remove: "+errText(e))}}
+async function unprice(i){const p=(BK.list||[])[i];if(!p)return;try{await api("unprice="+encodeURIComponent(p.pkey));BK.list.splice(i,1);BK.open=-1;render();toast("Removed.")}catch(e){toast("Couldn't remove: "+errText(e))}}
 function bookFilter(v){BK.q=v;const el=$("bk_list");if(el)el.innerHTML=bookList()}
+function bkAsk(i,v){const p=BK.list[i],el=$("bk_r"+i);if(!el||!p)return;const a=num(v);if(!(a>0)){el.innerHTML="";return}
+  const r=askProfit(p,a);el.innerHTML=`<div class="verdict ${r.ok?"good":"no"}" style="margin:10px 0 0"><b>${r.ok?"✓ Good buy":r.profit>0?"✗ Not enough profit":"✗ You'd lose money"}</b><div class="mu">Profit <b class="${r.profit>=0?"ok":"bad"}">${gbp(r.profit)}</b> · return ${r.roi.toFixed(0)}% · after fees, postage and packaging</div></div>`}
 function bookList(){const t=BK.q.toLowerCase().split(/\s+/).filter(Boolean),L=(BK.list||[]).map((p,i)=>[p,i]).filter(([p])=>t.every(w=>String(p.label||p.pkey).toLowerCase().includes(w)));
   if(BK.list===null)return`<div class="card mu">Loading…</div>`;
-  if(!BK.list.length)return`<div class="card empty"><b>No prices yet</b><div class="mu">Search for something above, or open a deal and tap <b>Look up sold price</b>.</div></div>`;
-  if(!L.length)return`<div class="hint" style="margin:0 4px">No saved price matches. Tap <b>Look up</b> to check it on eBay.</div>`;
-  return L.map(([p,i])=>`<div class="card"><div style="display:flex;justify-content:space-between;gap:10px"><div style="min-width:0"><div style="font-weight:700">${esc(p.label||p.pkey)}</div><div class="mu">Checked ${ago(p.at)}${p.fresh?"":" · <span class='warn'>needs a refresh</span>"}</div></div><div class="stat" style="flex:none">${gbp(p.avg)}</div></div>
-    <div class="mu" style="margin-top:6px">${p.st!=null?Math.round(p.st)+"% sell":"Sell-through not added"} · ${p.post!=null?gbp(p.post)+" postage":"postage not added"}${p.trend?" · prices "+p.trend:""}</div>
-    <div class="btns"><button class="s" onclick="lookUp({key:BK.list[${i}].pkey,label:BK.list[${i}].label,q:BK.list[${i}].q,url:BK.list[${i}].url})">Check again</button><button class="s" onclick="unprice(${i})">Remove</button></div></div>`).join("")}
+  if(!BK.list.length)return`<div class="card empty">${I.chart}<b>No prices yet</b><div class="mu">Search for something above. FlipScout opens eBay's sold prices in the eBay app, then you type in what it shows.</div></div>`;
+  if(!L.length)return`<div class="hint" style="margin:0 4px">Nothing saved matches. Tap <b>Look up sold prices</b> to check it.</div>`;
+  return L.map(([p,i])=>{const m=priceMaths(p),open=BK.open===i;
+    return`<div class="card" style="cursor:pointer" onclick="if(!event.target.closest('button,input,a')){BK.open=${open?-1:i};$('bk_list').innerHTML=bookList()}">
+    <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div style="min-width:0"><div style="font-weight:700">${esc(p.label||p.pkey)}</div>
+     <div class="mu">Sells for about ${gbp(m.med)} · checked ${ago(p.at)}${p.fresh?"":" · <span class='warn'>needs a refresh</span>"}</div></div>
+     <div style="text-align:right;flex:none"><div class="mu" style="font-size:12px">Pay up to</div><div class="stat ${m.payUpTo>0?"ok":"bad"}">${m.payUpTo>0?gbp(m.payUpTo):"—"}</div></div></div>
+    ${open?`<div class="mu" style="margin-top:8px">${p.st!=null?Math.round(p.st)+"% of listings sell":"Sell-through not added"} · ${p.post!=null?gbp(p.post)+" postage":"postage from Settings"}${p.trend?" · prices "+p.trend:""}</div>
+     <label for="bk_a${i}">Found one? Its price incl. postage £</label><input id="bk_a${i}" inputmode="decimal" placeholder="e.g. 120" oninput="bkAsk(${i},this.value)"><div id="bk_r${i}"></div>
+     <div class="btns"><button class="s" onclick="lookUp({key:BK.list[${i}].pkey,label:BK.list[${i}].label,q:BK.list[${i}].q,url:BK.list[${i}].url})">Check again</button><button class="d" onclick="unprice(${i})">Remove</button></div>`
+     :`<div class="mu" style="margin-top:6px;font-size:13px">Tap to check a price or update it</div>`}</div>`}).join("")}
 function vBook(){
   if(!connected())return`<h2>Prices</h2><div class="card empty"><b>Connect your Scan service</b><div class="mu">Paste your setup code in Settings › Advanced first.</div><button onclick="go('settings')">Open Settings</button></div>`;
   if(BK.list===null&&!BK.busy&&!BK.err)setTimeout(loadBook,0);
   const stale=(BK.list||[]).filter(p=>!p.fresh).length;
-  return`<h2>Prices</h2><div class="mu" style="margin:-6px 4px 12px">Check what anything sells for on eBay. FlipScout trusts these prices first when it hunts, for 30 days each.</div>
+  return`<h2>Prices</h2><div class="mu" style="margin:-6px 4px 12px">What things really sell for, and the most to pay. FlipScout also uses these when it hunts.</div>
   <div class="card"><label for="bk_q" style="margin-top:0">What do you want to price?</label>
    <input id="bk_q" enterkeyhint="search" placeholder="e.g. rtx 3070, ps5 slim, iphone 13 128gb" value="${esc(BK.q)}" oninput="bookFilter(this.value)" onkeydown="if(event.key==='Enter'){this.blur();bookFind()}">
    <div class="seg" style="margin-top:10px">${[["used","Used"],["new","New"]].map(c=>`<button class="${BK.cond===c[0]?"on":""}" onclick="BK.cond='${c[0]}';BK.q=$('bk_q').value;render()">${c[1]}</button>`).join("")}</div>
    <button onclick="bookFind()" ${BK.finding?"disabled":""}>Look up sold prices</button>
-   <div class="hint">FlipScout builds the search for you and leaves out parts, faulty items and bundles.</div></div>
+   <button class="s" onclick="bookFind(true)" style="margin-top:8px">Type sold prices myself</button>
+   <div class="hint">Opens eBay Research in the eBay app with the search done. FlipScout leaves out parts, faulty items and bundles.</div></div>
   ${BK.err?`<div class="card bad">${esc(BK.err)}</div>`:""}
-  ${stale?`<div class="hint" style="margin:10px 4px">${stale} price${stale>1?"s are":" is"} older than 30 days. Tap Check again to keep using ${stale>1?"them":"it"}.</div>`:""}
+  ${stale?`<div class="hint" style="margin:10px 4px">${stale} price${stale>1?"s are":" is"} older than 30 days. Tap one, then Check again.</div>`:""}
   <h3 style="margin:14px 4px 6px">Your prices</h3><div id="bk_list">${bookList()}</div>`}
+/* ---------- SELL: add or edit an item by hand ---------- */
+function itemSheet(id,pre){const it=id?S.items.find(i=>i.id===id):null,v=it||pre||{};
+  openSheet(`<h2 style="margin-top:0">${it?"Edit item":"I bought it"}</h2>
+  <label for="it_n">What is it?</label><input id="it_n" value="${esc(v.name||"")}" placeholder="e.g. RTX 2080 Gaming X">
+  <div class="row"><div><label for="it_b">You paid £ (incl. delivery)</label><input id="it_b" inputmode="decimal" value="${v.buy!=null?(+v.buy).toFixed(2):""}"></div><div><label for="it_e">Expect to sell for £</label><input id="it_e" inputmode="decimal" value="${v.exp!=null?(+v.exp).toFixed(2):""}"></div></div>
+  <div class="row"><div><label for="it_o">Your postage out £</label><input id="it_o" inputmode="decimal" value="${v.outPost!=null?v.outPost:H().post}"></div><div><label for="it_k">Packaging £</label><input id="it_k" inputmode="decimal" value="${v.pack!=null?v.pack:H().pack}"></div></div>
+  <div class="btns"><button onclick="itemSave(${it?it.id:0})">${it?"Save":"Add to Sell"}</button><button class="s" onclick="closeSheet()">Cancel</button></div>`);window._itPre=pre||null}
+function itemSave(id){const n=$("it_n").value.trim();if(!n){toast("Add what it is.");return}
+  const d={name:n,buy:num($("it_b").value),exp:num($("it_e").value),outPost:num($("it_o").value),pack:num($("it_k").value)};
+  d.expProfit=d.exp?d.exp-fee(d.exp)-d.outPost-d.buy-d.pack:0;
+  const it=id&&S.items.find(i=>i.id===id);
+  if(it){Object.assign(it,d);if(DONE.includes(it.status)&&it.soldPrice!=null)it.profit=it.soldPrice-(it.fees||0)-(it.outPost||0)-it.buy-it.pack}
+  else S.items.unshift({id:Date.now(),status:"Bought",boughtOn:today(),cond:"",url:(window._itPre||{}).url||"",...d});
+  save();closeSheet();if(!it){prev=[];tab="stock"}render();toast(it?"Saved.":"Added to Sell.")}
 function spProfit(v){const d=DV,r=S.rules,h=H();if(!String(v).trim())return"";const fee=r.seller==="private"?0:d.workMed*r.feePct/100+(d.workMed>10?r.feeFixed:0.3);
   const p=d.workMed-fee-h.post-h.pack-d.cost-num(v);return`Profit if repaired: <span class="${p>=0?"ok":"bad"}">${gbp(p)}</span>`}
 function followSheet(){const d=DV;if(!d)return;const def=d.kind==="spares"?Math.round(d.cost):d.type==="AUC"?d.maxBid:d.maxPay;
@@ -833,26 +899,33 @@ function followSheet(){const d=DV;if(!d)return;const def=d.kind==="spares"?Math.
   <div class="hint">${d.type==="AUC"?"You'll get an alert when it's ending and still under your max.":"You'll get an alert if the price drops to your max or below."}</div>
   <div class="btns"><button onclick="doFollow()">Follow</button><button class="s" onclick="closeSheet()">Cancel</button></div>`)}
 async function doFollow(){const d=DV,m=num($("fm").value);if(!(m>0)){toast("Enter a price.");return}
-  try{await api("follow=1",{id:d.id,max:m,title:d.title,type:d.type,price:d.price,ship:d.ship,end:d.end});closeSheet();FL.list=null;toast("Following. You'll get an alert.","View",()=>go("follow"))}catch(e){toast("Couldn't follow: "+errText(e))}}
+  try{await api("follow=1",{id:d.id,max:m,title:d.title,type:d.type,price:d.price,ship:d.ship,end:d.end,img:d.img,cond:d.cond,med:d.med});closeSheet();FL.list=null;toast("Following. You'll get an alert.","View",()=>go("follow"))}catch(e){toast("Couldn't follow: "+errText(e))}}
 async function loadFollows(){if(!connected()||FL.busy)return;FL.busy=true;FL.err="";try{const d=await api("follows=1");FL.list=d.follows||[]}catch(e){FL.err=errText(e)}FL.busy=false;if(tab==="follow")render()}
 async function unfollow(id){try{await api("unfollow="+id);FL.list=(FL.list||[]).filter(f=>f.id!==id);render();toast("Stopped following.")}catch(e){toast("Couldn't remove: "+errText(e))}}
 function changeMax(id){const f=(FL.list||[]).find(x=>x.id===id);if(!f)return;DV={id:f.id,title:f.title,type:f.type,price:f.price,ship:f.ship,end:f.end,maxPay:f.max,maxBid:f.max,url:f.url};followSheet()}
 function vFollow(){
   if(connected()&&FL.list===null&&!FL.busy&&!FL.err)setTimeout(loadFollows,0);
-  const L=FL.list||[],saved=S.items.filter(i=>PRE.includes(i.status)).sort((a,b)=>(b.score||0)-(a.score||0));
-  const fcard=f=>{const total=(f.price||0)+(f.ship||0),ended=f.status!=="live",under=f.type==="BIN"?total<=f.max:(f.price||0)<f.max;
-    const st=ended?["bad",f.type==="AUC"&&(f.price||0)>f.max?"Went over your max":"Ended"]:under?["ok","Under your max now"]:["",f.type==="AUC"?"Above your max":"Waiting for a price drop"];
-    return`<div class="card"${!ended&&under?' style="border-color:var(--ok)"':ended?' style="opacity:.75"':""}><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><span class="chip ${st[0]}">${st[1]}</span><span class="mu">${f.type==="AUC"?"Auction"+(f.end&&!ended?" · "+left(f.end):""):"Buy It Now"}</span></div>
-    <div style="font-weight:700;margin-top:8px">${esc(f.title)}</div>
-    <div class="grid" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:8px"><div><div class="mu">${f.type==="AUC"?"Current bid":"Price + postage"}</div><div class="stat">${gbp(f.type==="AUC"?f.price||0:total)}</div></div><div><div class="mu">Your max</div><div class="stat ok">${gbp(f.max)}</div></div></div>
-    ${!ended&&f.type==="AUC"?`<div class="hint" style="background:var(--card2);border-radius:12px;padding:10px 12px;color:var(--tx)">Put <b>${gbp(f.max)}</b> as your maximum bid on eBay. eBay then bids for you, only as much as needed.</div>`:""}
-    <div class="btns">${ended?"":`<a href="${esc(ukUrl(f.url))}" target="_blank" rel="noopener"><button>${f.type==="AUC"?"Bid "+gbp(f.max)+" on eBay":"Open on eBay"}</button></a><button class="s" onclick="changeMax('${f.id}')">Change max</button>`}<button class="d" onclick="unfollow('${f.id}')">Remove</button></div></div>`};
+  const L=FL.list||[];
+  const state=f=>{const total=(f.price||0)+(f.ship||0),ended=f.status!=="live",now=f.type==="AUC"?(f.price||0):total,under=now<=f.max;
+    return{ended,now,under,txt:ended?(f.type==="AUC"&&now>f.max?"Went over your max":"Ended"):under?"Under your max":f.type==="AUC"?"Above your max":"Waiting for a drop",cls:ended?"bad":under?"ok":"warn"}};
+  const live=L.filter(f=>f.status==="live"),done=L.filter(f=>f.status!=="live");
+  const fcard=f=>{const s=state(f),gap=s.now-f.max;
+    return`<div class="card"${s.ended?' style="opacity:.7"':""}>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span class="chip ${s.cls}">${s.txt}</span><span class="mu" style="font-size:13px">${f.type==="AUC"?"Auction"+(f.end&&!s.ended?" · "+left(f.end):""):"Buy It Now"}</span></div>
+    <div style="display:flex;gap:12px;margin-top:10px">${f.img?`<img src="${esc(f.img)}" alt="" style="width:72px;height:72px;object-fit:cover;border-radius:12px;flex:none;background:var(--card2)" loading="lazy">`:`<div style="width:72px;height:72px;border-radius:12px;flex:none;background:var(--card2);display:grid;place-items:center;color:var(--mu)">${I.bell}</div>`}
+     <div style="min-width:0"><div style="font-weight:700;line-height:1.3">${esc(f.title)}</div><div class="mu">${esc(f.cond||"")}${f.med?(f.cond?" · ":"")+"worth about "+gbp(f.med):""}</div></div></div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:10px">
+     <div><div class="mu" style="font-size:12px">${f.type==="AUC"?"Current bid":"Price + postage"}</div><div class="stat" style="font-size:22px">${gbp(s.now)}</div></div>
+     <div style="text-align:right"><div class="mu" style="font-size:12px">Your max</div><div class="stat ok" style="font-size:22px">${gbp(f.max)}</div></div></div>
+    ${s.ended?"":`<div class="mu" style="margin-top:4px;font-size:13px">${gap>0?`${gbp(gap)} above your max`:`${gbp(-gap)} under your max`}${f.type==="AUC"?" · put "+gbp(f.max)+" as your max bid and eBay bids for you":""}</div>`}
+    <div class="btns">${s.ended?"":`<a href="${esc(ukUrl(f.url))}" target="_blank" rel="noopener"><button>${f.type==="AUC"?"Bid on eBay":"Open on eBay"}</button></a><button class="s" onclick="changeMax('${f.id}')">Change max</button>`}<button class="s" onclick="unfollow('${f.id}')">Remove</button></div></div>`};
   return`<h2>Following</h2>
-  ${connected()?`<div class="hint" style="margin:-6px 4px 12px">${H().alerts&&PUSH.registered?"Phone alerts are on.":"<span class='warn'>Phone alerts are off.</span> <a href='#' onclick=\"go('settings');return false\">Set up</a>"}</div>`:""}
+  ${connected()?`<div class="hint" style="margin:-6px 4px 12px">${H().alerts&&PUSH.registered?"You'll get an alert when one hits your price or is about to end.":"<span class='warn'>Phone alerts are off.</span> <a href='#' onclick=\"go('settings');return false\">Turn them on</a>"}</div>`:""}
   ${FL.err?`<div class="card bad">${esc(FL.err)}</div>`:""}
-  ${L.length?L.map(fcard).join(""):connected()?`<div class="card empty">${I.bell}<b>Not following anything yet</b><div class="mu">Open a deal and tap <b>Follow</b>, then set the most you'd pay. FlipScout watches it and alerts you.</div><button onclick="go('deals')">See today's deals</button></div>`:""}
-  ${saved.length?`<h2 style="margin-top:20px">Saved checks</h2>`+saved.map(i=>`<div class="card"><b>${esc(i.name)}</b><div class="mu" style="margin-top:4px">${esc(i.cond||"")} · cost ${gbp(i.buy)} · profit ${gbp(i.expProfit||0)}${i.maxBuy!=null?` · pay up to ${gbp(i.maxBuy)}`:""}</div>
-   <div class="btns"><button onclick="bought(${i.id})">I bought it</button><button class="s" onclick="edit(${i.id})">Edit</button>${i.url?`<a href="${esc(ukUrl(i.url))}" target="_blank" rel="noopener"><button class="s">Open on eBay</button></a>`:""}<button class="d" onclick="del(${i.id})">Delete</button></div></div>`).join(""):""}`;
+  ${FL.list===null&&connected()?`<div class="card mu">Loading…</div>`:""}
+  ${live.map(fcard).join("")}
+  ${!L.length&&FL.list!==null?`<div class="card empty">${I.bell}<b>Not following anything yet</b><div class="mu">Open a deal and tap <b>Follow</b>, then set the most you'd pay. FlipScout watches it and alerts you.</div><button onclick="go('deals')">See today's deals</button></div>`:""}
+  ${done.length?`<h3 style="margin:18px 4px 6px">Ended</h3>`+done.map(fcard).join(""):""}`;
 }
 /* My categories */
 function vCats(){
@@ -918,10 +991,10 @@ function renderOnb(){
   <div class="art">${s[0]==="logo"?`<img src="${logo}" alt="">`:s[0]==="seller"?"":I[s[0]]}<h1>${s[1]}</h1><p>${s[2]}</p>
   ${last?`<div style="width:100%;margin-top:14px"><button class="choice ${S.rules.seller==="private"?"on":""}" onclick="S.rules.seller='private';save();renderOnb()">Private seller<small>Selling my own things now and then</small></button><button class="choice ${S.rules.seller!=="private"?"on":""}" onclick="S.rules.seller='business';save();renderOnb()">Business seller<small>Buying to resell regularly</small></button></div>`:""}</div>
   <div class="dots">${OB.map((_,i)=>`<i class="${i===ob?"on":""}"></i>`).join("")}</div>
-  ${last?`<button style="width:100%;margin:0 0 8px" onclick="finishOnb(true)">Try an example</button><button class="s" style="width:100%;margin:0" onclick="finishOnb()">Start using FlipScout</button>`
+  ${last?`<button style="width:100%;margin:0" onclick="finishOnb()">Start using FlipScout</button>`
   :`<button style="width:100%;margin:0" onclick="ob++;renderOnb()">Next</button>`}`;
 }
-function finishOnb(ex){try{localStorage.setItem(OKEY,"1")}catch(e){}$("onb").style.display="none";if(ex){F={...EXAMPLE};saveDraft();ED=null}tab=ex?"calc":(connected()?"deals":"calc");prev=[];render()}
+function finishOnb(){try{localStorage.setItem(OKEY,"1")}catch(e){}$("onb").style.display="none";tab="deals";prev=[];render()}
 
 H();render();
 autoPush();

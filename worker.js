@@ -201,7 +201,10 @@ function phoneKey(t) {
   const st = storageOf(t);
   return { key: "phone:" + model + (st ? " " + st : ""), label: model.replace(/\b\w/g, (c) => c.toUpperCase()).replace("Iphone", "iPhone") + (st ? " " + stLabel(st) : ""), match: st ? 0.9 : 0.7 };
 }
+const NOT_CONSOLE = /\b(portal|remote play|vr2?|psvr2?|camera|headset|pulse|dualsense edge|charging station|disc drive|drive only|media remote|cover plates?|vertical stand|cooling|games?|game bundle only|steelbook|amiibo|gift card|voucher|membership|subscription|ps plus|game pass)\b/i;
 function consoleKey(t) {
+  if (NOT_CONSOLE.test(t) && !/\b(console|with|\+|inc|includes?|bundle)\b/i.test(t.replace(NOT_CONSOLE, ""))) return null;
+  if (/\b(portal|remote play|psvr|vr2|disc drive|drive only)\b/i.test(t)) return null;
   if (ACCESSORY.test(t) || (/\b(game|games only|disc only|controller|dualsense|dualshock|joy-?cons?|headset|pro controller|faceplate|shell)\b/i.test(t) && !/\b(console|with|\+|inc|includes?|bundle)\b/i.test(t))) return null;
   const l = t.toLowerCase(); let m, k = null;
   if ((m = l.match(/\b(ps5|playstation\s*5)\b/))) k = "ps5 " + (/\bpro\b/.test(l) ? "pro" : /digital/.test(l) ? "digital" : "disc") + (/\bslim\b/.test(l) ? " slim" : "");
@@ -423,6 +426,16 @@ async function sweep(env, manual) {
     await D.batch([D.prepare("DELETE FROM listings"), D.prepare("DELETE FROM sales"), D.prepare("DELETE FROM deals")]);
     await kvSet(env, "keyver", 3);
   }
+  // 0b. one-off clean-up: handhelds and add-ons were once filed as consoles (e.g. PlayStation Portal as PS5)
+  if (!(await kvGet(env, "fix1", false))) {
+    const bad = "pkey LIKE 'con:%' AND (lower(title) LIKE '%portal%' OR lower(title) LIKE '%remote play%' OR lower(title) LIKE '%vr2%' OR lower(title) LIKE '%psvr%' OR lower(title) LIKE '%disc drive%' OR lower(title) LIKE '%drive only%')";
+    await D.batch([
+      D.prepare(`DELETE FROM sales WHERE id IN (SELECT id FROM listings WHERE ${bad})`),
+      D.prepare(`DELETE FROM deals WHERE id IN (SELECT id FROM listings WHERE ${bad})`),
+      D.prepare(`UPDATE listings SET pkey=NULL, data=NULL WHERE ${bad}`),
+    ]);
+    await kvSet(env, "fix1", true);
+  }
   // 1. auctions that have ended become sold prices (only if they had bids)
   await D.batch([
     D.prepare("INSERT OR IGNORE INTO sales (id,pkey,cat,price,kind,at) SELECT id,pkey,cat,price+ship,'auction',end_at FROM listings WHERE status='live' AND type='AUC' AND end_at<? AND bids>0 AND pkey IS NOT NULL").bind(now),
@@ -532,15 +545,22 @@ async function sweep(env, manual) {
     const rows = await D.prepare(`SELECT id, data FROM listings WHERE cat IN (${cq}) AND status='live' AND data IS NOT NULL AND last_seen>? AND (end_at IS NULL OR end_at>?) ORDER BY last_seen DESC LIMIT 400`).bind(...cats.map((c) => c.id), now - DAY, now + 5 * 60000).all();
     for (const row of rows.results || []) {
       if (seenIds.has(row.id)) continue;
-      try { const o = JSON.parse(row.data); o.old = true; cands.push(o); } catch (e) {}
+      try {
+        const o = JSON.parse(row.data); o.old = true;
+        if (o.pkey && !/^e\d/.test(o.pkey)) { // matching rules may have improved since it was saved
+          const g = groupOf({ title: o.title }, o.cat, o.catName, o.bucket), w = groupOf({ title: o.title }, o.cat, o.catName, "used");
+          Object.assign(o, { pkey: g ? g.key : null, matchLabel: g ? g.label : "", matchQ: g ? g.match : 0, workKey: w ? w.key : null, workQ: w ? w.match : 0 });
+        }
+        cands.push(o);
+      } catch (e) {}
     }
   }
 
   // 4. market price for each product group: sold history first, asking prices as a fallback
   const keys = [...new Set(cands.flatMap((s) => [s.pkey, s.workKey]).filter(Boolean))];
   const soldBy = {}, askBy = {}, bookBy = {};
-  for (let i = 0; i < keys.length; i += 90) {
-    const chunk = keys.slice(i, i + 90), q = chunk.map(() => "?").join(",");
+  for (let i = 0; i < keys.length; i += 45) { // D1 allows 100 values per query (keys + bare keys + date)
+    const chunk = keys.slice(i, i + 45), q = chunk.map(() => "?").join(",");
     const bk = [...new Set([...chunk, ...chunk.map(bareKey)])];
     const br = await D.prepare(`SELECT pkey, avg, st, post, trend, at FROM prices WHERE pkey IN (${bk.map(() => "?").join(",")}) AND at>?`).bind(...bk, now - BOOK_DAYS * DAY).all();
     for (const row of br.results || []) bookBy[row.pkey] = row;
@@ -856,6 +876,8 @@ async function checkFollows(env, cfg) {
         f.bids = +d.bidCount || 0;
         f.end = d.itemEndDate ? Date.parse(d.itemEndDate) : f.end;
         f.type = auction ? "AUC" : "BIN";
+        if (d.image && d.image.imageUrl) f.img = d.image.imageUrl;
+        if (d.condition) f.cond = d.condition;
         f.status = f.end && f.end < now ? "ended" : "live";
         f.checked = now;
       }
@@ -978,7 +1000,8 @@ export default {
           const b = JSON.parse(await request.text());
           const id = String(b.id || "").replace(/\D/g, ""), max = parseFloat(b.max);
           if (!id || !(max > 0)) return json({ error: "need a listing and a max price" }, 400);
-          const data = { title: String(b.title || "").slice(0, 200), url: "https://www.ebay.co.uk/itm/" + id, type: b.type === "AUC" ? "AUC" : "BIN", price: +b.price || 0, ship: +b.ship || 0, end: +b.end || null, status: "live" };
+          const data = { title: String(b.title || "").slice(0, 200), url: "https://www.ebay.co.uk/itm/" + id, type: b.type === "AUC" ? "AUC" : "BIN", price: +b.price || 0, ship: +b.ship || 0, end: +b.end || null, status: "live",
+            img: /^https:\/\//.test(String(b.img || "")) ? String(b.img).slice(0, 400) : "", cond: String(b.cond || "").slice(0, 40), med: +b.med || null };
           await env.DB.prepare("INSERT INTO follows (id,data,max,created,alerted) VALUES (?,?,?,?,NULL) ON CONFLICT(id) DO UPDATE SET max=excluded.max, alerted=NULL").bind(id, JSON.stringify(data), max, Date.now()).run();
           return json({ ok: true });
         }

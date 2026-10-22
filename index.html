@@ -694,7 +694,7 @@ function vHunt(){
   ${HD.err?`<div class="card bad" style="font-size:15px">${esc(HD.err)}</div>`:""}
   <div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px">
    <div class="card" style="margin:0;padding:10px 12px"><div class="mu">Deals</div><div class="stat">${F2.all.length}</div></div>
-   <div class="card" style="margin:0;padding:10px 12px"><div class="mu">High score</div><div class="stat ok">${high}</div></div>
+   <div class="card" style="margin:0;padding:10px 12px"><div class="mu">Strong deals</div><div class="stat ok">${high}</div></div>
    <div class="card" style="margin:0;padding:10px 12px"><div class="mu">Buy It Now profit</div><div class="stat">${gbp(pot).replace(".00","")}</div></div></div>
   <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;margin-bottom:6px">${FILTERS.filter(f=>f[0]!=="spares"||h.types.spares).map(f=>`<button class="${HD.filter===f[0]?"":"s"}" style="margin:0;min-height:40px;padding:6px 14px;border-radius:99px;white-space:nowrap;flex:none" onclick="HD.filter='${f[0]}';render()">${f[1]} ${F2[f[0]].length}</button>`).join("")}</div>
   ${rep.hidden?`<div class="hint" style="margin:0 4px 10px">🛡 Scam shield hid ${rep.hidden} risky listing${rep.hidden>1?"s":""} last check.</div>`:""}

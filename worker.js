@@ -411,8 +411,9 @@ async function sweep(env, manual) {
     }
     if (q < 0.65) return null; // asking prices are too noisy for loose matches
     const ask = trim((askBy[key] || []).filter(([id]) => id !== selfId).map(([, t]) => t).filter((x) => x > 0));
-    if (ask.length >= (q >= 0.8 ? 4 : 6)) {
-      const med = pct(ask, 0.3) * 0.95, low = pct(ask, 0.1) * 0.95;
+    if (ask.length >= (q >= 0.8 ? 8 : 12)) {
+      // asking prices run high (sellers hope), so take the cheaper end and knock more off
+      const med = pct(ask, 0.25) * 0.9, low = pct(ask, 0.1) * 0.85;
       return { med, low, n: ask.length, src: "asking", spread: med ? (pct(ask, 0.75) - pct(ask, 0.25)) / med : 1 };
     }
     return null;
@@ -481,7 +482,8 @@ async function sweep(env, manual) {
       comp = (s.bids <= 1 ? 0.6 : s.bids <= 4 ? 0.4 : 0.2) + (h < 6 ? 0.3 : 0) + (misspelt ? 0.2 : 0);
       comp = Math.min(1, comp);
     }
-    const score = Math.round(30 * ev + 20 * match + 15 * sel + 20 * mar + 15 * comp);
+    let score = Math.round(30 * ev + 20 * match + 15 * sel + 20 * mar + 15 * comp);
+    if (m.src !== "sold") { score = Math.min(score, r.alertScore - 1, 69); tags.push("Price not confirmed by sales"); }
     if (score < r.minScore) continue;
     deals.push({
       ...s, kind: "deal", cost: Math.round(cost * 100) / 100, extra: Math.round(extra * 100) / 100,

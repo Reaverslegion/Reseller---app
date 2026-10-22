@@ -325,6 +325,7 @@ function lookupQ(title, pkey) {
 const lookupUrl = (q) => "https://www.ebay.co.uk/sh/research?marketplace=EBAY-GB&keywords=" + encodeURIComponent(q) + "&dayRange=30&tabName=SOLD";
 
 const bookLabel = (label, title, key) => (!label || /^(Similar title|Same eBay product)$/.test(label) ? String(title || "").slice(0, 60) : label) + (/\|new$/.test(key) ? " · new" : " · used");
+const bareKey = (k) => String(k || "").replace(/^t\d*:/, "t:"); // "similar title" groups without the category, so typed searches match
 const BOOK_DAYS = 30; // price book values are used for 30 days, then FlipScout asks for a refresh
 // what the app needs to open eBay's research page for a listing and save the answer
 function lookInfo(s, alt) {
@@ -540,7 +541,8 @@ async function sweep(env, manual) {
   const soldBy = {}, askBy = {}, bookBy = {};
   for (let i = 0; i < keys.length; i += 90) {
     const chunk = keys.slice(i, i + 90), q = chunk.map(() => "?").join(",");
-    const br = await D.prepare(`SELECT pkey, avg, st, post, trend, at FROM prices WHERE pkey IN (${q}) AND at>?`).bind(...chunk, now - BOOK_DAYS * DAY).all();
+    const bk = [...new Set([...chunk, ...chunk.map(bareKey)])];
+    const br = await D.prepare(`SELECT pkey, avg, st, post, trend, at FROM prices WHERE pkey IN (${bk.map(() => "?").join(",")}) AND at>?`).bind(...bk, now - BOOK_DAYS * DAY).all();
     for (const row of br.results || []) bookBy[row.pkey] = row;
     const sr = await D.prepare(`SELECT pkey, price FROM sales WHERE pkey IN (${q}) AND at>?`).bind(...chunk, now - 30 * DAY).all();
     for (const row of sr.results || []) (soldBy[row.pkey] = soldBy[row.pkey] || []).push(row.price);
@@ -558,7 +560,7 @@ async function sweep(env, manual) {
     const needSold = q >= 0.8 ? 3 : q >= 0.6 ? 5 : 8;
     const sold = trim((soldBy[key] || []).filter((x) => x > 0));
     // 1. the price book comes first: a person read it off eBay's sold prices
-    const b = !noBook && bookBy[key];
+    const b = !noBook && (bookBy[key] || bookBy[bareKey(key)]);
     if (b) {
       const post = b.post != null ? b.post : null;
       const med = b.avg + (post || 0); // what buyers pay in total, like our own sold prices
@@ -889,7 +891,7 @@ export default {
     if (!env.APP_KEY || P("key") !== env.APP_KEY) return json({ error: "wrong key" }, 401);
 
     // ---- hunting (needs the database) ----
-    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "test", "device", "check", "price", "prices", "unprice", "needs"].some((k) => u.searchParams.has(k));
+    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "test", "device", "check", "price", "prices", "unprice", "needs", "lookfor"].some((k) => u.searchParams.has(k));
     if (huntCall) {
       if (!env.DB) return json({ error: "hunting database not set up yet" }, 501);
       try {
@@ -930,6 +932,17 @@ export default {
           await env.DB.prepare("INSERT INTO prices (pkey,label,q,avg,st,post,trend,at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(pkey) DO UPDATE SET label=excluded.label, q=excluded.q, avg=excluded.avg, st=excluded.st, post=excluded.post, trend=excluded.trend, at=excluded.at")
             .bind(key, String(b.label || "").slice(0, 120), String(b.q || "").slice(0, 400), avg, n(b.st, 100), n(b.post, 500), trend, Date.now()).run();
           return json({ ok: true });
+        }
+        if (P("lookfor")) {
+          // the user typed what they want to price: build the same search FlipScout would
+          const text = String(P("lookfor")).replace(/\s+/g, " ").trim().slice(0, 120), cond = P("cond") === "new" ? "new" : "used";
+          if (text.length < 2) return json({ error: "Type what you want to price." }, 400);
+          const g = groupOf({ title: text }, "", "", cond);
+          const key = g ? bareKey(g.key) : "w:" + text.toLowerCase() + "|" + cond;
+          const q = lookupQ(text, g && g.match >= 0.6 ? g.key : null);
+          const sr = await env.DB.prepare("SELECT price FROM sales WHERE pkey=? AND at>?").bind(key, Date.now() - 30 * DAY).all();
+          const sold = (sr.results || []).map((r) => r.price);
+          return json({ key, label: bookLabel(g ? g.label : "", text, key), q, url: lookupUrl(q), expect: sold.length >= 3 ? Math.round(median(sold)) : null });
         }
         if (P("prices")) {
           const rows = await env.DB.prepare("SELECT pkey, label, q, avg, st, post, trend, at FROM prices ORDER BY at DESC LIMIT 500").all();

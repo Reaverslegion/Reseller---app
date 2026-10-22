@@ -275,11 +275,11 @@ try{matchMedia("(prefers-color-scheme: dark)").addEventListener("change",applyTh
 
 function render(){
   applyTheme();
-  const sub=["settings","deal","cats"].includes(tab);
+  const sub=["settings","deal","cats","book"].includes(tab);
   $("gear").innerHTML=sub?I.back:I.gear;$("gear").onclick=sub?()=>{onBack()}:()=>go("settings");
   $("gear").setAttribute("aria-label",sub?"Back":"Settings");
   $("nav").innerHTML=TABS.map(t=>`<button class="${tab===t[0]?"on":""}" onclick="go('${t[0]}')" aria-label="${t[1]}"><span class="pill">${I[t[2]]}</span>${t[1]}</button>`).join("");
-  $("app").innerHTML=({calc:vCalc,deals:vHunt,follow:vFollow,cats:vCats,deal:vDeal,stock:vStock,dash:vDash,settings:vSettings,scan:vScan,saved:vDeals})[tab]();
+  $("app").innerHTML=({calc:vCalc,deals:vHunt,follow:vFollow,cats:vCats,deal:vDeal,book:vBook,stock:vStock,dash:vDash,settings:vSettings,scan:vScan,saved:vDeals})[tab]();
   if(tab==="calc")recalc();
   window.scrollTo(0,0);
 }
@@ -550,6 +550,7 @@ function vSettings(){
    <div class="row"><div><label for="hp">Your postage out £</label><input id="hp" inputmode="decimal" value="${h.post}" onchange="setHunt('post',this.value)"></div><div><label for="hk">Packaging £</label><input id="hk" inputmode="decimal" value="${h.pack}" onchange="setHunt('pack',this.value)"></div></div>
    <div class="hint">Used for deal profit. Typical medium parcel: about £5 to £7.</div>
    <label class="chkrow" style="min-height:44px"><input type="checkbox" ${h.bpf?"checked":""} onchange="H().bpf=this.checked;save();pushConfig()"><span>Add eBay's buyer protection fee to costs (estimate) ${ti("bpf")}</span></label></div>`})()}
+  <div class="card"><b>Price book</b><div class="mu">Sold prices you've checked on eBay. FlipScout trusts these first.</div><button class="s" onclick="go('book')">Open price book</button></div>
   <div class="card"><b>Appearance</b><div class="seg" style="margin-top:10px">${[["auto","Auto"],["light","Light"],["dark","Dark"]].map(t=>`<button class="${(s.theme||"auto")===t[0]?"on":""}" onclick="S.set.theme='${t[0]}';save();render()">${t[1]}</button>`).join("")}</div><div class="hint">Auto follows your phone's setting.</div></div>
   <div class="card"><b>Your buying rules</b><div class="mu">These decide what counts as a good buy. Changes save straight away.</div>
    ${FIELDS.map(f=>`<label for="r_${f[0]}">${f[1]}</label><input id="r_${f[0]}" inputmode="decimal" value="${r[f[0]]}" onchange="setRule('${f[0]}',this.value)">${f[2]?`<div class="hint">${f[2]}</div>`:""}`).join("")}</div>
@@ -678,7 +679,7 @@ function dealCard(d,i){
   <div style="display:flex;gap:12px;margin-top:10px">${d.img?`<img src="${esc(d.img)}" alt="" style="width:72px;height:72px;object-fit:cover;border-radius:12px;flex:none;background:var(--card2)" loading="lazy">`:""}
    <div style="min-width:0"><div style="font-weight:700;line-height:1.3">${esc(d.title)}</div><div class="mu">${esc(d.cond||"")} · ${esc(d.catName||"")}</div>${d.matchLabel?`<div class="mu" style="margin-top:2px">vs ${esc(d.matchLabel)}</div>`:""}</div></div>
   ${sp?`<div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:8px"><div class="stat">${gbp(d.cost)} now</div><div class="mu">working ones sell for ${gbp(d.workMed)}</div></div>`
-   :`<div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:8px"><div class="stat ok" style="font-size:22px">${d.type==="AUC"?"Bid up to "+gbp(d.maxBid):"+"+gbp(d.profit)+" profit"}</div><div class="mu">${gbp(d.cost)} now · worth ${gbp(d.med)}</div></div>`}
+   :`<div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:8px"><div class="stat ok" style="font-size:22px">${d.type==="AUC"?"Bid up to "+gbp(d.maxBid):"+"+gbp(d.profit)+" profit"}</div><div class="mu">${d.type==="AUC"?`${gbp(d.price)} bid + ${gbp(d.ship)} post`:gbp(d.cost)+" now"} · worth ${gbp(d.med)}</div></div>`}
   ${d.tags&&d.tags.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${d.tags.map(t=>`<span class="chip">${esc(t)}</span>`).join("")}</div>`:""}
   </div>`}
 const FILTERS=[["all","All"],["bin","Buy It Now"],["auc","Auctions"],["mis","Misspelt"],["spares","Spares"]];
@@ -700,7 +701,8 @@ function vHunt(){
   ${rep.hidden?`<div class="hint" style="margin:0 4px 10px">🛡 Scam shield hid ${rep.hidden} risky listing${rep.hidden>1?"s":""} last check.</div>`:""}
   ${HD.deals===null?`<div class="card mu">Loading deals…</div>`:list.length?list.map(d=>dealCard(d,(HD.deals||[]).indexOf(d))).join("")
    :`<div class="card empty">${I.bolt}<b>No deals right now</b><div class="mu">Real bargains are rare, so FlipScout only shows ones backed by real sold prices. It keeps checking and alerts you when one turns up.</div>${whyLine(rep)}<button class="s" onclick="go('cats')">My categories</button></div>`}
-  ${HD.filter==="all"?closeCalls():""}`;
+  ${HD.filter==="all"?closeCalls():""}
+  <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:14px"><div><b>Price book</b><div class="mu">Check sold prices so FlipScout can trust more deals.</div></div><button class="s" style="margin:0;flex:none" onclick="go('book')">Open</button></div>`;
 }
 function whyLine(rep){const w=rep&&rep.why,L=HD.learning;let t="";
   if(w&&w.judged)t+=`<div class="hint" style="text-align:left;margin-top:10px">Last check looked at <b>${w.judged}</b> listings: ${w.fair} at a normal price, ${w.noData} still learning prices, ${w.risky} risky.</div>`;
@@ -734,18 +736,20 @@ function vDeal(){
    <label for="rc">Your repair cost £</label><input id="rc" inputmode="decimal" placeholder="e.g. 25" oninput="$('rcr').innerHTML=spProfit(this.value)">
    <div id="rcr" class="stat" style="margin-top:10px"></div><div class="hint">Based on ${d.n} ${d.src==="sold"?"sold":"asking"} prices for working ones. Includes eBay fees and your postage.</div></div>
    <div class="btns"><a href="${esc(ukUrl(d.url))}" target="_blank" rel="noopener"><button>Open on eBay</button></a><button class="s" onclick="followSheet()">Follow</button></div>`;
-  const ev=d.src==="sold"?`${d.n} sold prices in the last 30 days`:`${d.n} asking prices (no sales recorded yet, so it scores lower)`;
+  const ev=d.src==="book"?`Price book: sells for about ${gbp(d.med)} incl. postage. Saved ${ago(d.bookAt)}`:d.src==="sold"?`${d.n} sold prices in the last 30 days`:`${d.n} asking prices (no sales recorded yet, so it scores lower)`;
   return head+`<div class="verdict good"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><div>
     <div class="mu">${d.type==="AUC"?"Bid up to":"Your profit if you buy now"}</div><div class="big ok">${d.type==="AUC"?gbp(d.maxBid):"+"+gbp(d.profit)}</div>
     ${d.type==="AUC"?`<div class="mu">Now ${gbp(d.price)} + ${gbp(d.ship)} postage · ${d.bids} bid${d.bids===1?"":"s"} · ${left(d.end)}</div>`:""}</div>
     <div style="text-align:center">${ring(d.score,true)}<div style="font-weight:700;font-size:13px;margin-top:4px">${confWord(d.score)}</div></div></div>
    <div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin-top:12px"><div><div class="mu">Cost now</div><div class="stat">${gbp(d.cost)}</div></div><div><div class="mu">Worth ${ti("median")}</div><div class="stat">${gbp(d.med)}</div></div><div><div class="mu">Pay up to ${ti("maxpay")}</div><div class="stat">${gbp(d.maxPay)}</div></div></div></div>
   <div class="card"><b>Why it scores ${d.score}</b>
-   ${bar("Price evidence",p.evidence/(d.src==="sold"?1:0.5)*(d.src==="sold"?1:0.6),ev)}
+   ${bar("Price evidence",d.src==="book"?p.evidence:p.evidence/(d.src==="sold"?1:0.5)*(d.src==="sold"?1:0.6),ev)}
    ${bar("Same item match",p.match,"Compared with: "+esc(d.matchLabel||"similar listings")+". Check the listing matches")}
    ${bar("Seller",p.seller,`${sel.pct||0}% positive from ${sel.fb||0} feedback`)}
    ${bar("Safety margin",p.margin,d.lowProfit>0?`Still ${gbp(d.lowProfit)} profit if it sells at the low end (${gbp(d.low)})`:"No profit if it sells at the low end")}
-   ${bar("Competition",p.competition,(d.tags||[]).join(" · ")||"Normal")}</div>
+   ${bar("Competition",p.competition,(d.tags||[]).filter(t=>!/price|seller|falling/i.test(t)).join(" · ")||"Normal")}
+   ${p.demand!=null?bar("Demand",p.demand,d.st!=null?`${Math.round(d.st)}% of listings sell${d.trend?` · prices ${d.trend}`:""}`:"Not known yet. Look up the sold price below to add it."):""}</div>
+  ${bookCard(d)}
   <div class="card"><b>Costs</b>
    <div class="li"><span style="flex:1">Item + postage to you</span><span>${gbp(d.price+d.ship)}</span></div>
    <div class="li"><span style="flex:1">Buyer protection fee (estimate) ${ti("bpf")}</span><span>${gbp(d.extra||0)}</span></div>
@@ -754,6 +758,63 @@ function vDeal(){
   <div class="btns"><a href="${esc(ukUrl(d.url))}" target="_blank" rel="noopener"><button>${d.type==="AUC"?"Bid on eBay":"Buy on eBay · "+gbp(d.price+d.ship)}</button></a><button class="s" onclick="followSheet()">Follow</button></div>
   <div class="hint">Always read the listing before you pay.</div>`;
 }
+/* ---------- PRICE BOOK ---------- */
+// The user taps Look up, eBay's research page opens with the search already built (leave-out words included),
+// they read the numbers at the top and type them in. FlipScout trusts these before anything else.
+let BK={list:null,needs:null,busy:false,err:"",cur:null,trend:"steady",pend:null};
+const BGKEY="flipscout_book_guide";
+function bookCard(d){const L=d.look;if(!L)return"";
+  if(d.src==="book")return`<div class="card"><b>Price book</b><div class="mu">You checked this price ${ago(d.bookAt)}. FlipScout uses it for 30 days.</div><button class="s" onclick="lookUp(DV.look)">Check it again</button></div>`;
+  return`<div class="card"><b>Confirm the price</b><div class="mu">${d.src==="asking"?"This value is only a guess from asking prices. ":""}See what it really sells for on eBay. FlipScout does the search, you type in what it shows.</div><button onclick="lookUp(DV.look)">Look up sold price</button></div>`}
+async function lookUp(L,skipGuide){if(!L)return;BK.cur=L;BK.trend="steady";
+  let seen=false;try{seen=!!localStorage.getItem(BGKEY)}catch(e){}
+  if(!seen&&!skipGuide){openSheet(`<h2 style="margin-top:0">Look up the sold price</h2>
+    <div class="li">1 <span>eBay opens with the search already done. Sign in if it asks.</span></div>
+    <div class="li">2 <span>Look at the boxes at the top: <b>Avg sold price</b>, <b>Sell-through</b> and <b>Avg postage</b> (swipe for it).</span></div>
+    <div class="li">3 <span>Tap the back arrow or ✕ to come back here, and type them in.</span></div>
+    <button onclick="try{localStorage.setItem(BGKEY,'1')}catch(e){};closeSheet();lookUp(BK.cur,true)">Got it, open eBay</button>`);return}
+  const B=window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.Browser;
+  if(PUSH.native&&B){try{const h=await B.addListener("browserFinished",()=>{try{h.remove()}catch(e){}priceSheet()});await B.open({url:L.url,toolbarColor:"#0D172C"});return}catch(e){}}
+  window.open(L.url,"_blank");setTimeout(priceSheet,300)}
+function priceSheet(){const L=BK.cur;if(!L)return;
+  openSheet(`<h2 style="margin-top:0">What did eBay show?</h2><div class="mu">${esc(L.label)}</div>
+  <label for="pb_a">Avg sold price £</label><input id="pb_a" inputmode="decimal" placeholder="e.g. 202.05">
+  <div class="row"><div><label for="pb_s">Sell-through %</label><input id="pb_s" inputmode="decimal" placeholder="e.g. 34"></div><div><label for="pb_p">Avg postage £</label><input id="pb_p" inputmode="decimal" placeholder="e.g. 8.95"></div></div>
+  <label>Price change (the arrow next to the average)</label><div class="seg" style="margin-top:6px">${[["rising","▲ Up"],["steady","About the same"],["falling","▼ Down"]].map(t=>`<button class="${BK.trend===t[0]?"on":""}" onclick="BK.trend='${t[0]}';this.parentNode.querySelectorAll('button').forEach(b=>b.classList.remove('on'));this.classList.add('on')">${t[1]}</button>`).join("")}</div>
+  <div class="hint">Pick "About the same" if it's under 5%.</div>
+  <label class="chkrow" style="min-height:44px"><input type="checkbox" id="pb_ok" checked><span>The sold items were this kind of item</span></label>
+  <div class="btns"><button onclick="savePrice()">Save price</button><button class="s" onclick="lookUp(BK.cur,true)">Open eBay again</button></div>`)}
+async function savePrice(force){const L=BK.cur;if(!L)return;
+  let v=BK.pend;
+  if(!force){const a=num($("pb_a").value);if(!(a>0)){toast("Type the Avg sold price.");return}
+    if(!$("pb_ok").checked){closeSheet();toast("Not saved. FlipScout only uses prices for the same item.");return}
+    const st=String($("pb_s").value).trim()===""?null:num($("pb_s").value),po=String($("pb_p").value).trim()===""?null:num($("pb_p").value);
+    v=BK.pend={key:L.key,label:L.label,q:L.q,avg:a,st:st!=null&&st<=100?st:null,post:po,trend:BK.trend};
+    const tot=a+(po||0);
+    if(L.expect&&(tot<L.expect*0.6||tot>L.expect*1.6)){openSheet(`<h2 style="margin-top:0">Is that right?</h2><div class="mu" style="font-size:16px">${gbp(tot)} is very different from the ${gbp(L.expect)} FlipScout expected for ${esc(L.label)}.</div>
+      <div class="mu" style="margin-top:8px">Did the sold items on eBay look like this one?</div>
+      <div class="btns"><button onclick="savePrice(true)">Yes, save it</button><button class="s" onclick="closeSheet();toast('Not saved.')">No, don't save</button></div>`);return}}
+  try{await api("price=1",v);closeSheet();BK.list=null;BK.needs=null;BK.pend=null;
+    if(DV&&DV.look&&DV.look.key===v.key){DV.bookSaved=true}
+    toast("Saved. FlipScout uses it from the next scan.");if(tab==="book"||tab==="deal")render()}
+  catch(e){toast("Couldn't save: "+errText(e))}}
+async function loadBook(){if(!connected()||BK.busy)return;BK.busy=true;BK.err="";
+  try{const [a,b]=await Promise.all([api("prices=1"),api("needs=1")]);BK.list=a.prices||[];BK.needs=b.needs||[]}catch(e){BK.err=errText(e)}
+  BK.busy=false;if(tab==="book")render()}
+async function unprice(i){const p=(BK.list||[])[i];if(!p)return;try{await api("unprice="+encodeURIComponent(p.pkey));BK.list.splice(i,1);render();toast("Removed.")}catch(e){toast("Couldn't remove: "+errText(e))}}
+function vBook(){
+  if(!connected())return`<h2>Price book</h2><div class="card mu">Connect your Scan service first (Settings › Advanced).</div>`;
+  if(BK.list===null&&!BK.busy&&!BK.err)setTimeout(loadBook,0);
+  const N=BK.needs||[],L=BK.list||[],stale=L.filter(p=>!p.fresh);
+  return`<h2>Price book</h2><div class="mu" style="margin:-6px 4px 12px">Sold prices you've checked on eBay. FlipScout trusts these before its own guesses, for 30 days each.</div>
+  ${BK.err?`<div class="card bad">${esc(BK.err)}</div>`:""}
+  ${BK.list===null?`<div class="card mu">Loading…</div>`:""}
+  ${N.length?`<h3 style="margin:14px 4px 6px">Worth checking</h3><div class="hint" style="margin:0 4px 10px">Items FlipScout sees most in your categories, with no checked price yet.</div>`+N.map((n,i)=>`<div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px"><div style="min-width:0"><div style="font-weight:700">${esc(n.label)}</div><div class="mu">Seen ${n.seen} times${n.cat?" in "+esc(n.cat):""}</div></div><button style="margin:0;flex:none" onclick="lookUp(BK.needs[${i}])">Look up</button></div>`).join(""):""}
+  ${stale.length?`<div class="hint" style="margin:10px 4px">${stale.length} price${stale.length>1?"s":""} older than 30 days. Tap Check again to keep using ${stale.length>1?"them":"it"}.</div>`:""}
+  ${L.length?`<h3 style="margin:14px 4px 6px">Checked prices</h3>`+L.map((p,i)=>`<div class="card"><div style="display:flex;justify-content:space-between;gap:10px"><div style="min-width:0"><div style="font-weight:700">${esc(p.label||p.pkey)}</div><div class="mu">Checked ${ago(p.at)}${p.fresh?"":" · <span class='warn'>needs a refresh</span>"}</div></div><div class="stat" style="flex:none">${gbp(p.avg)}</div></div>
+    <div class="mu" style="margin-top:6px">${p.st!=null?Math.round(p.st)+"% sell":"Sell-through not added"} · ${p.post!=null?gbp(p.post)+" postage":"postage not added"}${p.trend?" · prices "+p.trend:""}</div>
+    <div class="btns"><button class="s" onclick="lookUp({key:BK.list[${i}].pkey,label:BK.list[${i}].label,q:BK.list[${i}].q,url:BK.list[${i}].url})">Check again</button><button class="s" onclick="unprice(${i})">Remove</button></div></div>`).join("")
+   :BK.list&&!N.length?`<div class="card empty"><b>Nothing here yet</b><div class="mu">Open a deal and tap <b>Look up sold price</b>. Items worth checking show here once FlipScout has scanned your categories for a while.</div></div>`:""}`}
 function spProfit(v){const d=DV,r=S.rules,h=H();if(!String(v).trim())return"";const fee=r.seller==="private"?0:d.workMed*r.feePct/100+(d.workMed>10?r.feeFixed:0.3);
   const p=d.workMed-fee-h.post-h.pack-d.cost-num(v);return`Profit if repaired: <span class="${p>=0?"ok":"bad"}">${gbp(p)}</span>`}
 function followSheet(){const d=DV;if(!d)return;const def=d.kind==="spares"?Math.round(d.cost):d.type==="AUC"?d.maxBid:d.maxPay;

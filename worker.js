@@ -1,6 +1,6 @@
 // FlipScout service: app <-> this worker <-> eBay Browse API (eBay UK)
 // Secrets: APP_KEY, EBAY_ID, EBAY_SECRET.  Bindings (set by the deploy workflow): DB (D1), BACKUP (KV)
-// Runs every 5 minutes (cron) to hunt for deals in the user's categories, learn sold prices from
+// Runs every minute (cron; hunts at the user's interval) to hunt for deals in the user's categories, learn sold prices from
 // ending auctions, watch followed listings and send FlipScout phone alerts (Firebase Cloud Messaging).
 // Push alerts need the secret FCM_SA (the Firebase service-account JSON), set by the deploy workflow.
 //
@@ -14,6 +14,10 @@
 //   run     ?run=1                       run a hunt now
 //   follows ?follows=1 | POST ?follow=1 | ?unfollow=ID
 //   test    ?test=1                      send a test phone alert
+//   check   ?check=ID                    is a deal still for sale, at what price
+//   price   POST ?price=1                save a price book value (avg sold, sell-through, postage, trend)
+//   prices  ?prices=1 | ?unprice=KEY     the price book
+//   needs   ?needs=1                     products in your categories that need a price book value
 
 let TOKEN = null, TOKEN_EXP = 0, SCHEMA = false, CALLS = 0;
 // eBay allows 5,000 Browse calls a day on our keyset. We count them and hold back optional work near the limit.
@@ -86,6 +90,8 @@ async function schema(env) {
     D.prepare("CREATE INDEX IF NOT EXISTS sa_key ON sales(pkey, at)"),
     D.prepare("CREATE TABLE IF NOT EXISTS deals (id TEXT PRIMARY KEY, data TEXT, score INTEGER, created INTEGER, expires INTEGER, notified INTEGER DEFAULT 0)"),
     D.prepare("CREATE TABLE IF NOT EXISTS follows (id TEXT PRIMARY KEY, data TEXT, max REAL, created INTEGER, alerted TEXT)"),
+    // price book: values users read off eBay's research page and type in, one row per product group
+    D.prepare("CREATE TABLE IF NOT EXISTS prices (pkey TEXT PRIMARY KEY, label TEXT, q TEXT, avg REAL, st REAL, post REAL, trend TEXT, at INTEGER)"),
   ]);
   for (const sql of ["ALTER TABLE listings ADD COLUMN data TEXT", "ALTER TABLE deals ADD COLUMN checked INTEGER DEFAULT 0"]) {
     try { await D.prepare(sql).run(); } catch (e) { /* column already there */ }
@@ -271,6 +277,60 @@ function groupOf(it, cat, catName, bucket) {
   if (it.epid) return { key: "e" + it.epid + "|" + bucket, label: "Same eBay product", match: 1 };
   const s = sig(title);
   return s ? { key: "t" + cat + ":" + s + "|" + bucket, label: "Similar title", match: s.split(" ").length >= 2 ? 0.7 : 0.45 } : null;
+}
+
+/* ---------------- price book: the search FlipScout opens on eBay's research page ---------------- */
+// Users never type filters. FlipScout builds the search and adds "leave out" words itself,
+// so the sold average on eBay's page is for the item itself, not PCs, parts or boxes.
+const LOOK_ALL = ["faulty", "spares", "repair", "repairs", "broken", "parts", "joblot", "job", "bundle", "empty", "untested", "read"];
+const LOOK_EX = {
+  gpu: ["pc", "build", "computer", "desktop", "laptop", "bridge", "nvlink", "sli", "i5", "i7", "i9", "ryzen", "heatsink", "backplate", "waterblock", "bracket", "riser", "shroud"],
+  phone: ["case", "cover", "protector", "charger", "cable", "lcd", "housing", "cracked", "locked", "icloud"],
+  con: ["skin", "faceplate", "shell", "headset"],
+  tab: ["case", "cover", "protector", "charger", "lcd", "cracked", "locked", "icloud"],
+  lap: ["motherboard", "hinge", "lcd", "palmrest", "sleeve", "bag"],
+  cpu: ["laptop", "desktop", "pc", "computer", "motherboard", "combo"],
+  ram: ["laptop", "desktop", "pc", "computer", "motherboard", "combo"],
+  sto: ["laptop", "desktop", "pc", "computer", "console", "ps5", "ps4", "xbox", "enclosure", "caddy", "adapter"],
+  mon: ["arm", "mount", "panel", "bracket", "tv"],
+  any: ["manual"],
+};
+const FILLER = new Set("new used brand genuine original official uk free fast quick postage delivery p&p excellent good great very fair mint perfect immaculate condition working tested fully boxed unboxed rare look l@@k bnib bnwt bnwob nwt with without and the for in of a an to by on from x1 inc incl including only item items sale cheap bargain see pics photos pictures description".split(" "));
+// Every variant name that changes the price; any not in this item's name gets left out.
+const VARIANTS = { gpu: ["ti", "super"], rx: ["xt", "xtx", "gre"], phone: ["pro", "max", "plus", "mini", "ultra", "fe", "lite", "xl"], con: ["pro", "digital", "slim", "oled", "lite"], tab: ["pro", "air", "mini"] };
+function lookupQ(title, pkey) {
+  const k = String(pkey || "").replace(/\|(new|used|parts)$/, "");
+  const kind = (k.match(/^(gpu|lap|phone|con|tab|cpu|ram|sto|mon):/) || [])[1] || "any";
+  const body = k.slice(kind.length + 1);
+  let words = [];
+  if (kind === "gpu") words = body.split(" ");
+  else if (kind === "phone") { words = body.split(" "); const st = words[words.length - 1]; if (/^\d+$/.test(st)) words[words.length - 1] = st >= 1024 ? st / 1024 + "tb" : st + "gb"; }
+  else if (kind === "con") words = body.split(" ").filter((w) => w !== "disc"); // most disc consoles don't say "disc"
+  else if (kind === "tab") { const [t, gen, size, st] = body.split("|"); words = ["ipad", t === "ipad" ? "" : t, gen ? (/^m/i.test(gen) ? gen.toLowerCase() : gen + "th") : "", size, st && st !== "?" ? (st >= 1024 ? st / 1024 + "tb" : st + "gb") : ""]; }
+  else if (kind === "cpu") words = [body.replace(/^(i\d)-/, "$1 ").replace(/^r(\d)-/, "ryzen $1 ")];
+  else if (kind === "ram") { const [t, cap, sp] = body.split("|"); words = [t, cap + "gb", /sodimm/.test(sp || "") ? "sodimm" : ""]; }
+  else if (kind === "sto") { const [t, cap] = body.split("|"); words = [t.replace(" external", ""), /external/.test(t) ? "external" : "", cap >= 1024 ? cap / 1024 + "tb" : cap + "gb"]; }
+  else if (kind === "mon") { const [size, res, hz] = body.split("|"); words = [size, "monitor", res, hz ? hz + "hz" : ""]; }
+  else { // laptops and everything else
+    // the title's key words: the title's key words (brand, model, size), without sales talk
+    words = String(title || "").toLowerCase().replace(/[^a-z0-9.\- ]+/g, " ").split(/\s+/).filter((w) => w && !FILLER.has(w) && (w.length > 1 || /\d/.test(w))).slice(0, 7);
+  }
+  words = words.join(" ").split(/\s+/).filter(Boolean);
+  const ex = [...LOOK_ALL, ...(LOOK_EX[kind] || LOOK_EX.any), ...(VARIANTS[kind === "gpu" && words[0] === "rx" ? "rx" : kind] || []).filter((v) => !words.includes(v))];
+  if (kind === "phone" && words.includes("pixel")) { const n = words.find((w) => /^\d+$/.test(w)); if (n) ex.push(n + "a"); }
+  if (kind === "ram" && !words.includes("sodimm")) ex.push("sodimm");
+  const seen = new Set(words);
+  return [...words, ...ex.filter((w) => !seen.has(w) && (seen.add(w), true)).map((w) => "-" + w)].join(" ");
+}
+const lookupUrl = (q) => "https://www.ebay.co.uk/sh/research?marketplace=EBAY-GB&keywords=" + encodeURIComponent(q) + "&dayRange=30&tabName=SOLD";
+
+const bookLabel = (label, title, key) => (!label || /^(Similar title|Same eBay product)$/.test(label) ? String(title || "").slice(0, 60) : label) + (/\|new$/.test(key) ? " · new" : " · used");
+const BOOK_DAYS = 30; // price book values are used for 30 days, then FlipScout asks for a refresh
+// what the app needs to open eBay's research page for a listing and save the answer
+function lookInfo(s, alt) {
+  if (!s.pkey || s.bucket === "parts") return null;
+  const q = lookupQ(s.title, s.pkey);
+  return { key: s.pkey, label: bookLabel(s.matchLabel, s.title, s.pkey), q, url: lookupUrl(q), expect: alt ? Math.round(alt.med) : null };
 }
 
 /* ---------------- what the hunter avoids ---------------- */
@@ -477,9 +537,11 @@ async function sweep(env, manual) {
 
   // 4. market price for each product group: sold history first, asking prices as a fallback
   const keys = [...new Set(cands.flatMap((s) => [s.pkey, s.workKey]).filter(Boolean))];
-  const soldBy = {}, askBy = {};
+  const soldBy = {}, askBy = {}, bookBy = {};
   for (let i = 0; i < keys.length; i += 90) {
     const chunk = keys.slice(i, i + 90), q = chunk.map(() => "?").join(",");
+    const br = await D.prepare(`SELECT pkey, avg, st, post, trend, at FROM prices WHERE pkey IN (${q}) AND at>?`).bind(...chunk, now - BOOK_DAYS * DAY).all();
+    for (const row of br.results || []) bookBy[row.pkey] = row;
     const sr = await D.prepare(`SELECT pkey, price FROM sales WHERE pkey IN (${q}) AND at>?`).bind(...chunk, now - 30 * DAY).all();
     for (const row of sr.results || []) (soldBy[row.pkey] = soldBy[row.pkey] || []).push(row.price);
     const ar = await D.prepare(`SELECT pkey, id, price+ship AS t FROM listings WHERE pkey IN (${q}) AND type='BIN' AND status='live' AND last_seen>?`).bind(...chunk, now - 2 * DAY).all();
@@ -491,10 +553,22 @@ async function sweep(env, manual) {
     const m = median(a);
     return a.filter((x) => x >= m * 0.4 && x <= m * 2.5);
   }
-  function market(key, selfId, q = 0.5) {
+  function market(key, selfId, q = 0.5, noBook) {
     if (!key) return null;
     const needSold = q >= 0.8 ? 3 : q >= 0.6 ? 5 : 8;
     const sold = trim((soldBy[key] || []).filter((x) => x > 0));
+    // 1. the price book comes first: a person read it off eBay's sold prices
+    const b = !noBook && bookBy[key];
+    if (b) {
+      const post = b.post != null ? b.post : null;
+      const med = b.avg + (post || 0); // what buyers pay in total, like our own sold prices
+      let ev = now - b.at < 7 * DAY ? 1 : 0.85; // fresher is better
+      if (sold.length >= 3) { const off = Math.abs(median(sold) - med) / med; ev *= off < 0.15 ? 1 : off < 0.3 ? 0.85 : 0.65; } // agrees with what we've seen sell?
+      let low = med * 0.85;
+      if (b.trend === "falling") low = med * 0.8;
+      if (b.st != null && b.st < 25) low = Math.min(low, med * 0.8); // slow sellers: plan for a lower price
+      return { med, low, n: sold.length, src: "book", spread: 0.15, ev, st: b.st, post, trend: b.trend, at: b.at };
+    }
     if (sold.length >= needSold) {
       const med = median(sold), low = pct(sold, 0.25), iqr = pct(sold, 0.75) - low;
       return { med, low, n: sold.length, src: "sold", spread: med ? iqr / med : 1 };
@@ -529,24 +603,26 @@ async function sweep(env, manual) {
     const cost = s.price + s.ship + extra;
     if (cost < m.med * 0.4 && (s.seller.fb < 5 || s.seller.pct < 95 || SCAM_WORDS.test(s.title))) { hidden++; continue; }
     if (SCAM_WORDS.test(s.title)) { hidden++; continue; }
-    const mp = maxPay(m.med, m.low, r);
+    const ri = m.post != null ? { ...r, post: m.post } : r; // postage out for this product, from the price book
+    const mp = maxPay(m.med, m.low, ri);
     if (mp <= 0) continue;
-    const out = r.post + r.pack;
+    const out = ri.post + ri.pack;
     const profit = m.med - sellFee(m.med, r) - out - cost;
     const lowProfit = m.low - sellFee(m.low, r) - out - cost;
     const roi = cost + r.pack > 0 ? (profit / (cost + r.pack)) * 100 : 0;
     const misspelt = MIS_ONLY.test(s.title);
     const tags = [];
     let ok = false, maxBid = null;
+    const slow = m.st != null && m.st < 25; // few listings sell: need a bigger cushion
     if (s.type === "BIN") {
       if (!(cfg.types.bin || (cfg.types.misspelt && misspelt))) continue;
-      ok = profit >= r.minProfit && roi >= r.minRoi;
+      ok = profit >= r.minProfit * (slow ? 1.5 : 1) && roi >= r.minRoi;
       const age = now - (s.created || firstSeen[s.id] || now);
       if (age < 60 * 60000) tags.push("New listing");
     } else {
       if (!cfg.types.auction) continue;
       if (!s.end || s.end - now > 12 * 3600e3) continue;
-      maxBid = Math.floor((mp - s.ship - (r.bpf ? bpf(mp) : 0)) * 100) / 100;
+      maxBid = Math.floor(((slow ? mp - r.minProfit * 0.5 : mp) - s.ship - (r.bpf ? bpf(mp) : 0)) * 100) / 100;
       ok = maxBid > s.price;
       const h = ukHour(s.end);
       if (h >= 0 && h < 6) tags.push("Ends overnight");
@@ -554,7 +630,7 @@ async function sweep(env, manual) {
     }
     if (!ok) {
       why.fair++;
-      if (s.type === "BIN" && m.src === "sold" && cost < m.med * 0.97 && profit > 0) {
+      if (s.type === "BIN" && (m.src === "sold" || m.src === "book") && cost < m.med * 0.97 && profit > 0) {
         close.push({ id: s.id, title: s.title, img: s.img, url: s.url, cond: s.cond, catName: s.catName, cost: Math.round(cost * 100) / 100,
           med: Math.round(m.med * 100) / 100, profit: Math.round(profit * 100) / 100, roi: Math.round(roi), n: m.n, matchLabel: s.matchLabel, at: now });
       }
@@ -565,7 +641,7 @@ async function sweep(env, manual) {
     if (s.loc && s.loc !== "GB") tags.push("Ships from " + s.loc);
 
     // confidence score, built from parts the user can see
-    const ev = (m.src === "sold" ? Math.min(1, m.n / 10) : Math.min(0.5, m.n / 16)) * Math.max(0.3, 1 - Math.min(1, m.spread));
+    const ev = m.src === "book" ? m.ev : (m.src === "sold" ? Math.min(1, m.n / 10) : Math.min(0.5, m.n / 16)) * Math.max(0.3, 1 - Math.min(1, m.spread));
     const match = s.matchQ || 0.5;
     const sel = s.seller.fb >= 50 && s.seller.pct >= 99 ? 1 : s.seller.fb >= 10 && s.seller.pct >= 98 ? 0.7 : s.seller.fb >= 5 ? 0.4 : 0.15;
     const mar = lowProfit <= 0 ? 0 : Math.min(1, lowProfit / Math.max(1, r.minProfit));
@@ -579,15 +655,22 @@ async function sweep(env, manual) {
       comp = (s.bids <= 1 ? 0.6 : s.bids <= 4 ? 0.4 : 0.2) + (h < 6 ? 0.3 : 0) + (misspelt ? 0.2 : 0);
       comp = Math.min(1, comp);
     }
-    let score = Math.round(30 * ev + 20 * match + 15 * sel + 20 * mar + 15 * comp);
-    if (m.src !== "sold") { score = Math.min(score, r.alertScore - 1, 69); tags.push("Price not confirmed by sales"); }
+    // demand: how many listings actually sell (from the price book). Unknown counts as average.
+    const dem = m.st == null ? 0.6 : m.st >= 60 ? 1 : m.st >= 40 ? 0.8 : m.st >= 25 ? 0.55 : 0.25;
+    let score = Math.round(25 * ev + 20 * match + 15 * sel + 20 * mar + 10 * comp + 10 * dem);
+    if (m.src === "asking") { score = Math.min(score, r.alertScore - 1, 69); tags.push("Price not confirmed by sales"); }
+    if (m.src === "book") tags.push("Price from price book");
+    if (slow) tags.push("Slow seller");
+    if (m.trend === "falling") tags.push("Prices falling");
     if (score < r.minScore) continue;
     deals.push({
       ...s, kind: "deal", cost: Math.round(cost * 100) / 100, extra: Math.round(extra * 100) / 100,
       profit: Math.round(profit * 100) / 100, lowProfit: Math.round(lowProfit * 100) / 100, roi: Math.round(roi),
       maxPay: Math.floor(mp * 100) / 100, maxBid, med: Math.round(m.med * 100) / 100, low: Math.round(m.low * 100) / 100,
-      n: m.n, src: m.src, score, parts: { evidence: ev, match, seller: sel, margin: mar, competition: comp }, tags,
-      sellFee: Math.round(sellFee(m.med, r) * 100) / 100, out: r.post + r.pack,
+      n: m.n, src: m.src, score, parts: { evidence: ev, match, seller: sel, margin: mar, competition: comp, demand: dem }, tags,
+      sellFee: Math.round(sellFee(m.med, r) * 100) / 100, out: Math.round(out * 100) / 100,
+      st: m.st != null ? m.st : null, trend: m.trend || null, bookAt: m.at || null,
+      look: lookInfo(s, market(s.pkey, s.id, s.matchQ || 0.5, true)),
     });
   }
   report.hidden = hidden;
@@ -806,7 +889,7 @@ export default {
     if (!env.APP_KEY || P("key") !== env.APP_KEY) return json({ error: "wrong key" }, 401);
 
     // ---- hunting (needs the database) ----
-    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "test", "device", "check"].some((k) => u.searchParams.has(k));
+    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "test", "device", "check", "price", "prices", "unprice", "needs"].some((k) => u.searchParams.has(k));
     if (huntCall) {
       if (!env.DB) return json({ error: "hunting database not set up yet" }, 501);
       try {
@@ -837,6 +920,42 @@ export default {
           const id = String(P("check")).replace(/\D/g, "");
           if (!id) return json({ error: "need a listing" }, 400);
           return json(await checkLive(env, id));
+        }
+        if (P("price") && request.method === "POST") {
+          const b = JSON.parse(await request.text());
+          const key = String(b.key || "").slice(0, 200), avg = parseFloat(b.avg);
+          if (!key || !(avg > 0 && avg < 100000)) return json({ error: "need the average sold price" }, 400);
+          const n = (v, max) => { const x = parseFloat(v); return x >= 0 && x <= max ? x : null; };
+          const trend = ["rising", "steady", "falling"].includes(b.trend) ? b.trend : null;
+          await env.DB.prepare("INSERT INTO prices (pkey,label,q,avg,st,post,trend,at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(pkey) DO UPDATE SET label=excluded.label, q=excluded.q, avg=excluded.avg, st=excluded.st, post=excluded.post, trend=excluded.trend, at=excluded.at")
+            .bind(key, String(b.label || "").slice(0, 120), String(b.q || "").slice(0, 400), avg, n(b.st, 100), n(b.post, 500), trend, Date.now()).run();
+          return json({ ok: true });
+        }
+        if (P("prices")) {
+          const rows = await env.DB.prepare("SELECT pkey, label, q, avg, st, post, trend, at FROM prices ORDER BY at DESC LIMIT 500").all();
+          return json({ prices: (rows.results || []).map((r) => ({ ...r, url: lookupUrl(r.q || ""), fresh: Date.now() - r.at < BOOK_DAYS * DAY })) });
+        }
+        if (P("unprice")) {
+          await env.DB.prepare("DELETE FROM prices WHERE pkey=?").bind(String(P("unprice"))).run();
+          return json({ ok: true });
+        }
+        if (P("needs")) {
+          // products seen most often in your categories that have no fresh price book value
+          const cfg = cleanConfig(await kvGet(env, "config", null));
+          if (!cfg.cats.length) return json({ needs: [] });
+          const names = Object.fromEntries(cfg.cats.map((c) => [c.id, c.name]));
+          const rows = await env.DB.prepare(`SELECT pkey, MAX(title) AS title, MAX(cat) AS cat, COUNT(*) AS n FROM listings WHERE cat IN (${cfg.cats.map(() => "?").join(",")}) AND pkey IS NOT NULL AND pkey NOT LIKE '%|parts' AND last_seen>? GROUP BY pkey ORDER BY n DESC LIMIT 80`)
+            .bind(...cfg.cats.map((c) => c.id), Date.now() - 3 * DAY).all();
+          const have = new Set(((await env.DB.prepare("SELECT pkey FROM prices WHERE at>?").bind(Date.now() - BOOK_DAYS * DAY).all()).results || []).map((r) => r.pkey));
+          const needs = [];
+          for (const r of rows.results || []) {
+            if (have.has(r.pkey) || r.n < 3) continue;
+            const g = groupOf({ title: r.title }, r.cat, names[r.cat] || "", r.pkey.split("|").pop());
+            const q = lookupQ(r.title, r.pkey);
+            needs.push({ key: r.pkey, label: bookLabel(g && g.key === r.pkey ? g.label : "", r.title, r.pkey), q, url: lookupUrl(q), seen: r.n, cat: names[r.cat] || "" });
+            if (needs.length >= 20) break;
+          }
+          return json({ needs });
         }
         if (P("follows")) {
           const rows = await env.DB.prepare("SELECT id, data, max, created FROM follows ORDER BY created DESC").all();

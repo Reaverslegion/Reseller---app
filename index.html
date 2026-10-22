@@ -701,13 +701,21 @@ function vHunt(){
   ${HD.deals===null?`<div class="card mu">Loading deals…</div>`:list.length?list.map(d=>dealCard(d,(HD.deals||[]).indexOf(d))).join("")
    :`<div class="card empty">${I.bolt}<b>No deals here yet</b><div class="mu">FlipScout is learning what things sell for in your categories. Popular categories usually show deals within a day or two. It keeps checking in the background.</div><button class="s" onclick="go('cats')">My categories</button></div>`}`;
 }
-function openDeal(i){DV=(HD.deals||[])[i];if(DV)go("deal")}
+function openDeal(i){DV=(HD.deals||[])[i];if(!DV)return;const d=DV;d.live=undefined;go("deal");
+  api("check="+d.id).then(r=>{d.live=r.live;
+    if(!r.live||r.tooDear){d.gone=r.live?"dear":"ended";HD.deals=(HD.deals||[]).filter(x=>x.id!==d.id)}
+    else if(r.price!=null&&Math.abs(r.price+r.ship-(d.price+d.ship))>0.009){d.changed=true;d.price=r.price;d.ship=r.ship;d.bids=r.bids}
+    if(tab==="deal"&&DV===d)render()}).catch(()=>{d.live=true;if(tab==="deal"&&DV===d)render()})}
 function bar(label,v,txt){const w=Math.round(Math.max(0,Math.min(1,v))*100),c=v>=0.7?"var(--ok)":v>=0.4?"var(--warn)":"var(--bad)";
   return`<div style="margin-top:12px"><div style="display:flex;justify-content:space-between;font-size:15px"><span>${label}</span><span style="font-weight:700">${v>=0.85?"Strong":v>=0.6?"Good":v>=0.4?"Fair":"Weak"}</span></div><div style="height:8px;border-radius:9px;background:var(--bd);margin-top:6px"><div style="width:${w}%;height:8px;border-radius:9px;background:${c}"></div></div><div class="mu" style="margin-top:4px">${txt}</div></div>`}
 function vDeal(){
   const d=DV;if(!d)return`<div class="card">That deal has gone.</div>`;
   const sp=d.kind==="spares",p=d.parts||{},sel=d.seller||{};
-  const head=`<div class="card" style="padding:0;overflow:hidden">${d.img?`<img src="${esc(d.img)}" alt="" style="width:100%;height:220px;object-fit:contain;background:var(--card2);display:block">`:""}
+  const banner=d.gone==="ended"?`<div class="verdict no"><b>This listing has ended or sold</b><div class="mu">It's been taken off your deals.</div></div>`
+    :d.gone==="dear"?`<div class="verdict no"><b>No longer a deal</b><div class="mu">The price is now above what you should pay, so it's been taken off your deals.</div></div>`
+    :d.changed?`<div class="verdict info"><b>Price changed</b><div class="mu">Now ${gbp(d.price)} + ${gbp(d.ship)} postage. Check the numbers before you buy.</div></div>`
+    :d.live===undefined?`<div class="hint" style="margin:0 0 10px">Checking it's still for sale…</div>`:"";
+  const head=banner+`<div class="card" style="padding:0;overflow:hidden">${d.img?`<img src="${esc(d.img)}" alt="" style="width:100%;height:220px;object-fit:contain;background:var(--card2);display:block">`:""}
    <div style="padding:16px"><div style="display:flex;gap:6px;flex-wrap:wrap">${dealBadge(d)}<span class="chip">${esc(d.cond||"")}</span></div>
    <h2 style="margin:10px 0 2px">${esc(d.title)}</h2><div class="mu">${esc(d.catName||"")} · seller ${esc(sel.name||"")} (${sel.pct||0}%, ${sel.fb||0})</div></div></div>`;
   if(sp)return head+`<div class="verdict info"><div class="mu">Seller says</div><div style="font-size:16px;margin-top:4px">${d.sellerSays?"“"+esc(d.sellerSays)+"”":"Read the description on eBay. Only the title is available here."}</div>

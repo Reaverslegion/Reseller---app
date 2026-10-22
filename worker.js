@@ -77,6 +77,9 @@ async function schema(env) {
     D.prepare("CREATE TABLE IF NOT EXISTS deals (id TEXT PRIMARY KEY, data TEXT, score INTEGER, created INTEGER, expires INTEGER, notified INTEGER DEFAULT 0)"),
     D.prepare("CREATE TABLE IF NOT EXISTS follows (id TEXT PRIMARY KEY, data TEXT, max REAL, created INTEGER, alerted TEXT)"),
   ]);
+  for (const sql of ["ALTER TABLE listings ADD COLUMN data TEXT", "ALTER TABLE deals ADD COLUMN checked INTEGER DEFAULT 0"]) {
+    try { await D.prepare(sql).run(); } catch (e) { /* column already there */ }
+  }
   SCHEMA = true;
 }
 async function kvGet(env, k, def) {
@@ -326,11 +329,11 @@ async function sweep(env, manual) {
   const seen = [];
   for (const c of cats) {
     const calls = [];
-    if (cfg.types.bin || cfg.types.misspelt || cfg.types.spares) calls.push(["BIN", "buyingOptions:{FIXED_PRICE}", "newlyListed"]);
-    if (cfg.types.auction || cfg.types.spares) calls.push(["AUC", "buyingOptions:{AUCTION}", "endingSoonest"]);
-    for (const [type, f, sort] of calls) {
+    if (cfg.types.bin || cfg.types.misspelt || cfg.types.spares) calls.push(["BIN", "buyingOptions:{FIXED_PRICE}", "newlyListed", 100]);
+    if (cfg.types.auction || cfg.types.spares) calls.push(["AUC", "buyingOptions:{AUCTION}", "endingSoonest", 50]);
+    for (const [type, f, sort, lim] of calls) {
       try {
-        const d = await ebay(env, `/buy/browse/v1/item_summary/search?category_ids=${c.id}&limit=50&sort=${sort}&filter=${encodeURIComponent([...base, f].join(","))}`);
+        const d = await ebay(env, `/buy/browse/v1/item_summary/search?category_ids=${c.id}&limit=${lim}&sort=${sort}&filter=${encodeURIComponent([...base, f].join(","))}`);
         for (const it of d.itemSummaries || []) {
           const id = it.legacyItemId || String(it.itemId || "").split("|")[1];
           if (!id) continue;
@@ -365,12 +368,25 @@ async function sweep(env, manual) {
     for (const row of rows.results || []) firstSeen[row.id] = row.first_seen;
   }
   const up = seen.map((s) => D.prepare(
-    "INSERT INTO listings (id,cat,pkey,title,cond,type,price,ship,bids,end_at,first_seen,last_seen,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'live') ON CONFLICT(id) DO UPDATE SET price=excluded.price, ship=excluded.ship, bids=excluded.bids, last_seen=excluded.last_seen, end_at=excluded.end_at, status='live'"
-  ).bind(s.id, s.cat, s.pkey, s.title.slice(0, 200), s.bucket, s.type, s.price, s.ship, s.bids, s.end, s.created || now, now));
+    "INSERT INTO listings (id,cat,pkey,title,cond,type,price,ship,bids,end_at,first_seen,last_seen,status,data) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'live',?) ON CONFLICT(id) DO UPDATE SET price=excluded.price, ship=excluded.ship, bids=excluded.bids, last_seen=excluded.last_seen, end_at=excluded.end_at, status=CASE WHEN listings.status='gone' THEN 'gone' ELSE 'live' END, data=excluded.data"
+  ).bind(s.id, s.cat, s.pkey, s.title.slice(0, 200), s.bucket, s.type, s.price, s.ship, s.bids, s.end, s.created || now, now, JSON.stringify(s)));
   for (let i = 0; i < up.length; i += 50) await D.batch(up.slice(i, i + 50));
 
+  // 3b. also re-judge recent live listings from these categories that weren't in this run's results.
+  // As sold history grows, listings we couldn't price yesterday can become deals today.
+  const seenIds = new Set(ids);
+  const cands = [...seen];
+  {
+    const cq = cats.map(() => "?").join(",");
+    const rows = await D.prepare(`SELECT id, data FROM listings WHERE cat IN (${cq}) AND status='live' AND data IS NOT NULL AND last_seen>? AND (end_at IS NULL OR end_at>?) ORDER BY last_seen DESC LIMIT 400`).bind(...cats.map((c) => c.id), now - DAY, now + 5 * 60000).all();
+    for (const row of rows.results || []) {
+      if (seenIds.has(row.id)) continue;
+      try { const o = JSON.parse(row.data); o.old = true; cands.push(o); } catch (e) {}
+    }
+  }
+
   // 4. market price for each product group: sold history first, asking prices as a fallback
-  const keys = [...new Set(seen.flatMap((s) => [s.pkey, s.workKey]).filter(Boolean))];
+  const keys = [...new Set(cands.flatMap((s) => [s.pkey, s.workKey]).filter(Boolean))];
   const soldBy = {}, askBy = {};
   for (let i = 0; i < keys.length; i += 90) {
     const chunk = keys.slice(i, i + 90), q = chunk.map(() => "?").join(",");
@@ -405,7 +421,7 @@ async function sweep(env, manual) {
   // 5. judge each listing
   const deals = [], spares = [];
   let hidden = 0;
-  for (const s of seen) {
+  for (const s of cands) {
     const extra = r.bpf ? bpf(s.price) : 0;
     if (s.bucket === "parts") {
       if (!cfg.types.spares) continue;
@@ -496,11 +512,21 @@ async function sweep(env, manual) {
     }
     const st = all.map((d) => D.prepare(
       "INSERT INTO deals (id,data,score,created,expires,notified) VALUES (?,?,?,?,?,0) ON CONFLICT(id) DO UPDATE SET data=excluded.data, score=excluded.score, expires=excluded.expires"
-    ).bind(d.id, JSON.stringify(d), d.score || 0, now, d.type === "AUC" && d.end ? d.end : now + 2 * DAY));
+    ).bind(d.id, JSON.stringify(d), d.score || 0, now, d.type === "AUC" && d.end ? d.end : now + DAY));
     for (let i = 0; i < st.length; i += 50) await D.batch(st.slice(i, i + 50));
     report.newDeals = all.filter((d) => !existing[d.id]).length;
   }
-  // deals that went over our price or vanished from the latest results for their category stay until they expire
+  // listings we just judged that are no longer deals (price went up, bids passed our max): take them off the list
+  {
+    const keep = new Set(all.map((d) => d.id));
+    const drop = cands.map((s) => s.id).filter((id) => !keep.has(id));
+    for (let i = 0; i < drop.length; i += 90) {
+      const chunk = drop.slice(i, i + 90);
+      await D.prepare(`DELETE FROM deals WHERE id IN (${chunk.map(() => "?").join(",")})`).bind(...chunk).run();
+    }
+  }
+  // 7b. make sure the deals on the list are still for sale (a few per run, oldest check first)
+  report.gone = await verifyDeals(env, 8);
 
   // 8. followed listings
   await checkFollows(env, cfg);
@@ -511,6 +537,8 @@ async function sweep(env, manual) {
     for (const row of rows.results || []) {
       const d = JSON.parse(row.data);
       if (d.kind !== "deal") continue;
+      const v = await checkLive(env, d.id);
+      if (!v.live) continue; // sold or ended since we found it: no alert
       const msg = d.type === "AUC"
         ? `Bid up to £${d.maxBid.toFixed(2)} (now £${d.price.toFixed(2)}). Score ${d.score}.`
         : `£${d.cost.toFixed(2)} now, about £${d.profit.toFixed(0)} profit. Score ${d.score}.`;
@@ -575,6 +603,48 @@ async function push(env, title, body, data) {
   return { sent };
 }
 
+/* ---------------- is a listing still for sale? ---------------- */
+async function checkLive(env, id) {
+  const D = env.DB, now = Date.now();
+  let d;
+  try { d = await ebay(env, `/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id=${id}`); }
+  catch (e) { return { live: true, unknown: true }; } // eBay hiccup: don't hide it
+  const avail = ((d.estimatedAvailabilities || [])[0] || {}).estimatedAvailabilityStatus;
+  const end = d.itemEndDate ? Date.parse(d.itemEndDate) : null;
+  const gone = d.notFound || (end && end < now) || avail === "OUT_OF_STOCK";
+  if (gone) {
+    await D.batch([
+      D.prepare("DELETE FROM deals WHERE id=?").bind(id),
+      D.prepare("UPDATE listings SET status='gone' WHERE id=? AND type='BIN'").bind(id),
+    ]);
+    return { live: false };
+  }
+  const auction = (d.buyingOptions || []).includes("AUCTION") && !(d.buyingOptions || []).includes("FIXED_PRICE");
+  const pr = auction && d.currentBidPrice ? d.currentBidPrice : d.price;
+  const so = (d.shippingOptions || [])[0];
+  const out = { live: true, price: pr ? parseFloat(pr.value) : null, ship: so && so.shippingCost ? parseFloat(so.shippingCost.value) || 0 : 0, bids: +d.bidCount || 0, end };
+  const row = await D.prepare("SELECT data FROM deals WHERE id=?").bind(id).first();
+  if (row && out.price != null) {
+    const deal = JSON.parse(row.data);
+    const tooDear = deal.kind === "deal" && (deal.type === "AUC" ? out.price >= (deal.maxBid || 0) : out.price + out.ship > (deal.maxPay || 0));
+    if (tooDear) { await D.prepare("DELETE FROM deals WHERE id=?").bind(id).run(); return { ...out, live: true, tooDear: true }; }
+    Object.assign(deal, { price: out.price, ship: out.ship, bids: out.bids, end: out.end || deal.end });
+    await D.prepare("UPDATE deals SET data=?, checked=? WHERE id=?").bind(JSON.stringify(deal), now, id).run();
+  } else if (row) {
+    await D.prepare("UPDATE deals SET checked=? WHERE id=?").bind(now, id).run();
+  }
+  return out;
+}
+async function verifyDeals(env, n) {
+  const rows = await env.DB.prepare("SELECT id FROM deals WHERE expires>? ORDER BY checked ASC, score DESC LIMIT ?").bind(Date.now(), n).all();
+  let gone = 0;
+  for (const row of rows.results || []) {
+    const v = await checkLive(env, row.id);
+    if (!v.live || v.tooDear) gone++;
+  }
+  return gone;
+}
+
 async function checkFollows(env, cfg) {
   const D = env.DB, now = Date.now();
   const rows = await D.prepare("SELECT id, data, max, alerted FROM follows ORDER BY created DESC LIMIT 10").all();
@@ -624,7 +694,7 @@ export default {
     if (!env.APP_KEY || P("key") !== env.APP_KEY) return json({ error: "wrong key" }, 401);
 
     // ---- hunting (needs the database) ----
-    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "test", "device"].some((k) => u.searchParams.has(k));
+    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "test", "device", "check"].some((k) => u.searchParams.has(k));
     if (huntCall) {
       if (!env.DB) return json({ error: "hunting database not set up yet" }, 501);
       try {
@@ -648,6 +718,11 @@ export default {
           const deals = (rows.results || []).map((r) => ({ ...JSON.parse(r.data), found: r.created }));
           const learned = await env.DB.prepare("SELECT cat, COUNT(*) AS n FROM sales GROUP BY cat").all();
           return json({ deals, report: await kvGet(env, "lastReport", null), learned: learned.results || [] });
+        }
+        if (P("check")) {
+          const id = String(P("check")).replace(/\D/g, "");
+          if (!id) return json({ error: "need a listing" }, 400);
+          return json(await checkLive(env, id));
         }
         if (P("follows")) {
           const rows = await env.DB.prepare("SELECT id, data, max, created FROM follows ORDER BY created DESC").all();

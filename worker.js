@@ -15,7 +15,16 @@
 //   follows ?follows=1 | POST ?follow=1 | ?unfollow=ID
 //   test    ?test=1                      send a test phone alert
 
-let TOKEN = null, TOKEN_EXP = 0, SCHEMA = false;
+let TOKEN = null, TOKEN_EXP = 0, SCHEMA = false, CALLS = 0;
+// eBay allows 5,000 Browse calls a day on our keyset. We count them and hold back optional work near the limit.
+const EBAY_DAILY = 5000;
+const today = () => new Date().toISOString().slice(0, 10);
+async function quota(env) { const q = await kvGet(env, "quota", null); return q && q.d === today() ? q.n : 0; }
+async function saveQuota(env) {
+  if (!CALLS) return;
+  const n = (await quota(env)) + CALLS; CALLS = 0;
+  await kvSet(env, "quota", { d: today(), n });
+}
 const DAY = 864e5;
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -51,6 +60,7 @@ async function getToken(env) {
 }
 async function ebay(env, path) {
   const token = await getToken(env);
+  CALLS++;
   const r = await fetch("https://api.ebay.com" + path, {
     headers: {
       Authorization: "Bearer " + token,
@@ -274,6 +284,51 @@ function ukHour(ts) {
   catch (e) { return new Date(ts).getUTCHours(); }
 }
 
+/* ---------------- background learning ---------------- */
+// Popular UK resale categories. FlipScout watches their auctions just to learn sold prices,
+// so any category you add later already has price history.
+const LEARN_TERMS = ["iPhone", "Samsung Galaxy smartphone", "PlayStation 5 console", "Nintendo Switch console", "Xbox Series X console",
+  "Apple iPad tablet", "Apple Watch", "Apple AirPods", "Wireless headphones", "Laptop", "Graphics card", "Computer monitor",
+  "CPU processor", "Desktop memory RAM", "SSD solid state drive", "Digital camera", "Camera lens", "LEGO set",
+  "Cordless drill", "Dyson vacuum cleaner", "Smart watch", "Steam Deck"];
+async function learnCats(env) {
+  const st = await kvGet(env, "learnCats", { i: 0, cats: [] });
+  let n = 0;
+  while (st.i < LEARN_TERMS.length && n < 2) {
+    n++;
+    try {
+      const d = await ebay(env, "/commerce/taxonomy/v1/category_tree/3/get_category_suggestions?q=" + encodeURIComponent(LEARN_TERMS[st.i]));
+      const c = ((d.categorySuggestions || [])[0] || {}).category;
+      if (c && !st.cats.some((x) => x.id === String(c.categoryId))) st.cats.push({ id: String(c.categoryId), name: c.categoryName });
+    } catch (e) { break; }
+    st.i++;
+  }
+  if (n) await kvSet(env, "learnCats", st);
+  return st.cats;
+}
+// Auctions jump in their last minutes. Look again just before they end, so we learn the real price.
+async function closing(env) {
+  await schema(env);
+  const D = env.DB, now = Date.now();
+  const used = await quota(env);
+  if (used > EBAY_DAILY * 0.85) return 0; // keep the rest of today's eBay calls for hunting
+  const rows = await D.prepare("SELECT id FROM listings WHERE status='live' AND type='AUC' AND pkey IS NOT NULL AND bids>0 AND end_at>? AND end_at<=? ORDER BY bids DESC LIMIT 3").bind(now, now + 150000).all();
+  if (!(rows.results || []).length) return 0;
+  const up = [];
+  for (const row of rows.results || []) {
+    try {
+      const d = await ebay(env, `/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id=${row.id}`);
+      if (d.notFound) continue;
+      const pr = d.currentBidPrice || d.price, so = (d.shippingOptions || [])[0];
+      if (!pr) continue;
+      up.push(D.prepare("UPDATE listings SET price=?, ship=?, bids=?, last_seen=? WHERE id=?").bind(parseFloat(pr.value) || 0, so && so.shippingCost ? parseFloat(so.shippingCost.value) || 0 : 0, +d.bidCount || 0, now, row.id));
+    } catch (e) { break; }
+  }
+  if (up.length) await D.batch(up);
+  await saveQuota(env);
+  return up.length;
+}
+
 /* ---------------- the hunt ---------------- */
 const DEFAULT_RULES = { minProfit: 15, minRoi: 30, seller: "business", feePct: 12.8, feeFixed: 0.4, post: 5, pack: 1, bpf: true, alertScore: 70, minScore: 40 };
 function cleanConfig(c) {
@@ -357,25 +412,60 @@ async function sweep(env, manual) {
       } catch (e) { report.errors.push(c.name + ": " + e.message); }
     }
   }
-  if (!seen.length) { await kvSet(env, "lastReport", { at: now, ...report }); return report; }
+  // background learning: a few popular categories per run, auctions only (skipped when near eBay's daily limit)
+  if ((await quota(env)) + CALLS < EBAY_DAILY * 0.7) try {
+    const mine = new Set(cfg.cats.map((c) => c.id));
+    const lc = (await learnCats(env)).filter((c) => !mine.has(c.id));
+    if (lc.length) {
+      let lr = await kvGet(env, "lrot", 0);
+      const pick = [];
+      for (let i = 0; i < Math.min(5, lc.length); i++) pick.push(lc[(lr + i) % lc.length]);
+      await kvSet(env, "lrot", (lr + pick.length) % lc.length);
+      for (const c of pick) {
+        try {
+          const d = await ebay(env, `/buy/browse/v1/item_summary/search?category_ids=${c.id}&limit=50&sort=endingSoonest&filter=${encodeURIComponent([...base, "buyingOptions:{AUCTION}"].join(","))}`);
+          for (const it of d.itemSummaries || []) {
+            const id = it.legacyItemId || String(it.itemId || "").split("|")[1];
+            if (!id || !it.currentBidPrice || !(+it.bidCount > 0)) continue; // no bids = no sale to learn
+            const bucket = condBucket(it.conditionId), g = groupOf(it, c.id, c.name, bucket);
+            if (!g) continue;
+            const so = (it.shippingOptions || [])[0];
+            seen.push({ id, cat: c.id, title: it.title || "", bucket, type: "AUC", price: parseFloat(it.currentBidPrice.value) || 0,
+              ship: so && so.shippingCost ? parseFloat(so.shippingCost.value) || 0 : 0, bids: +it.bidCount || 0,
+              end: it.itemEndDate ? Date.parse(it.itemEndDate) : null, created: null, pkey: g.key, learn: true });
+          }
+          report.learning = (report.learning || 0) + 1;
+        } catch (e) { /* learning is best effort */ }
+      }
+    }
+  } catch (e) {}
+  if (!seen.length) { await saveQuota(env); await kvSet(env, "lastReport", { at: now, ...report }); return report; }
 
   // 3. remember everything we saw (this builds the sold history over time)
-  const firstSeen = {};
+  const firstSeen = {}, have = {};
   const ids = seen.map((s) => s.id);
   for (let i = 0; i < ids.length; i += 90) {
     const chunk = ids.slice(i, i + 90);
-    const rows = await D.prepare(`SELECT id, first_seen FROM listings WHERE id IN (${chunk.map(() => "?").join(",")})`).bind(...chunk).all();
-    for (const row of rows.results || []) firstSeen[row.id] = row.first_seen;
+    const rows = await D.prepare(`SELECT id, first_seen, price, ship, bids, last_seen FROM listings WHERE id IN (${chunk.map(() => "?").join(",")})`).bind(...chunk).all();
+    for (const row of rows.results || []) { firstSeen[row.id] = row.first_seen; have[row.id] = row; }
   }
-  const up = seen.map((s) => D.prepare(
+  // only save what's new or changed (the free database allows 100,000 saved rows a day)
+  const dirty = seen.filter((s, i) => {
+    if (ids.indexOf(s.id) !== i) return false; // same listing twice in one run
+    const h = have[s.id];
+    return !h || h.price !== s.price || h.ship !== s.ship || h.bids !== s.bids || now - h.last_seen > 6 * 3600e3;
+  });
+  const up = dirty.map((s) => D.prepare(
     "INSERT INTO listings (id,cat,pkey,title,cond,type,price,ship,bids,end_at,first_seen,last_seen,status,data) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'live',?) ON CONFLICT(id) DO UPDATE SET price=excluded.price, ship=excluded.ship, bids=excluded.bids, last_seen=excluded.last_seen, end_at=excluded.end_at, status=CASE WHEN listings.status='gone' THEN 'gone' ELSE 'live' END, data=excluded.data"
-  ).bind(s.id, s.cat, s.pkey, s.title.slice(0, 200), s.bucket, s.type, s.price, s.ship, s.bids, s.end, s.created || now, now, JSON.stringify(s)));
+  ).bind(s.id, s.cat, s.pkey, s.title.slice(0, 200), s.bucket, s.type, s.price, s.ship, s.bids, s.end, s.created || now, now, s.learn ? null : JSON.stringify(s)));
   for (let i = 0; i < up.length; i += 50) await D.batch(up.slice(i, i + 50));
+  report.saved = up.length;
 
   // 3b. also re-judge recent live listings from these categories that weren't in this run's results.
   // As sold history grows, listings we couldn't price yesterday can become deals today.
   const seenIds = new Set(ids);
-  const cands = [...seen];
+  const why = { noData: 0, risky: 0, fair: 0 }, close = [];
+  const cands = seen.filter((s) => !s.learn);
   {
     const cq = cats.map(() => "?").join(",");
     const rows = await D.prepare(`SELECT id, data FROM listings WHERE cat IN (${cq}) AND status='live' AND data IS NOT NULL AND last_seen>? AND (end_at IS NULL OR end_at>?) ORDER BY last_seen DESC LIMIT 400`).bind(...cats.map((c) => c.id), now - DAY, now + 5 * 60000).all();
@@ -432,10 +522,10 @@ async function sweep(env, manual) {
       spares.push({ ...s, kind: "spares", tags: [], score: 0, cost: Math.round((s.price + s.ship + extra) * 100) / 100, workMed: Math.round(m.med), n: m.n, src: m.src });
       continue;
     }
-    if (RISK_WORDS.test(s.title)) continue;
+    if (RISK_WORDS.test(s.title)) { why.risky++; continue; }
     const m = market(s.pkey, s.id, s.matchQ || 0.5);
-    if (!m) continue;
-    if (m.spread > 0.9 && (s.matchQ || 0.5) < 0.8) continue; // prices all over the place: not confident
+    if (!m) { why.noData++; continue; }
+    if (m.spread > 0.9 && (s.matchQ || 0.5) < 0.8) { why.noData++; continue; } // prices all over the place: not confident
     const cost = s.price + s.ship + extra;
     if (cost < m.med * 0.4 && (s.seller.fb < 5 || s.seller.pct < 95 || SCAM_WORDS.test(s.title))) { hidden++; continue; }
     if (SCAM_WORDS.test(s.title)) { hidden++; continue; }
@@ -462,7 +552,14 @@ async function sweep(env, manual) {
       if (h >= 0 && h < 6) tags.push("Ends overnight");
       if (s.bids <= 2) tags.push(s.bids ? s.bids + " bid" + (s.bids > 1 ? "s" : "") : "No bids yet");
     }
-    if (!ok) continue;
+    if (!ok) {
+      why.fair++;
+      if (s.type === "BIN" && m.src === "sold" && cost < m.med * 0.97 && profit > 0) {
+        close.push({ id: s.id, title: s.title, img: s.img, url: s.url, cond: s.cond, catName: s.catName, cost: Math.round(cost * 100) / 100,
+          med: Math.round(m.med * 100) / 100, profit: Math.round(profit * 100) / 100, roi: Math.round(roi), n: m.n, matchLabel: s.matchLabel, at: now });
+      }
+      continue;
+    }
     if (misspelt) tags.push("Misspelt title");
     if (s.bestOffer) tags.push("Best Offer");
     if (s.loc && s.loc !== "GB") tags.push("Ships from " + s.loc);
@@ -494,6 +591,13 @@ async function sweep(env, manual) {
     });
   }
   report.hidden = hidden;
+  report.why = { ...why, judged: cands.length };
+  // close calls: below the usual sold price, but not enough profit for your rules. Shown, never alerted.
+  try {
+    const old = (await kvGet(env, "close", [])).filter((c) => now - c.at < 6 * 3600e3 && !cands.some((s) => s.id === c.id));
+    const merged = [...close, ...old].sort((a, b) => b.profit - a.profit).slice(0, 10);
+    await kvSet(env, "close", merged);
+  } catch (e) {}
 
   // 6. spares: fetch the seller's own condition words (a few per run)
   for (const sp of spares.slice(0, 3)) {
@@ -528,7 +632,7 @@ async function sweep(env, manual) {
     }
   }
   // 7b. make sure the deals on the list are still for sale (a few per run, oldest check first)
-  report.gone = await verifyDeals(env, 8);
+  report.gone = await verifyDeals(env, 6);
 
   // 8. followed listings
   await checkFollows(env, cfg);
@@ -548,6 +652,8 @@ async function sweep(env, manual) {
     }
     await D.prepare("UPDATE deals SET notified=1 WHERE notified=0").run();
   }
+  await saveQuota(env);
+  report.ebayToday = await quota(env);
   await kvSet(env, "lastReport", { at: now, ...report, cats: cats.map((c) => c.name) });
   return report;
 }
@@ -687,7 +793,11 @@ async function checkFollows(env, cfg) {
 /* ---------------- web requests ---------------- */
 export default {
   async scheduled(event, env, ctx) {
-    if (env.DB) ctx.waitUntil(sweep(env, false).catch(() => {}));
+    if (!env.DB) return;
+    ctx.waitUntil((async () => {
+      const r = await sweep(env, false).catch(() => ({}));
+      if (r && r.skipped) await closing(env).catch(() => {});
+    })());
   },
 
   async fetch(request, env, ctx) {
@@ -719,7 +829,9 @@ export default {
           const rows = await env.DB.prepare("SELECT data, created FROM deals WHERE expires>? ORDER BY score DESC LIMIT 200").bind(Date.now()).all();
           const deals = (rows.results || []).map((r) => ({ ...JSON.parse(r.data), found: r.created }));
           const learned = await env.DB.prepare("SELECT cat, COUNT(*) AS n FROM sales GROUP BY cat").all();
-          return json({ deals, report: await kvGet(env, "lastReport", null), learned: learned.results || [] });
+          const lc = await kvGet(env, "learnCats", { cats: [] });
+          const total = await env.DB.prepare("SELECT COUNT(*) AS n FROM sales").first();
+          return json({ deals, report: await kvGet(env, "lastReport", null), learned: learned.results || [], close: await kvGet(env, "close", []), learning: { cats: lc.cats.length, sales: total ? total.n : 0 } });
         }
         if (P("check")) {
           const id = String(P("check")).replace(/\D/g, "");

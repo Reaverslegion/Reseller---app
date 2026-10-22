@@ -42,7 +42,7 @@ jobs:
           database_id = "$DB"
 
           [triggers]
-          crons = ["*/5 * * * *"]
+          crons = ["* * * * *"]
           TOML
           cat wrangler.toml
           wrangler deploy

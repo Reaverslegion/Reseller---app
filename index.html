@@ -658,7 +658,7 @@ function pushConfig(now){clearTimeout(pcT);const go_=async()=>{if(!connected())r
   catch(e){toast("Couldn't save hunting settings: "+errText(e))}};
   if(now)return go_();pcT=setTimeout(go_,800)}
 async function loadDeals(){if(!connected()||HD.busy)return;HD.busy=true;HD.err="";
-  try{const d=await api("deals=1");HD.deals=d.deals||[];HD.report=d.report;HD.learned=d.learned||[];HD.at=Date.now()}catch(e){HD.err=errText(e)}
+  try{const d=await api("deals=1");HD.deals=d.deals||[];HD.report=d.report;HD.learned=d.learned||[];HD.close=d.close||[];HD.learning=d.learning||null;HD.at=Date.now()}catch(e){HD.err=errText(e)}
   HD.busy=false;if(tab==="deals"||tab==="cats")render()}
 async function huntNow(){if(HD.busy)return;if(!H().cats.length){go("cats");toast("Pick some categories first.");return}
   HD.busy=true;render();
@@ -699,8 +699,18 @@ function vHunt(){
   <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;margin-bottom:6px">${FILTERS.filter(f=>f[0]!=="spares"||h.types.spares).map(f=>`<button class="${HD.filter===f[0]?"":"s"}" style="margin:0;min-height:40px;padding:6px 14px;border-radius:99px;white-space:nowrap;flex:none" onclick="HD.filter='${f[0]}';render()">${f[1]} ${F2[f[0]].length}</button>`).join("")}</div>
   ${rep.hidden?`<div class="hint" style="margin:0 4px 10px">🛡 Scam shield hid ${rep.hidden} risky listing${rep.hidden>1?"s":""} last check.</div>`:""}
   ${HD.deals===null?`<div class="card mu">Loading deals…</div>`:list.length?list.map(d=>dealCard(d,(HD.deals||[]).indexOf(d))).join("")
-   :`<div class="card empty">${I.bolt}<b>No deals here yet</b><div class="mu">FlipScout is learning what things sell for in your categories. Popular categories usually show deals within a day or two. It keeps checking in the background.</div><button class="s" onclick="go('cats')">My categories</button></div>`}`;
+   :`<div class="card empty">${I.bolt}<b>No deals right now</b><div class="mu">Real bargains are rare, so FlipScout only shows ones backed by real sold prices. It keeps checking and alerts you when one turns up.</div>${whyLine(rep)}<button class="s" onclick="go('cats')">My categories</button></div>`}
+  ${HD.filter==="all"?closeCalls():""}`;
 }
+function whyLine(rep){const w=rep&&rep.why,L=HD.learning;let t="";
+  if(w&&w.judged)t+=`<div class="hint" style="text-align:left;margin-top:10px">Last check looked at <b>${w.judged}</b> listings: ${w.fair} at a normal price, ${w.noData} still learning prices, ${w.risky} risky.</div>`;
+  if(L&&L.sales)t+=`<div class="hint" style="text-align:left">Learned from <b>${L.sales}</b> sold prices so far${L.cats?`, including ${L.cats} popular categories in the background`:""}.</div>`;
+  return t}
+function closeCalls(){const c=HD.close||[];if(!c.length)return"";
+  return`<h3 style="margin:18px 4px 4px">Close calls</h3><div class="hint" style="margin:0 4px 10px">Cheaper than they usually sell for, but under your profit rules (${gbp(S.rules.minProfit)} and ${S.rules.minRoi}%). No alerts for these.</div>`+
+  c.map(x=>`<div class="card"><div style="display:flex;gap:12px">${x.img?`<img src="${esc(x.img)}" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:12px;flex:none">`:""}<div style="min-width:0"><div style="font-weight:700;line-height:1.3">${esc(x.title)}</div><div class="mu">${esc(x.cond||"")}${x.matchLabel?" · vs "+esc(x.matchLabel):""}</div></div></div>
+   <div class="mu" style="margin-top:8px">${gbp(x.cost)} now · usually sells for ${gbp(x.med)} (${x.n} sold) · about <b class="ok">+${gbp(x.profit)}</b> (${x.roi}%)</div>
+   <a href="${esc(ukUrl(x.url))}" target="_blank" rel="noopener"><button class="s" style="margin-top:8px">Open on eBay</button></a></div>`).join("")}
 function openDeal(i){DV=(HD.deals||[])[i];if(!DV)return;const d=DV;d.live=undefined;go("deal");
   api("check="+d.id).then(r=>{d.live=r.live;
     if(!r.live||r.tooDear){d.gone=r.live?"dear":"ended";HD.deals=(HD.deals||[]).filter(x=>x.id!==d.id)}

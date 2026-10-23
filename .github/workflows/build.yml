@@ -26,17 +26,10 @@ jobs:
           npx cap sync android
       - name: Icon and splash
         run: |
-          # refresh the package list first: a stale list makes the install fail and the app ships with the default icon
-          command -v convert >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick; }
+          # every icon size is made once and stored in android-res, so nothing is installed here (that install kept hanging)
           R=android/app/src/main/res
           mkdir -p $R/mipmap-anydpi-v26 $R/values $R/drawable $R/drawable-nodpi
-          for d in "mdpi 48 108" "hdpi 72 162" "xhdpi 96 216" "xxhdpi 144 324" "xxxhdpi 192 432"; do
-            set -- $d
-            mkdir -p $R/mipmap-$1
-            convert icon-1024.png -resize ${2}x${2} $R/mipmap-$1/ic_launcher.png
-            cp $R/mipmap-$1/ic_launcher.png $R/mipmap-$1/ic_launcher_round.png
-            convert icon-foreground.png -resize ${3}x${3} $R/mipmap-$1/fs_foreground.png
-          done
+          cp -r android-res/. $R/
           echo '<resources><color name="fs_bg">#0D172C</color></resources>' > $R/values/fs_colors.xml
           for n in ic_launcher ic_launcher_round; do
             echo '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@color/fs_bg"/><foreground android:drawable="@mipmap/fs_foreground"/></adaptive-icon>' > $R/mipmap-anydpi-v26/$n.xml
@@ -56,11 +49,6 @@ jobs:
           if [ -f google-services.json ]; then cp google-services.json android/app/google-services.json; echo "Firebase config added"; else echo "No google-services.json yet: alerts will be off"; fi
           mkdir -p $R/drawable-xxxhdpi
           cp notif-icon.png $R/drawable-xxxhdpi/ic_stat_flipscout.png
-          for d in "mdpi 24" "hdpi 36" "xhdpi 48" "xxhdpi 72"; do
-            set -- $d
-            mkdir -p $R/drawable-$1
-            convert notif-icon.png -resize ${2}x${2} $R/drawable-$1/ic_stat_flipscout.png || true
-          done
           mkdir -p $R/values
           echo '<resources><color name="fs_accent">#22c55e</color></resources>' > $R/values/fs_notify.xml
           sed -i 's#</application>#<meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_flipscout"/><meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/fs_accent"/><meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="deals"/></application>#' android/app/src/main/AndroidManifest.xml

@@ -705,7 +705,7 @@ async function sweep(env, manual) {
     if (!ok) {
       why.fair++;
       if (s.type === "BIN" && (m.src === "sold" || m.src === "book") && cost < m.med * 0.97 && profit > 0) {
-        close.push({ id: s.id, title: s.title, img: s.img, url: s.url, cond: s.cond, catName: s.catName, cost: Math.round(cost * 100) / 100,
+        close.push({ id: s.id, title: s.title, img: s.img, url: s.url, cond: s.cond, catName: s.catName, price: s.price, ship: s.ship, cost: Math.round(cost * 100) / 100,
           med: Math.round(m.med * 100) / 100, profit: Math.round(profit * 100) / 100, roi: Math.round(roi), n: m.n, matchLabel: s.matchLabel, at: now });
       }
       continue;
@@ -740,7 +740,11 @@ async function sweep(env, manual) {
     deals.push({
       ...s, kind: "deal", cost: Math.round(cost * 100) / 100, extra: Math.round(extra * 100) / 100,
       profit: Math.round(profit * 100) / 100, lowProfit: Math.round(lowProfit * 100) / 100, roi: Math.round(roi),
-      maxPay: Math.floor(mp * 100) / 100, maxBid, med: Math.round(m.med * 100) / 100, low: Math.round(m.low * 100) / 100,
+      maxPay: Math.floor(mp * 100) / 100, maxBid,
+      // the most to pay for the item itself (before postage and fee), and profit if you pay exactly that
+      maxItem: s.type === "AUC" ? maxBid : Math.floor((mp - s.ship - (r.bpf ? bpf(mp) : 0)) * 100) / 100,
+      profitAtMax: (() => { const it = s.type === "AUC" ? maxBid : Math.floor((mp - s.ship - (r.bpf ? bpf(mp) : 0)) * 100) / 100; return Math.round((m.med - sellFee(m.med, r) - out - (it + s.ship + (r.bpf ? bpf(it) : 0))) * 100) / 100; })(),
+      med: Math.round(m.med * 100) / 100, low: Math.round(m.low * 100) / 100,
       n: m.n, src: m.src, score, parts: { evidence: ev, match, seller: sel, margin: mar, competition: comp, demand: dem }, tags,
       sellFee: Math.round(sellFee(m.med, r) * 100) / 100, out: Math.round(out * 100) / 100,
       st: m.st != null ? m.st : null, trend: m.trend || null, bookAt: m.at || null,

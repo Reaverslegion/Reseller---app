@@ -25,9 +25,9 @@ jobs:
           npx cap add android
           npx cap sync android
       - name: Icon and splash
-        continue-on-error: true
         run: |
-          sudo apt-get install -y imagemagick
+          # refresh the package list first: a stale list makes the install fail and the app ships with the default icon
+          command -v convert >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick; }
           R=android/app/src/main/res
           mkdir -p $R/mipmap-anydpi-v26 $R/values $R/drawable $R/drawable-nodpi
           for d in "mdpi 48 108" "hdpi 72 162" "xhdpi 96 216" "xxhdpi 144 324" "xxxhdpi 192 432"; do
@@ -44,6 +44,9 @@ jobs:
           find $R -name 'splash*.png' -delete
           cp splash-logo.png $R/drawable-nodpi/splash_logo.png
           echo '<layer-list xmlns:android="http://schemas.android.com/apk/res/android"><item android:drawable="@color/fs_bg"/><item><bitmap android:src="@drawable/splash_logo" android:gravity="center"/></item></layer-list>' > $R/drawable/splash.xml
+          # stop the build if the icon or splash is missing, instead of shipping a plain app
+          test -s $R/mipmap-xxxhdpi/ic_launcher.png && test -s $R/mipmap-xxxhdpi/fs_foreground.png && test -s $R/drawable-nodpi/splash_logo.png
+          echo "Icon and splash OK"
       - name: Notifications
         run: |
           R=android/app/src/main/res

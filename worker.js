@@ -85,10 +85,14 @@ async function schema(env) {
     D.prepare("CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT)"),
     D.prepare("CREATE TABLE IF NOT EXISTS listings (id TEXT PRIMARY KEY, cat TEXT, pkey TEXT, title TEXT, cond TEXT, type TEXT, price REAL, ship REAL, bids INTEGER, end_at INTEGER, first_seen INTEGER, last_seen INTEGER, status TEXT)"),
     D.prepare("CREATE INDEX IF NOT EXISTS li_status ON listings(status, end_at)"),
-    D.prepare("CREATE INDEX IF NOT EXISTS li_key ON listings(pkey)"),
+    // indexes use first_seen (never changes) so updates don't cost extra writes
+    D.prepare("CREATE INDEX IF NOT EXISTS li_key2 ON listings(pkey, first_seen)"),
+    D.prepare("CREATE INDEX IF NOT EXISTS li_cat ON listings(cat, first_seen)"),
+    D.prepare("DROP INDEX IF EXISTS li_key"),
     D.prepare("CREATE TABLE IF NOT EXISTS sales (id TEXT PRIMARY KEY, pkey TEXT, cat TEXT, price REAL, kind TEXT, at INTEGER)"),
     D.prepare("CREATE INDEX IF NOT EXISTS sa_key ON sales(pkey, at)"),
     D.prepare("CREATE TABLE IF NOT EXISTS deals (id TEXT PRIMARY KEY, data TEXT, score INTEGER, created INTEGER, expires INTEGER, notified INTEGER DEFAULT 0)"),
+    D.prepare("CREATE INDEX IF NOT EXISTS de_exp ON deals(expires)"),
     D.prepare("CREATE TABLE IF NOT EXISTS follows (id TEXT PRIMARY KEY, data TEXT, max REAL, created INTEGER, alerted TEXT)"),
     // price book: values users read off eBay's research page and type in, one row per product group
     D.prepare("CREATE TABLE IF NOT EXISTS prices (pkey TEXT PRIMARY KEY, label TEXT, q TEXT, avg REAL, st REAL, post REAL, trend TEXT, at INTEGER)"),
@@ -408,6 +412,15 @@ function cleanConfig(c) {
   };
 }
 
+// "sales learned" counts read every sales row, so they're worked out once a day and kept
+async function refreshLearned(env) {
+  const by = await env.DB.prepare("SELECT cat, COUNT(*) AS n FROM sales GROUP BY cat").all();
+  const byCat = by.results || [];
+  const c = { byCat, total: byCat.reduce((t, r) => t + r.n, 0), at: Date.now() };
+  await kvSet(env, "learnedCounts", c);
+  return c;
+}
+
 async function sweep(env, manual) {
   await schema(env);
   const cfg = cleanConfig(await kvGet(env, "config", null));
@@ -437,14 +450,23 @@ async function sweep(env, manual) {
     await kvSet(env, "fix1", true);
   }
   // 1. auctions that have ended become sold prices (only if they had bids)
+  // (the free database allows 5 million rows read a day, so every query here must use an index)
   await D.batch([
-    D.prepare("INSERT OR IGNORE INTO sales (id,pkey,cat,price,kind,at) SELECT id,pkey,cat,price+ship,'auction',end_at FROM listings WHERE status='live' AND type='AUC' AND end_at<? AND bids>0 AND pkey IS NOT NULL").bind(now),
-    D.prepare("UPDATE listings SET status='ended' WHERE status='live' AND type='AUC' AND end_at<?").bind(now),
-    D.prepare("UPDATE listings SET status='stale' WHERE status='live' AND type='BIN' AND last_seen<?").bind(now - 3 * DAY),
-    D.prepare("DELETE FROM listings WHERE last_seen<?").bind(now - 40 * DAY),
-    D.prepare("DELETE FROM sales WHERE at<?").bind(now - 120 * DAY),
+    D.prepare("INSERT OR IGNORE INTO sales (id,pkey,cat,price,kind,at) SELECT id,pkey,cat,price+ship,'auction',end_at FROM listings WHERE status='live' AND end_at<? AND end_at>? AND type='AUC' AND bids>0 AND pkey IS NOT NULL").bind(now, now - 2 * DAY),
+    D.prepare("UPDATE listings SET status='ended' WHERE status='live' AND end_at<? AND end_at>? AND type='AUC'").bind(now, now - 2 * DAY),
     D.prepare("DELETE FROM deals WHERE expires<?").bind(now),
   ]);
+  // once a day: tidy old rows and refresh the "sales learned" counts
+  if (now - (await kvGet(env, "lastClean", 0)) > DAY) {
+    await kvSet(env, "lastClean", now);
+    await D.batch([
+      D.prepare("UPDATE listings SET status='ended' WHERE status='live' AND end_at<? AND type='AUC'").bind(now),
+      D.prepare("DELETE FROM listings WHERE last_seen<?").bind(now - 40 * DAY),
+      D.prepare("DELETE FROM sales WHERE at<?").bind(now - 120 * DAY),
+    ]);
+  }
+  // every 6 hours: refresh the "sales learned" counts (they read every sales row)
+  if (now - ((await kvGet(env, "learnedCounts", null)) || { at: 0 }).at > 6 * 3600e3) await refreshLearned(env);
 
   // 2. which categories this run (rotate so every category gets its turn)
   let rot = await kvGet(env, "rot", 0);
@@ -541,9 +563,12 @@ async function sweep(env, manual) {
   const why = { noData: 0, risky: 0, fair: 0 }, close = [];
   const cands = seen.filter((s) => !s.learn);
   {
-    const cq = cats.map(() => "?").join(",");
-    const rows = await D.prepare(`SELECT id, data FROM listings WHERE cat IN (${cq}) AND status='live' AND data IS NOT NULL AND last_seen>? AND (end_at IS NULL OR end_at>?) ORDER BY last_seen DESC LIMIT 400`).bind(...cats.map((c) => c.id), now - DAY, now + 5 * 60000).all();
-    for (const row of rows.results || []) {
+    const rowsAll = [];
+    for (const c of cats) {
+      const rr = await D.prepare("SELECT id, data, status, end_at, last_seen FROM listings WHERE cat=? AND first_seen>? ORDER BY first_seen DESC LIMIT 150").bind(c.id, now - DAY).all();
+      for (const x of rr.results || []) if (x.status === "live" && x.data && x.last_seen > now - DAY && (!x.end_at || x.end_at > now + 5 * 60000)) rowsAll.push(x);
+    }
+    for (const row of rowsAll) {
       if (seenIds.has(row.id)) continue;
       try {
         const o = JSON.parse(row.data); o.old = true;
@@ -566,7 +591,7 @@ async function sweep(env, manual) {
     for (const row of br.results || []) bookBy[row.pkey] = row;
     const sr = await D.prepare(`SELECT pkey, price FROM sales WHERE pkey IN (${q}) AND at>?`).bind(...chunk, now - 30 * DAY).all();
     for (const row of sr.results || []) (soldBy[row.pkey] = soldBy[row.pkey] || []).push(row.price);
-    const ar = await D.prepare(`SELECT pkey, id, price+ship AS t FROM listings WHERE pkey IN (${q}) AND type='BIN' AND status='live' AND last_seen>?`).bind(...chunk, now - 2 * DAY).all();
+    const ar = await D.prepare(`SELECT pkey, id, price+ship AS t FROM listings WHERE pkey IN (${q}) AND first_seen>? AND last_seen>? AND type='BIN' AND status='live'`).bind(...chunk, now - 7 * DAY, now - 2 * DAY).all();
     for (const row of ar.results || []) (askBy[row.pkey] = askBy[row.pkey] || []).push([row.id, row.t]);
   }
   // Looser matches (e.g. "similar title") need more evidence before we trust a price.
@@ -935,10 +960,9 @@ export default {
         if (P("deals")) {
           const rows = await env.DB.prepare("SELECT data, created FROM deals WHERE expires>? ORDER BY score DESC LIMIT 200").bind(Date.now()).all();
           const deals = (rows.results || []).map((r) => ({ ...JSON.parse(r.data), found: r.created }));
-          const learned = await env.DB.prepare("SELECT cat, COUNT(*) AS n FROM sales GROUP BY cat").all();
           const lc = await kvGet(env, "learnCats", { cats: [] });
-          const total = await env.DB.prepare("SELECT COUNT(*) AS n FROM sales").first();
-          return json({ deals, report: await kvGet(env, "lastReport", null), learned: learned.results || [], close: await kvGet(env, "close", []), learning: { cats: lc.cats.length, sales: total ? total.n : 0 } });
+          const cnt = (await kvGet(env, "learnedCounts", null)) || (await refreshLearned(env));
+          return json({ deals, report: await kvGet(env, "lastReport", null), learned: cnt.byCat, close: await kvGet(env, "close", []), learning: { cats: lc.cats.length, sales: cnt.total } });
         }
         if (P("check")) {
           const id = String(P("check")).replace(/\D/g, "");

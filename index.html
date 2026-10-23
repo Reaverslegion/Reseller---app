@@ -283,6 +283,7 @@ const ti=k=>`<button class="tip" aria-label="What is this?" onclick="event.stopP
 
 /* ---------- navigation ---------- */
 const TABS=[["deals","Deals","bolt"],["follow","Following","bell"],["book","Prices","chart"],["stock","Sell","stock"],["dash","Money","money"]];
+function goConnect(){go("settings");setTimeout(()=>{const a=$("adv");if(a){a.open=true;a.scrollIntoView({behavior:"smooth",block:"start"})}},60)}
 function go(t){if(t===tab)return;prev.push(tab);if(prev.length>20)prev.shift();tab=t;render()}
 function onBack(){
   if(sheetOn){closeSheet();return true}
@@ -296,7 +297,7 @@ try{const A=window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins
 function applyTheme(){
   const t=S.set.theme;if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;else delete document.documentElement.dataset.theme;
   const dark=t==="dark"||(t!=="light"&&matchMedia("(prefers-color-scheme: dark)").matches);
-  document.querySelector('meta[name=theme-color]').content=dark?"#0D172C":"#e6ecf4";
+  document.querySelector('meta[name=theme-color]').content="#0D172C";
 }
 try{matchMedia("(prefers-color-scheme: dark)").addEventListener("change",applyTheme)}catch(e){}
 
@@ -308,7 +309,7 @@ function render(){
   $("nav").innerHTML=TABS.map(t=>`<button class="${tab===t[0]?"on":""}" onclick="go('${t[0]}')" aria-label="${t[1]}"><span class="pill">${I[t[2]]}</span>${t[1]}</button>`).join("");
   $("app").innerHTML=({calc:vCalc,deals:vHunt,follow:vFollow,cats:vCats,deal:vDeal,book:vBook,stock:vStock,dash:vDash,settings:vSettings,scan:vScan,saved:vDeals})[tab]();
   if(tab==="calc")recalc();
-  window.scrollTo(0,0);
+  if(tab!==render.last){window.scrollTo(0,0);render.last=tab}
 }
 
 /* ---------- CHECK ---------- */
@@ -347,7 +348,7 @@ function catPick(key,level,val){
 }
 function drawCat(key){
   const box=k=>$(k==="f"?"catbox":k==="h"?"catbox_h":"catsheet"),el=box(key);if(!el)return;
-  if(!S.set.url||!S.set.key){el.innerHTML=`<div class="hint">Connect Scan (⚙️ Settings › Advanced) to choose an eBay category.</div>`;return}
+  if(!S.set.url||!S.set.key){el.innerHTML=`<div class="hint">Connect your Scan service (Settings) to choose an eBay category.</div>`;return}
   if(!CT){el.innerHTML=`<div class="hint">Loading eBay's category list… (first time only, a few seconds)</div>`;
     loadCats().then(()=>drawCat(key)).catch(e=>{const x=box(key);if(x)x.innerHTML=`<div class="hint warn">Couldn't load eBay categories (${esc(e.message==="Failed to fetch"?"no connection":e.message)}).</div><button class="s" style="min-height:40px;padding:8px 14px" onclick="drawCat('${key}')">Try again</button>`});return}
   el.innerHTML=catSelects(key)+`<div class="hint">${CAT[key]?`Scan searches only in <b>${esc(CT[CAT[key]].n)}</b> and its subcategories.`:"Pick the category, then subcategories, just like on eBay."}</div>${key==="h"?"":`<button class="link" onclick="catSuggest('${key}')">Suggest from item name</button>`}`;
@@ -458,7 +459,7 @@ function track(){
 /* category sheet for a tracked item (bid) or a saved deal (did) */
 function pickCat(bid,thenTrack,did){
   const b=bid&&S.base.find(x=>x.id===bid),dl=did&&S.items.find(x=>x.id===did);
-  if(!S.set.url||!S.set.key){toast("Connect Scan first (Settings › Advanced).");return}
+  if(!S.set.url||!S.set.key){toast("Connect your Scan service first (Settings).");return}
   CAT.s=b?(b.cat||""):dl?((dl.f&&dl.f.cat)||""):(F.cat||"");window._catQ=b?b.q:dl?dealBase(dl).q:(F.q||F.n);
   openSheet(`<h2 style="margin-top:0">Which eBay category?</h2><div class="mu">Scan will only search here, so you don't get accessories and parts.</div><div id="catsheet" style="margin-top:12px"></div>
    <div class="btns"><button onclick="setCat(${bid||0},${thenTrack?1:0},${did||0})">${did?"Save and scan":thenTrack?"Save and track":"Save"}</button><button class="s" onclick="closeSheet()">Cancel</button></div>`);
@@ -567,7 +568,7 @@ function vSettings(){
    <button class="choice ${r.seller==="private"?"on":""}" onclick="setSeller('private')">Private seller<small>No final value fee on most items (UK)</small></button>
    <button class="choice ${r.seller!=="private"?"on":""}" onclick="setSeller('business')">Business seller<small>${r.feePct}% + ${gbp(r.feeFixed)} per order</small></button>
    ${r.seller!=="private"?`<div class="row"><div><label for="r_feePct">Fee %</label><input id="r_feePct" inputmode="decimal" value="${r.feePct}" onchange="setRule('feePct',this.value)"></div><div><label for="r_feeFixed">Per-order fee £</label><input id="r_feeFixed" inputmode="decimal" value="${r.feeFixed}" onchange="setRule('feeFixed',this.value)"></div></div><div class="hint">Rates vary by category. Check eBay's fee page for yours.</div>`:`<div class="hint">If you buy to resell regularly, eBay and HMRC may treat you as a business.</div>`}</div>
-  ${(()=>{const h=H();return`<div class="card"><b>Phone alerts</b>${!connected()?`<div class="mu">Connect your Scan service first (Advanced, below).</div>`
+  ${(()=>{const h=H();return`<div class="card"><b>Phone alerts</b>${!connected()?`<div class="mu">Connect your Scan service first (below).</div>`
    :!PUSH.native?`<div class="mu">Alerts work in the installed FlipScout app on your phone.</div>`
    :!(h.alerts&&PUSH.registered)?`<div class="mu">Get a FlipScout notification the moment a strong deal appears or a followed listing hits your price, even with the app closed.</div><button onclick="enableAlerts()">Turn on alerts</button>${PUSH.err?`<div class="hint warn">${esc(PUSH.err)}</div>`:""}`
    :`<div class="li ok">✓ <span>Alerts are on for this phone.</span></div>
@@ -584,9 +585,9 @@ function vSettings(){
   <div class="card"><b>Backup</b>
    ${connected()?`<div class="li ${cloudErr?"warn":"ok"}">${cloudErr?"⚠":"✓"} <span>Automatic cloud backup is on. ${cloudErr?`Last try failed (${esc(cloudErr)}).`:cloudAt()?`Last saved ${new Date(cloudAt()).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}.`:"Saves a few seconds after each change."}</span></div>
    <div class="btns"><button onclick="cloudPush(true)">Back up now</button><button class="s" onclick="cloudCheck()">Restore from cloud</button></div>`
-   :`<div class="mu">Connect Scan (Advanced, below) and your data backs up automatically.</div>`}
+   :`<div class="mu">Connect your Scan service (below) and your data backs up automatically.</div>`}
    <details><summary>Manual backup (copy and paste)</summary><div class="btns" style="margin-top:-6px"><button class="s" onclick="backup()">Copy backup text</button><button class="s" onclick="restoreSheet()">Paste backup</button></div></details></div>
-  <details class="card"><summary>Advanced: Scan connection</summary>
+  <details class="card" id="adv" ${connected()?"":"open"}><summary>${connected()?"Advanced: Scan connection":"Connect your Scan service"}</summary>
    <div class="mu">The address and key of your Scan service.</div>
    <label for="s_url">Service address</label><input id="s_url" value="${esc(s.url)}" placeholder="https://something.workers.dev" onchange="setConn(this.value)">
    <label for="s_key">Key</label><input id="s_key" value="${esc(s.key)}" onchange="S.set.key=this.value.trim();save();toast('Saved.');afterConn()">
@@ -738,29 +739,31 @@ function dealCard(d,i){
   return`<div class="card" style="cursor:pointer" onclick="openDeal(${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openDeal(${i})}" role="button" tabindex="0" aria-label="${esc(d.title)}">
   <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">${dealBadge(d)}${sp?`<span class="chip" style="border-color:var(--warn);color:var(--warn)">Needs your judgement</span>`:`<span style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:13px">${ring(d.score)}${confWord(d.score)}</span>`}</div>
   <div style="display:flex;gap:12px;margin-top:10px">${d.img?`<img src="${esc(d.img)}" alt="" style="width:72px;height:72px;object-fit:cover;border-radius:12px;flex:none;background:var(--card2)" loading="lazy">`:""}
-   <div style="min-width:0"><div style="font-weight:700;line-height:1.3">${esc(d.title)}</div><div class="mu">${esc(d.cond||"")} · ${esc(d.catName||"")}</div>${d.matchLabel?`<div class="mu" style="margin-top:2px">vs ${esc(d.matchLabel)}</div>`:""}</div></div>
+   <div style="min-width:0"><div style="font-weight:700;line-height:1.3">${esc(d.title)}</div><div class="mu">${[d.cond,d.catName].filter(Boolean).map(esc).join(" · ")}</div>${d.matchLabel?`<div class="mu" style="margin-top:2px">vs ${esc(d.matchLabel)}</div>`:""}</div></div>
   ${sp?`<div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:8px"><div class="stat">${pp(d)}</div><div class="mu">working ones sell for ${gbp(d.workMed)}</div></div>`
    :priceRow(d)+`<div class="mu" style="margin-top:8px;font-size:var(--fs-meta)">Sells for about <b class="num-t">${gbp(d.med)}</b> (estimate) · ${evShort(d)}${retPct(d)!=null?` · <b class="num-t">${retPct(d)}%</b> return`:""}</div>`}
   ${(()=>{const tg=(d.tags||[]).filter(t=>!/^\d+ bids?$|^No bids yet$/.test(t));return tagChips(tg)})()}
-  ${!sp&&d.look?`<button class="s" style="margin-top:10px;width:100%" onclick="event.stopPropagation();DV=HD.deals&&HD.deals.find(x=>x.id===${esc(JSON.stringify(d.id))})||DV;lookUp(${esc(JSON.stringify(d.look))})">Check sold prices</button>`:""}
+  <div style="display:flex;gap:8px;margin-top:10px">${!sp&&d.look?`<button class="s" style="margin:0;flex:1" onclick="event.stopPropagation();lookUp(${esc(JSON.stringify(d.look))})">Check sold prices</button>`:""}<button class="s" style="margin:0;${!sp&&d.look?"flex:none":"flex:1"}" onclick="event.stopPropagation();hideDeal(${esc(JSON.stringify(d.id))})" aria-label="Hide this deal">Hide</button></div>
   </div>`}
 const FILTERS=[["all","All"],["bin","Buy It Now"],["auc","Auctions"],["mis","Misspelt"],["spares","Spares"],["guess","Guesses"]];
 // Deals priced only from asking prices (what sellers want, not what things sold for) are kept apart as "Guesses"
+let HIDE=(()=>{try{return JSON.parse(localStorage.getItem("flipscout_hidden")||"[]")}catch(e){return[]}})();
+function hideDeal(id){HIDE=[id,...HIDE.filter(x=>x!==id)].slice(0,500);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}render();toast("Hidden.","Undo",()=>{HIDE=HIDE.filter(x=>x!==id);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}render()})}
 const isGuess=d=>d.kind!=="spares"&&d.src==="asking";
-function fDeals(){const A=HD.deals||[],L=A.filter(d=>!isGuess(d));return{all:L.filter(d=>d.kind!=="spares"),bin:L.filter(d=>d.kind!=="spares"&&d.type==="BIN"),auc:L.filter(d=>d.kind!=="spares"&&d.type==="AUC"),mis:L.filter(d=>(d.tags||[]).includes("Misspelt title")),spares:L.filter(d=>d.kind==="spares"),guess:A.filter(isGuess)}}
+function fDeals(){const A=(HD.deals||[]).filter(d=>!HIDE.includes(d.id)),L=A.filter(d=>!isGuess(d));return{all:L.filter(d=>d.kind!=="spares"),bin:L.filter(d=>d.kind!=="spares"&&d.type==="BIN"),auc:L.filter(d=>d.kind!=="spares"&&d.type==="AUC"),mis:L.filter(d=>(d.tags||[]).includes("Misspelt title")),spares:L.filter(d=>d.kind==="spares"),guess:A.filter(isGuess)}}
 function vHunt(){
   const h=H();
-  if(!connected())return`<h2>Today's deals</h2><div class="card empty">${I.bolt}<b>Connect your Scan service</b><div class="mu">FlipScout hunts eBay for you around the clock. Paste your setup code in Settings › Advanced to start.</div><button onclick="go('settings')">Open Settings</button></div>`;
+  if(!connected())return`<h2>Today's deals</h2><div class="card empty">${I.bolt}<b>Connect your Scan service</b><div class="mu">FlipScout hunts eBay for you around the clock. Paste your setup code to start.</div><button onclick="goConnect()">Connect now</button></div>`;
   if(!h.cats.length)return`<h2>Today's deals</h2><div class="card empty">${I.bolt}<b>Pick what to hunt</b><div class="mu">Choose a few eBay categories you know, like Graphics Cards or Consoles. FlipScout checks them every few minutes and shows listings priced below what they sell for.</div><button onclick="addStarter()">Start with popular categories</button><button class="s" style="margin-top:8px" onclick="go('cats')">Choose my own</button></div>`;
   if(HD.deals===null&&!HD.busy&&!HD.err)setTimeout(loadDeals,0);
-  const F2=fDeals(),base=F2[HD.filter]||F2.all,qq=HD.q.trim().toLowerCase(),list=sortDeals(qq?base.filter(d=>String(d.title).toLowerCase().includes(qq)):base),rep=HD.report||{},high=F2.all.filter(d=>d.score>=70).length,pot=F2.all.reduce((t,d)=>t+(d.type==="AUC"?0:Math.max(0,d.profit)),0);
-  return`<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin:6px 4px 12px"><div><h2 style="margin:0">Today's deals</h2><div class="mu">${h.cats.length} categor${h.cats.length>1?"ies":"y"} · ${rep.at?"checked "+ago(rep.at):"not checked yet"}${h.paused?" · <span class='warn'>paused</span>":` · every ${h.interval} min`}</div></div>
+  const F2=fDeals(),base=F2[HD.filter]||F2.all,qq=HD.q.trim().toLowerCase(),list=sortDeals(qq?base.filter(d=>String(d.title).toLowerCase().includes(qq)):base),rep=HD.report||{},high=F2.all.filter(d=>d.score>=70).length,top=F2.all.reduce((t,d)=>Math.max(t,shownProfit(d)||0),0);
+  return`<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin:6px 4px 12px"><div><h2 style="margin:0">Today's deals</h2><div class="mu"><button class="link" style="margin:0;min-height:0;padding:0;font-weight:700" onclick="go('cats')">${h.cats.length} categor${h.cats.length>1?"ies":"y"} ›</button> · ${rep.at?"checked "+ago(rep.at):"not checked yet"}${h.paused?" · <span class='warn'>paused</span>":` · every ${h.interval} min`}</div></div>
    <button style="margin:0;white-space:nowrap" onclick="huntNow()" ${HD.busy?"disabled":""}>${HD.busy?"Checking…":"Scan now"}</button></div>
   ${HD.err?`<div class="card bad" style="font-size:15px">${esc(HD.err)}</div>`:""}
   <div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px">
    <div class="card" style="margin:0;padding:10px 12px"><div class="mu">Deals</div><div class="stat">${F2.all.length}</div></div>
    <div class="card" style="margin:0;padding:10px 12px"><div class="mu">Strong deals</div><div class="stat ok">${high}</div></div>
-   <div class="card" style="margin:0;padding:10px 12px"><div class="mu">Buy It Now profit</div><div class="stat">${gbp(pot).replace(".00","")}</div></div></div>
+   <div class="card" style="margin:0;padding:10px 12px"><div class="mu">Best profit</div><div class="stat ok">${gbp(top).replace(".00","")}</div></div></div>
   <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;margin-bottom:6px">${FILTERS.filter(f=>(f[0]!=="spares"||h.types.spares)&&(f[0]!=="guess"||F2.guess.length)).map(f=>`<button class="${HD.filter===f[0]?"":"s"}" style="margin:0;min-height:40px;padding:6px 14px;border-radius:99px;white-space:nowrap;flex:none" onclick="HD.filter='${f[0]}';render()">${f[1]} ${F2[f[0]].length}</button>`).join("")}</div>
   ${(HD.deals||[]).length?`<div style="display:flex;gap:8px;align-items:flex-end;margin:4px 0 10px"><div style="flex:1;min-width:0"><label for="dq" style="margin:0 0 4px">Search deals</label><input id="dq" type="search" enterkeyhint="search" placeholder="e.g. switch, rtx" value="${esc(HD.q)}" oninput="HD.q=this.value;clearTimeout(window._dqT);window._dqT=setTimeout(()=>{render();const e=$('dq');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length)}},250)"></div>
    <div style="flex:none;width:44%"><label for="ds" style="margin:0 0 4px">Sort by</label><select id="ds" onchange="setSort(this.value)">${SORTS.map(([k,l])=>`<option value="${k}"${HD.sort===k?" selected":""}>${l}</option>`).join("")}</select></div></div>
@@ -984,21 +987,21 @@ function bookList(){const t=BK.q.toLowerCase().split(/\s+/).filter(Boolean),L=(B
   return L.map(([p,i])=>{const m=priceMaths(p),open=BK.open===i;
     return`<div class="card" style="cursor:pointer" onclick="if(!event.target.closest('button,input,a')){BK.open=${open?-1:i};$('bk_list').innerHTML=bookList()}">
     <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div style="min-width:0"><div style="font-weight:700">${esc(p.label||p.pkey)}</div>
-     <div class="mu">Sells for about ${gbp(m.med)} · checked ${ago(p.at)}${p.fresh?"":" · <span class='warn'>needs a refresh</span>"}</div></div>
+     <div class="mu">Sells for about ${p.post!=null?`${gbp(+p.avg)} + ${gbp(+p.post)} post`:gbp(m.med)} · checked ${ago(p.at)}${p.fresh?"":" · <span class='warn'>needs a refresh</span>"}</div></div>
      <div style="text-align:right;flex:none"><div class="mu" style="font-size:12px">Pay up to</div><div class="stat ${m.payUpTo>0?"ok":"bad"}">${m.payUpTo>0?gbp(m.payUpTo):"—"}</div><div class="mu" style="font-size:12px">incl. postage</div></div></div>
     ${open?`<div class="mu" style="margin-top:8px">${p.st!=null?Math.round(p.st)+"% of listings sell":"Sell-through not added"} · ${p.post!=null?gbp(p.post)+" postage":"postage from Settings"}${p.trend?" · prices "+p.trend:""}</div>
      <label for="bk_a${i}">Found one? Its price incl. postage £</label><input id="bk_a${i}" inputmode="decimal" placeholder="e.g. 120" oninput="bkAsk(${i},this.value)"><div id="bk_r${i}"></div>
      <div class="btns"><button class="s" onclick="lookUp({key:BK.list[${i}].pkey,label:BK.list[${i}].label,q:BK.list[${i}].q,url:BK.list[${i}].url})">Check again</button><button class="d" onclick="unprice(${i})">Remove</button></div>`
      :`<div class="mu" style="margin-top:6px;font-size:13px">Tap to check a price or update it</div>`}</div>`}).join("")}
 function vBook(){
-  if(!connected())return`<h2>Prices</h2><div class="card empty"><b>Connect your Scan service</b><div class="mu">Paste your setup code in Settings › Advanced first.</div><button onclick="go('settings')">Open Settings</button></div>`;
+  if(!connected())return`<h2>Prices</h2><div class="card empty"><b>Connect your Scan service</b><div class="mu">Paste your setup code first.</div><button onclick="goConnect()">Connect now</button></div>`;
   if(BK.list===null&&!BK.busy&&!BK.err)setTimeout(loadBook,0);
   const stale=(BK.list||[]).filter(p=>!p.fresh).length;
   return`<h2>Prices</h2><div class="mu" style="margin:-6px 4px 12px">What things really sell for, and the most to pay. FlipScout also uses these when it hunts.</div>
   <div class="card"><label for="bk_q" style="margin-top:0">What do you want to price?</label>
    <input id="bk_q" enterkeyhint="search" placeholder="e.g. rtx 3070, ps5 slim, iphone 13 128gb" value="${esc(BK.q)}" oninput="bookFilter(this.value)" onkeydown="if(event.key==='Enter'){this.blur();bookFind()}">
    <div class="seg" style="margin-top:10px">${[["used","Used"],["new","New"]].map(c=>`<button class="${BK.cond===c[0]?"on":""}" onclick="BK.cond='${c[0]}';BK.q=$('bk_q').value;render()">${c[1]}</button>`).join("")}</div>
-   <button onclick="bookFind()" ${BK.finding?"disabled":""}>Look up sold prices</button>
+   <button onclick="bookFind()" ${BK.finding?"disabled":""}>Check sold prices</button>
    <button class="s" onclick="bookFind(true)" style="margin-top:8px">Type sold prices myself</button>
    <div class="hint">Opens eBay's sold listings inside FlipScout. FlipScout reads that page, works out the typical price and leaves out parts, faulty items and bundles. Nothing is saved until you tap Save.</div></div>
   ${BK.err?`<div class="card bad">${esc(BK.err)}</div>`:""}
@@ -1057,6 +1060,7 @@ function vFollow(){
     <div class="btns">${s.ended?"":`<a href="${esc(ukUrl(f.url))}" target="_blank" rel="noopener"><button>${f.type==="AUC"?"Bid on eBay":"Open on eBay"}</button></a><button class="s" onclick="changeMax('${f.id}')">Change max</button>`}<button class="s" onclick="unfollow('${f.id}')">Remove</button></div></div>`};
   return`<h2>Following</h2>
   ${connected()?`<div class="hint" style="margin:-6px 4px 12px">${H().alerts&&PUSH.registered?"You'll get an alert when one hits your price or is about to end.":"<span class='warn'>Phone alerts are off.</span> <a href='#' onclick=\"go('settings');return false\">Turn them on</a>"}</div>`:""}
+  ${!connected()?`<div class="card empty">${I.bell}<b>Connect your Scan service</b><div class="mu">Following needs your Scan service. It watches listings for you and alerts you.</div><button onclick="goConnect()">Connect now</button></div>`:""}
   ${FL.err?`<div class="card bad">${esc(FL.err)}</div>`:""}
   ${FL.list===null&&connected()?`<div class="card mu">Loading…</div>`:""}
   ${live.map(fcard).join("")}
@@ -1066,7 +1070,7 @@ function vFollow(){
 /* My categories */
 function vCats(){
   const h=H(),lr={};(HD.learned||[]).forEach(x=>lr[x.cat]=x.n);
-  if(!connected())return`<h2>My categories</h2><div class="card">Connect your Scan service first (Settings › Advanced).</div>`;
+  if(!connected())return`<h2>My categories</h2><div class="card">Connect your Scan service first.</div><button onclick="goConnect()">Connect now</button>`;
   setTimeout(()=>{CAT.h=CAT.h||"";drawCat("h")},0);
   const cb=(k,label)=>`<label class="chkrow" style="min-height:44px;margin:4px 0"><input type="checkbox" ${h.types[k]?"checked":""} onchange="H().types.${k}=this.checked;save();pushConfig()"><span>${label}</span></label>`;
   return`<h2>My categories</h2><div class="mu" style="margin:-6px 4px 12px">FlipScout hunts in these for you, around the clock.</div>${starterLeft()&&h.cats.length<15?`<div class="card"><b>Popular for flipping</b><div class="mu">${STARTER.map(x=>x[1]).join(", ")}. FlipScout knows these model by model, so it finds real deals fastest.</div><button onclick="addStarter()">Add popular categories</button></div>`:""}
@@ -1123,7 +1127,7 @@ async function testAlert(){try{await api("test=1");toast("Test alert sent. It sh
 /* ---------- WELCOME ---------- */
 const OB=[
  ["logo","Your 24/7 bargain hunter","Pick the eBay categories you know. FlipScout checks them every few minutes and finds listings priced below what they sell for."],
- ["bolt","Only real deals","Every deal shows your profit after fees and a confidence score you can see the reasons for. A scam shield hides risky listings."],
+ ["bolt","Only real deals","Every deal shows your profit after fees and a score with its reasons. Tap Check sold prices to see what it really sells for. A scam shield hides risky listings."],
  ["bell","Follow and get alerts","Set the most you'd pay. Your phone pings when a deal appears or a followed listing drops to your price."],
  ["stock","Then sell it","Track each item from bought to sold, with your real profit and cash in the Money tab."],
  ["seller","How do you sell on eBay?","This sets your fees so the profit figures are right. You can change it later in Settings."]];

@@ -403,6 +403,7 @@ async function fillPrices(env, b) {
   for (const r of rows) {
     const t = String((r && r.n) || "").slice(0, 200), p = +r.p, id = String((r && r.id) || "").replace(/\D/g, "").slice(0, 20);
     if (!t || !id || !(p > 0 && p < 100000) || FILL_SKIP.test(t)) continue;
+    if (r.c && r.c !== cond) continue; // the listing's own condition (eBay's filter sometimes drops on later pages)
     const g = groupOf({ title: t }, cat, catName, cond);
     // known kinds are matched model by model; anything else needs a strong title match or a single model code like "75192"
     const known = /^(gpu|lap|phone|con|tab|cpu|ram|sto|mon|fas):/.test(g && g.key), code = g && /^t\d*:([a-z0-9]{4,})\|/.exec(g.key);

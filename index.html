@@ -939,6 +939,7 @@ function soldReader(given){
     if(el.tagName==="IFRAME"){try{var d=el.contentDocument;if(d&&d.body){roots.push(d);walk(d,depth+1)}}catch(e){}}}})(document,0);
   var hr=function(el){return el.getAttribute("href")||el.href||""},idOf=function(h){var m=String(h||"").match(/\/itm\/(?:[^\/?#]*\/)?(\d{9,})/)||String(h||"").match(/[?&](?:item|itm|itemId)=(\d{9,})/i);return m?m[1]:null};
   var SOLD=/Sold\s+(\d{1,2}\s+[A-Za-z]{3}\s+\d{4})/,PRICE=/£\s?([\d,]+\.\d{2})(\s*to\s*£)?/,num=function(x){return+String(x).replace(/,/g,"")};
+  var condOf=function(t){return/\bParts only\b|for parts/i.test(t)?"parts":/\bBrand new\b|\bNew \(other\)|\bOpened\b|never used/i.test(t)?"new":/Pre-owned|\bUsed\b|Refurbished/i.test(t)?"used":null};
   var postOf=function(t){return/free (postage|delivery)/i.test(t)?0:((t.match(/£\s?([\d,]+\.\d{2})\s*(postage|delivery|p&p)/i)||[])[1])};
   var out=[],seen={},links=[];
   roots.forEach(function(r){var L=r.querySelectorAll("a[href]");for(var i=0;i<L.length;i++)if(idOf(hr(L[i])))links.push(L[i])});
@@ -953,7 +954,7 @@ function soldReader(given){
     var tt=box.querySelector(".s-item__title,.s-card__title,[role=heading],h3"),nm=(tt&&tt.innerText)||"";
     if(!nm){var LL=box.querySelectorAll("a[href]");for(var q=0;q<LL.length;q++){var s2=(LL[q].innerText||"").trim();if(s2.length>nm.length)nm=s2}}
     nm=nm.replace(/^New listing\s*/i,"").replace(/Opens in a new window or tab/i,"").replace(/\s+/g," ").trim().slice(0,200);if(!nm)continue;
-    var po=postOf(t);seen[id]=1;out.push({id:id,n:nm,p:num(pm[1]),d:Date.parse(sm[1]),s:po==null?null:num(po)})}
+    var po=postOf(t);seen[id]=1;out.push({id:id,n:nm,p:num(pm[1]),d:Date.parse(sm[1]),s:po==null?null:num(po),c:condOf(t)})}
   if(out.length)return out;
   // no item links: read the visible text, one "Sold <date>" block at a time
   if(given)return out;
@@ -967,7 +968,7 @@ function soldReader(given){
     title=title.replace(/^New listing\s*/i,"").slice(0,200);if(!title)continue;
     var key="t"+(title+"|"+pm2[1]+"|"+sm2[1]).split("").reduce(function(h,c){return(h*31+c.charCodeAt(0))>>>0},7);
     if(seen[key])continue;seen[key]=1;var po2=postOf(blk);
-    out.push({id:key,n:title,p:num(pm2[1]),d:Date.parse(sm2[1]),s:po2==null?null:num(po2)})}};
+    out.push({id:key,n:title,p:num(pm2[1]),d:Date.parse(sm2[1]),s:po2==null?null:num(po2),c:condOf(blk)})}};
   parse(roots.map(function(r){var b=r.body||r;return b.innerText||Array.prototype.map.call(r.children||[],function(c){return c.innerText||""}).join("\n")}).join("\n"));
   if(!out.length)parse(selText());
   return out}
@@ -1014,7 +1015,7 @@ function iabAsk(w,code,cb){const id="q"+Math.random().toString(36).slice(2);w._f
 function iabWatch(w,tick){let busy=0,last="",lastRead=null;const run=()=>{if(busy&&Date.now()-busy<8000)return;busy=Date.now();
   iabAsk(w,PAGE_PROBE,p=>{const k=String(p||"");if(k&&k===last&&lastRead){busy=0;return}
    iabAsk(w,PAGE_READ,x=>{busy=0;x=x||{};last=k;lastRead=x;const g=x.g||{};window.FSDIAG=`${g.l||0} item links of ${g.a||0}, ${g.s||0} sold dates, ${g.n||0} parts, ${g.len||0} chars${g.f?`, copy ${g.f} (${g.fi} items)`:""}${g.de?", "+g.de:""}${x.err||x.e?", error: "+(x.err||x.e):""}`;tick(String(x.u||""),x.r||[],!!x.b,!!x.wait)})})};
-  w.addEventListener("loadstop",run);const t=setInterval(run,3000);w.addEventListener("exit",()=>clearInterval(t));setTimeout(run,1500)}
+  w.addEventListener("loadstop",()=>{last="";lastRead=null;busy=0;run()});const t=setInterval(run,3000);w.addEventListener("exit",()=>clearInterval(t));setTimeout(run,1500)}
 function soldCheck(L){BK.cur=L;const IAB=window.cordova&&window.cordova.InAppBrowser,url=soldUrl(L);
   if(!IAB){window.open(url,"_blank");setTimeout(()=>{BK.mode="sold";priceSheet()},300);return}
   let got=null;const w=IAB.open(url,"_blank","location=yes,hideurlbar=yes,toolbarcolor=#0D172C,closebuttoncolor=#ffffff,navigationbuttoncolor=#ffffff,closebuttoncaption=Done,zoom=no");
@@ -1032,7 +1033,7 @@ const FILL_WORDS={"27386":"(graphics,gpu,video card,rtx,gtx,rx,radeon,arc,quadro
 // any other category: every word of its name and its singular ("Vintage Cameras" → vintage, cameras, camera)
 const fillWords=c=>{if(FILL_WORDS[c.id])return FILL_WORDS[c.id];const w=String(c.name||"").toLowerCase().replace(/[&()]/g," ").split(/[\s,/]+/).filter(x=>x.length>2&&!/^(and|for|the|other|with|non)$/.test(x));
   const all=[...new Set(w.flatMap(x=>/(ch|sh|x|ss)es$/.test(x)?[x,x.slice(0,-2)]:/[^s]s$/.test(x)?[x,x.slice(0,-1)]:[x]))].slice(0,10);return all.length>1?"("+all.join(",")+")":all[0]||""};
-const fillUrl=(c,pg)=>"https://www.ebay.co.uk/sch/i.html?_nkw="+encodeURIComponent(fillWords(c))+"&LH_Sold=1&LH_Complete=1&LH_PrefLoc=1&_ipg=240&_sop=13&LH_ItemCondition=3000"+(pg>1?"&_pgn="+pg:"");
+const fillUrl=(c,pg,kw)=>"https://www.ebay.co.uk/sch/i.html?"+(kw?"":"_sacat="+encodeURIComponent(c.id)+"&")+"_nkw="+encodeURIComponent(fillWords(c))+"&LH_Sold=1&LH_Complete=1&LH_PrefLoc=1&_ipg=240&_sop=13&LH_ItemCondition=3000"+(pg>1?"&_pgn="+pg:"");
 const fsMsg=`function(m){m=JSON.stringify(m);try{cordova_iab.postMessage(m)}catch(e){try{webkit.messageHandlers.cordova_iab.postMessage(m)}catch(e2){}}}`;
 const fillBar=(n,pages,sign,bad,busy)=>`(function(){document.body.style.paddingBottom="150px";var send=${fsMsg};var b=document.getElementById("fs_bar");if(!b){b=document.createElement("div");b.id="fs_bar";document.body.appendChild(b)}
 b.style.cssText="position:fixed;left:0;right:0;bottom:0;z-index:2147483647;background:#0D172C;color:#fff;font:15px/1.35 sans-serif;padding:12px 14px calc(12px + env(safe-area-inset-bottom));box-shadow:0 -4px 16px rgba(0,0,0,.3)";b.style.zoom=Math.max(1,(window.innerWidth||400)/400);
@@ -1044,18 +1045,19 @@ const fillPg=id=>{try{return(JSON.parse(localStorage.getItem(FILLPG)||"{}")[id])
 function fillPgSet(id,pg){try{const m=JSON.parse(localStorage.getItem(FILLPG)||"{}");m[id]={pg,at:Date.now()};localStorage.setItem(FILLPG,JSON.stringify(m))}catch(e){}}
 function fillCat(c,start){if(!c)return;const IAB=window.cordova&&window.cordova.InAppBrowser;
   if(!IAB){toast("Fill prices works in the FlipScout app on your phone.");return}
-  const acc=new Map();let page=start||1,pages=new Set(),signing=false,save=false;
-  const w=IAB.open(fillUrl(c,page),"_blank","location=yes,hideurlbar=yes,toolbarcolor=#0D172C,closebuttoncolor=#ffffff,navigationbuttoncolor=#ffffff,closebuttoncaption=Done,zoom=no");
+  const acc=new Map();let page=start||1,pages=new Set(),signing=false,save=false,kw=false,empty=0;
+  const w=IAB.open(fillUrl(c,page,kw),"_blank","location=yes,hideurlbar=yes,toolbarcolor=#0D172C,closebuttoncolor=#ffffff,navigationbuttoncolor=#ffffff,closebuttoncaption=Done,zoom=no");
   let shown="";
   w.addEventListener("loadstop",e=>{const u=String(e&&e.url||"");shown="";if(!isSignIn(u))w.executeScript({code:fillBar(acc.size,pages.size,0,0,1)});else w.executeScript({code:fillBar(0,0,1)})});
   iabWatch(w,(u,got,hasBar,wait)=>{
    if(isSignIn(u)){if(!signing||!hasBar)w.executeScript({code:fillBar(0,0,1)});signing=true;return}
-   if(signing&&!/\/sch\//.test(u)){signing=false;w.executeScript({code:"location.href="+JSON.stringify(fillUrl(c,page))});return}
+   if(signing&&!/\/sch\//.test(u)){signing=false;w.executeScript({code:"location.href="+JSON.stringify(fillUrl(c,page,kw))});return}
    signing=false;const pm=u.match(/_pgn=(\d+)/);if(pm)page=+pm[1];
+   if(!got.length&&!wait&&!kw&&/_sacat=/.test(u)&&++empty>=2){kw=true;w.executeScript({code:"location.href="+JSON.stringify(fillUrl(c,page,kw))});return}
    got.forEach(x=>{if(x&&x.n&&!acc.has(x.id))acc.set(x.id,x)});if(got.length){pages.add(page);const f=fillPg(c.id);if(!f||page>f.pg||Date.now()-f.at>14*864e5)fillPgSet(c.id,page)}
    const st=acc.size+"|"+pages.size+"|"+(got.length?1:wait?2:0);if(st!==shown||!hasBar){shown=st;w.executeScript({code:fillBar(acc.size,pages.size,0,!got.length&&!wait,wait)})}});
   w.addEventListener("message",e=>{const m=e&&e.data&&e.data.fs;
-   if(m==="next"){page++;w.executeScript({code:"location.href="+JSON.stringify(fillUrl(c,page))})}else if(m==="save"){save=true;w.close()}});
+   if(m==="next"){page++;w.executeScript({code:"location.href="+JSON.stringify(fillUrl(c,page,kw))})}else if(m==="save"){save=true;w.close()}});
   let dumpNext=false;
   w.addEventListener("exit",()=>{if(dumpNext){openSheet(`<h2 style="margin-top:0">Page details</h2><div class="mu">Copy all of this and paste it to Claude.</div><textarea id="dumpt" rows="12" style="width:100%;font-size:12px" readonly>${esc(window.FSDUMP||"")}</textarea><div class="btns"><button onclick="const t=$('dumpt');t.focus();t.select();try{navigator.clipboard.writeText(t.value).then(()=>toast('Copied.'),()=>{document.execCommand('copy');toast('Copied.')})}catch(e){document.execCommand('copy');toast('Copied.')}">Copy</button><button class="s" onclick="closeSheet()">Close</button></div>`);return}
     if(!acc.size){toast("No sold prices read.");return}
@@ -1064,7 +1066,7 @@ function fillCat(c,start){if(!c)return;const IAB=window.cordova&&window.cordova.
     window.FILLC=c;window.FILLR=[...acc.values()]})}
 async function fillSave(c,rows){closeSheet();toast(`Sorting ${rows.length} sales into models…`);
   try{const r={read:0,fresh:0,models:0,saved:0,few:0,kept:0,top:[]},seen=new Map();
-    for(let i=0;i<rows.length;i+=1500){const x=await api("fill=1",{cat:c.id,catName:c.name,cond:"used",rows:rows.slice(i,i+1500).map(x=>({id:x.id,n:x.n,p:x.p,s:x.s,d:x.d}))});
+    for(let i=0;i<rows.length;i+=1500){const x=await api("fill=1",{cat:c.id,catName:c.name,cond:"used",rows:rows.slice(i,i+1500).map(x=>({id:x.id,n:x.n,p:x.p,s:x.s,d:x.d,c:x.c}))});
       ["read","fresh","models","few","kept"].forEach(k=>r[k]+=x[k]||0);(x.top||[]).forEach(t=>seen.set(t.label,t))}
     r.top=[...seen.values()].sort((a,b)=>b.n-a.n);r.saved=r.top.length;
     BK.list=null;loadBook();

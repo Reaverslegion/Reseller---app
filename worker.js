@@ -352,7 +352,41 @@ const lookupUrl = (q) => "https://www.ebay.co.uk/sh/research?marketplace=EBAY-GB
 
 const bookLabel = (label, title, key) => (!label || /^(Similar title|Same eBay product)$/.test(label) ? String(title || "").slice(0, 60) : label) + (/\|new$/.test(key) ? " · new" : " · used");
 const bareKey = (k) => String(k || "").replace(/^t\d*:/, "t:"); // "similar title" groups without the category, so typed searches match
-const BOOK_DAYS = 30; // price book values are used for 30 days, then FlipScout asks for a refresh
+const BOOK_DAYS = 30;
+// prices saved by a category fill are marked "fill"; prices the user checked themselves have no mark
+let srcReady = false;
+async function ensureSrc(env) { if (srcReady) return; try { await env.DB.prepare("ALTER TABLE prices ADD COLUMN src TEXT").run(); } catch (e) {} srcReady = true; }
+const FILL_SKIP = /\b(faulty|spares|repairs?|broken|for parts|parts only|job ?lot|joblot|bundle|empty box|box only|untested|read desc|read description|see desc|see description|please read|not working|cracked|icloud locked)\b/i;
+async function fillPrices(env, b) {
+  const cat = String(b.cat || "").replace(/\D/g, ""), catName = String(b.catName || "").slice(0, 80), cond = b.cond === "new" ? "new" : "used";
+  const rows = (Array.isArray(b.rows) ? b.rows : []).slice(0, 20000), groups = new Map();
+  for (const r of rows) {
+    const t = String((r && r.n) || "").slice(0, 200), p = +r.p;
+    if (!t || !(p > 0 && p < 100000) || FILL_SKIP.test(t)) continue;
+    const g = groupOf({ title: t }, cat, catName, cond);
+    if (!g || g.match < 0.6 || !/^(gpu|lap|phone|con|tab|cpu|ram|sto|mon):/.test(g.key)) continue;
+    const key = bareKey(g.key);
+    let x = groups.get(key); if (!x) groups.set(key, (x = { label: bookLabel(g.label, t, key), q: lookupQ(t, g.key), rows: [] }));
+    x.rows.push({ p, s: r.s != null && +r.s >= 0 && +r.s < 500 ? +r.s : null, d: +r.d || null });
+  }
+  const now = Date.now(), old = await env.DB.prepare("SELECT pkey, at, src FROM prices").all();
+  const mine = new Set((old.results || []).filter((r) => r.src !== "fill" && now - r.at < 7 * DAY).map((r) => r.pkey));
+  const SQL = ("INSERT INTO prices (pkey,label,q,avg,st,post,trend,at,src) VALUES (?,?,?,?,?,?,?,?,'fill') ON CONFLICT(pkey) DO UPDATE SET label=excluded.label, q=excluded.q, avg=excluded.avg, post=excluded.post, trend=excluded.trend, at=excluded.at, src='fill'"), ins = { bind: (...v) => env.DB.prepare(SQL).bind(...v) };
+  const st = [], saved = []; let few = 0, kept = 0;
+  for (const [key, x] of groups) {
+    const m = median(x.rows.map((r) => r.p)), keep = x.rows.filter((r) => r.p >= m * 0.5 && r.p <= m * 1.5);
+    if (keep.length < 5) { few++; continue; }
+    if (mine.has(key)) { kept++; continue; }
+    const avg = Math.round(median(keep.map((r) => r.p)) * 100) / 100, sh = keep.map((r) => r.s).filter((v) => v != null);
+    const dated = keep.filter((r) => r.d).sort((a, c) => a.d - c.d); let trend = "steady";
+    if (dated.length >= 8) { const h = dated.length >> 1, o = median(dated.slice(0, h).map((r) => r.p)), nw = median(dated.slice(h).map((r) => r.p)); trend = nw > o * 1.05 ? "rising" : nw < o * 0.95 ? "falling" : "steady"; }
+    st.push(ins.bind(key, x.label.slice(0, 120), x.q.slice(0, 400), avg, null, sh.length ? Math.round(median(sh) * 100) / 100 : null, trend, now));
+    saved.push({ label: x.label, n: keep.length, avg });
+  }
+  for (let i = 0; i < st.length; i += 50) await env.DB.batch(st.slice(i, i + 50));
+  saved.sort((a, c) => c.n - a.n);
+  return { read: rows.length, models: groups.size, saved: saved.length, few, kept, top: saved.slice(0, 40) };
+} // price book values are used for 30 days, then FlipScout asks for a refresh
 // what the app needs to open eBay's research page for a listing and save the answer
 function lookInfo(s, alt) {
   if (!s.pkey || s.bucket === "parts") return null;
@@ -361,7 +395,7 @@ function lookInfo(s, alt) {
 }
 
 /* ---------------- what the hunter avoids ---------------- */
-const RISK_WORDS = /\b(box only|empty box|read desc|read description|photo of|picture of|image of|replica|fake|not genuine|dummy|display only|case only|cover only|manual only|cable only|stand only|bundle only|no console|card only|for parts|spares|repairs?|faulty|broken|cracked|not working|untested|bios lock|icloud|activation lock|locked|blacklisted|no power|water damage|liquid damage)\b/i;
+const RISK_WORDS = /\b(box only|empty box|read desc|read description|see desc|see description|please read|photo of|picture of|image of|replica|fake|not genuine|dummy|display only|case only|cover only|manual only|cable only|stand only|bundle only|no console|card only|for parts|spares|repairs?|faulty|broken|cracked|not working|untested|bios lock|icloud|activation lock|locked|blacklisted|no power|water damage|liquid damage)\b/i;
 const SCAM_WORDS = /\b(read desc|read description|photo of|picture of|image of|empty box|box only|replica|fake|not genuine|contact me|message me before|whatsapp|bank transfer)\b/i;
 const MISSPELT = /\b(nvidea|nvida|nvdia|geforse|gefroce|playstaion|playsation|plastation|playstatio|nintedo|nintndo|nitendo|xobx|xbxo|iphne|iphome|ipohne|samsng|samsumg|sumsung|macbok|mackbook|macbbok|thinkpda|lenova|lenvo|hewlet|cannon eos|nikkon|dysen|delonghi|de longhi|airpod pro|sonos|bose|playstation 4 pro|ps4 pro|ps5 disc|xbox seris|xbox sereis|apple watc|ipda|ipadd|gopro hreo|go pro|dyosn|kitchen aid|lego technic)\b/i;
 const MIS_ONLY = /\b(nvidea|nvida|nvdia|geforse|gefroce|playstaion|playsation|plastation|playstatio|nintedo|nintndo|nitendo|xobx|xbxo|iphne|iphome|ipohne|samsng|samsumg|sumsung|macbok|mackbook|macbbok|thinkpda|lenova|lenvo|hewlet|nikkon|dysen|xbox seris|xbox sereis|apple watc|ipda|ipadd|gopro hreo|dyosn)\b/i;
@@ -976,7 +1010,7 @@ export default {
     if (!env.APP_KEY || P("key") !== env.APP_KEY) return json({ error: "wrong key" }, 401);
 
     // ---- hunting (needs the database) ----
-    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "test", "device", "check", "price", "prices", "unprice", "needs", "lookfor"].some((k) => u.searchParams.has(k));
+    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "test", "device", "check", "price", "prices", "unprice", "needs", "lookfor", "fill"].some((k) => u.searchParams.has(k));
     if (huntCall) {
       if (!env.DB) return json({ error: "hunting database not set up yet" }, 501);
       try {
@@ -1028,8 +1062,15 @@ export default {
           const sold = (sr.results || []).map((r) => r.price);
           return json({ key, label: bookLabel(g ? g.label : "", text, key), q, url: lookupUrl(q), expect: sold.length >= 3 ? Math.round(median(sold)) : null });
         }
+        if (P("fill") && request.method === "POST") {
+          // the user read eBay's sold listings for a whole category on their phone: sort them into models and save each model's typical price
+          await ensureSrc(env);
+          const b = JSON.parse(await request.text());
+          return json(await fillPrices(env, b));
+        }
         if (P("prices")) {
-          const rows = await env.DB.prepare("SELECT pkey, label, q, avg, st, post, trend, at FROM prices ORDER BY at DESC LIMIT 500").all();
+          await ensureSrc(env);
+          const rows = await env.DB.prepare("SELECT pkey, label, q, avg, st, post, trend, at, src FROM prices ORDER BY at DESC LIMIT 3000").all();
           return json({ prices: (rows.results || []).map((r) => ({ ...r, url: lookupUrl(r.q || ""), fresh: Date.now() - r.at < BOOK_DAYS * DAY })) });
         }
         if (P("unprice")) {

@@ -292,7 +292,8 @@ function vAdmin(){if(!S.set.admin)return`<div class="card">Admin tools are off.<
   const seen=new Set();ADMC=[...STARTER.map(([id,name])=>({id,name})),...H().cats].filter(c=>!seen.has(c.id)&&seen.add(c.id));
   return`<h2>Admin tools</h2><div class="mu" style="margin:-6px 4px 12px">Hidden from customers. Tap the version in Settings 7 times to hide it again.</div>
   ${connected()?`<div class="card"><b>Fill prices for a whole category</b><div class="mu">Opens eBay's sold listings for the category, sorted newest first. Tap Next page as often as you like, then Save all. FlipScout sorts them into models and saves each one with 5+ sales.</div>
-   ${ADMC.map((c,i)=>`<div class="li" style="padding:8px 0"><span style="flex:1;min-width:0">${esc(c.name)}</span><button class="s" style="margin:0;min-height:40px;padding:6px 14px" onclick="fillCat(ADMC[${i}])">Fill prices</button></div>`).join("")}
+   ${ADMC.map((c,i)=>{const f=fillPg(c.id);return`<div class="li" style="padding:8px 0;flex-wrap:wrap;gap:6px"><span style="flex:1;min-width:0">${esc(c.name)}${f?`<div class="mu" style="font-size:13px">Last time: up to page ${f.pg}, ${ago(f.at)}</div>`:""}</span>
+    ${f?`<button style="margin:0;min-height:40px;padding:6px 12px" onclick="fillCat(ADMC[${i}],${f.pg+1})">Continue p${f.pg+1}</button><button class="s" style="margin:0;min-height:40px;padding:6px 12px" onclick="fillCat(ADMC[${i}])">Start</button>`:`<button class="s" style="margin:0;min-height:40px;padding:6px 14px" onclick="fillCat(ADMC[${i}])">Fill prices</button>`}</div>`}).join("")}
    <div class="hint">Take it steady: a few pages, then a break.</div></div>
   <div class="card"><b>Fill any eBay category</b><div class="mu">Pick it like on eBay, down to the most specific one you can, then tap Fill.</div><div id="catbox_a" style="margin-top:10px"></div>
    <div class="hint">Phones, graphics cards, consoles, laptops and the other popular kinds are sorted model by model. Anything else is grouped by matching titles, which is rougher, so the most specific category gives the best prices.</div></div>`:`<div class="card">Connect your Scan service first.</div>`}`}
@@ -922,15 +923,24 @@ function lookHook(){if(lookHooked)return;lookHooked=true;
 /* ---------- CHECK SOLD PRICES: the user opens eBay's public sold listings inside FlipScout; the app reads only that page, on the phone, and nothing is saved until the user taps Save ---------- */
 const soldUrl=L=>"https://www.ebay.co.uk/sch/i.html?_nkw="+encodeURIComponent(L.q||L.label||"")+"&LH_Sold=1&LH_Complete=1&LH_PrefLoc=1&_ipg=240&_sop=13&LH_ItemCondition="+(/\|new$/.test(L.key||"")?"1000":"3000");
 // runs inside the eBay page: reads the sold results above eBay's "fewer words" line
-const SOLD_READ=`(function(){var out=[],seen={},L=document.querySelectorAll(".srp-results > li, ul.srp-results li, li.s-item, li.s-card, li.brwrvr__item-card");
-for(var i=0;i<L.length;i++){var li=L[i],t=(li.innerText||"").replace(/\\s+/g," ");
- if(/REWRITE_START/.test(li.className)||/Results matching fewer words/i.test(t))break;
- var a=li.querySelector("a[href*='/itm/']");if(!a)continue;var id=(a.href.match(/itm\\/(?:[^\\/?]*\\/)?(\\d{9,})/)||[])[1]||a.href;if(seen[id])continue;seen[id]=1;
+// runs inside the eBay page. Works with any eBay layout: finds each listing from its link, then the box around it
+// that holds only that listing; keeps it only if it shows "Sold <date>" and sits above eBay's "fewer words" results
+const SOLD_READ=`(function(){var out=[],seen={},idOf=function(h){var m=String(h).match(/itm\\/(?:[^\\/?#]*\\/)?(\\d{9,})/);return m?m[1]:null};
+var cutEl=null,all=document.querySelectorAll("li,div,h2,h3,span");for(var k=0;k<all.length;k++){var c=all[k];if((c.textContent||"").length<150&&/Results matching fewer words|results? for fewer words/i.test(c.textContent||"")){cutEl=c;break}}
+var A=document.querySelectorAll("a[href*='/itm/']");
+for(var i=0;i<A.length;i++){var a=A[i],id=idOf(a.href);if(!id||seen[id])continue;
+ if(cutEl&&(cutEl.compareDocumentPosition(a)&4)&&!(cutEl.compareDocumentPosition(a)&16))continue;
+ var box=a,up=a.parentElement;
+ while(up&&up!==document.body){var ids={},n=0,L=up.querySelectorAll("a[href*='/itm/']");for(var j=0;j<L.length;j++){var x=idOf(L[j].href);if(x&&!ids[x]){ids[x]=1;n++}}if(n>1)break;box=up;up=up.parentElement}
+ var t=(box.innerText||"").replace(/\\s+/g," ");
  if(/Shop on eBay/i.test(t)||/best offer accepted/i.test(t))continue;
+ var sm=t.match(/Sold\\s+(\\d{1,2}\\s+[A-Za-z]{3}\\s+\\d{4})/);if(!sm)continue;
  var pm=t.match(/£\\s?([\\d,]+\\.\\d{2})(\\s*to\\s*£)?/);if(!pm||pm[2])continue;
- var sm=t.match(/Sold\\s+(\\d{1,2}\\s+[A-Za-z]{3}\\s+\\d{4})/),po=/free (postage|delivery)/i.test(t)?0:((t.match(/£\\s?([\\d,]+\\.\\d{2})\\s*(postage|delivery|p&p)/i)||[])[1]);
- var tt=li.querySelector(".s-item__title,.s-card__title,[role=heading],h3");
- if(!sm)continue;out.push({id:String(id),n:((tt&&tt.innerText)||a.innerText||"").replace(/^New listing\s*/i,"").replace(/\s+/g," ").trim().slice(0,200),p:+pm[1].replace(/,/g,""),d:sm?Date.parse(sm[1]):null,s:po==null?null:+String(po).replace(/,/g,"")})}
+ var po=/free (postage|delivery)/i.test(t)?0:((t.match(/£\\s?([\\d,]+\\.\\d{2})\\s*(postage|delivery|p&p)/i)||[])[1]);
+ var tt=box.querySelector(".s-item__title,.s-card__title,[role=heading],h3"),nm=((tt&&tt.innerText)||"");
+ if(!nm){var LL=box.querySelectorAll("a[href*='/itm/']");for(var q=0;q<LL.length;q++){var s2=(LL[q].innerText||"").trim();if(s2.length>nm.length)nm=s2}}
+ nm=nm.replace(/^New listing\\s*/i,"").replace(/Opens in a new window or tab/i,"").replace(/\\s+/g," ").trim().slice(0,200);if(!nm)continue;
+ seen[id]=1;out.push({id:id,n:nm,p:+pm[1].replace(/,/g,""),d:Date.parse(sm[1]),s:po==null?null:+String(po).replace(/,/g,"")})}
 return out})()`;
 function soldSum(rows){const cut=Date.now()-90*864e5;rows=rows.filter(r=>!r.d||r.d>=cut);const p=rows.map(r=>r.p).filter(x=>x>0);if(!p.length)return null;
   const m=median(p),keep=p.length>=4?rows.filter(r=>r.p>=m*0.5&&r.p<=m*1.5):rows,ps=keep.map(r=>r.p).sort((a,b)=>a-b);
@@ -972,16 +982,19 @@ b.style.cssText="position:fixed;left:0;right:0;bottom:0;z-index:2147483647;backg
 b.innerHTML=${JSON.stringify(bad?`<b style="color:#fbbf24">FlipScout</b> this isn't eBay's sold listings, so nothing here is counted. Tap <b>Done</b> and try again.${n?` (${n} sold read so far are kept.)`:""}`:sign?`<b style="color:#4ade80">FlipScout</b> eBay only shows sold prices when you're signed in. Sign in once with your email or username and keep <b>Stay signed in</b> ticked. FlipScout never sees your password.`
  :`<div><b style="color:#4ade80">FlipScout</b> read <b>${n} sold</b> from ${pages} page${pages===1?"":"s"}</div><div style="opacity:.75;font-size:13px;margin-top:2px">Take it steady: a few pages, then a break.</div><div style="display:flex;gap:8px;margin-top:10px"><button id="fs_next" style="flex:1;background:#1b2a4b;color:#fff;border:1px solid #33456b;border-radius:12px;padding:10px;font-weight:700;font-size:15px">Next page ›</button><button id="fs_save" style="flex:1;background:linear-gradient(135deg,#10d98a,#a3e635);color:#0b1a14;border:0;border-radius:12px;padding:10px;font-weight:800;font-size:15px">Save all</button></div>`)};
 var x=document.getElementById("fs_next");if(x)x.onclick=function(){x.disabled=true;x.textContent="Loading…";send({fs:"next"})};var y=document.getElementById("fs_save");if(y)y.onclick=function(){send({fs:"save"})}})()`;
-function fillCat(c){if(!c)return;const IAB=window.cordova&&window.cordova.InAppBrowser;
+const FILLPG="flipscout_fill_pages";
+const fillPg=id=>{try{return(JSON.parse(localStorage.getItem(FILLPG)||"{}")[id])||null}catch(e){return null}};
+function fillPgSet(id,pg){try{const m=JSON.parse(localStorage.getItem(FILLPG)||"{}");m[id]={pg,at:Date.now()};localStorage.setItem(FILLPG,JSON.stringify(m))}catch(e){}}
+function fillCat(c,start){if(!c)return;const IAB=window.cordova&&window.cordova.InAppBrowser;
   if(!IAB){toast("Fill prices works in the FlipScout app on your phone.");return}
-  const acc=new Map();let page=1,pages=new Set(),signing=false,save=false;
-  const w=IAB.open(fillUrl(c,1),"_blank","location=yes,hideurlbar=yes,toolbarcolor=#0D172C,closebuttoncolor=#ffffff,navigationbuttoncolor=#ffffff,closebuttoncaption=Done,zoom=no");
+  const acc=new Map();let page=start||1,pages=new Set(),signing=false,save=false;
+  const w=IAB.open(fillUrl(c,page),"_blank","location=yes,hideurlbar=yes,toolbarcolor=#0D172C,closebuttoncolor=#ffffff,navigationbuttoncolor=#ffffff,closebuttoncaption=Done,zoom=no");
   let shown="";
   iabWatch(w,(u,got,hasBar)=>{
    if(isSignIn(u)){if(!signing||!hasBar)w.executeScript({code:fillBar(0,0,1)});signing=true;return}
    if(signing&&!/\/sch\//.test(u)){signing=false;w.executeScript({code:"location.href="+JSON.stringify(fillUrl(c,page))});return}
    signing=false;const pm=u.match(/_pgn=(\d+)/);if(pm)page=+pm[1];
-   got.forEach(x=>{if(x&&x.n&&!acc.has(x.id))acc.set(x.id,x)});if(got.length)pages.add(page);
+   got.forEach(x=>{if(x&&x.n&&!acc.has(x.id))acc.set(x.id,x)});if(got.length){pages.add(page);const f=fillPg(c.id);if(!f||page>f.pg||Date.now()-f.at>14*864e5)fillPgSet(c.id,page)}
    const st=acc.size+"|"+pages.size+"|"+(got.length?1:0);if(st!==shown||!hasBar){shown=st;w.executeScript({code:fillBar(acc.size,pages.size,0,!got.length)})}});
   w.addEventListener("message",e=>{const m=e&&e.data&&e.data.fs;if(m==="next"){page++;w.executeScript({code:"location.href="+JSON.stringify(fillUrl(c,page))})}else if(m==="save"){save=true;w.close()}});
   w.addEventListener("exit",()=>{if(!acc.size){toast("No sold prices read.");return}
@@ -989,9 +1002,12 @@ function fillCat(c){if(!c)return;const IAB=window.cordova&&window.cordova.InAppB
     else openSheet(`<h2 style="margin-top:0">Save what FlipScout read?</h2><div class="mu" style="font-size:16px">${acc.size} sold prices from ${esc(c.name)}.</div><div class="btns"><button onclick="fillSave(FILLC,FILLR)">Save all</button><button class="s" onclick="closeSheet();toast('Not saved.')">Don't save</button></div>`);
     window.FILLC=c;window.FILLR=[...acc.values()]})}
 async function fillSave(c,rows){closeSheet();toast(`Sorting ${rows.length} sales into models…`);
-  try{const r=await api("fill=1",{cat:c.id,catName:c.name,cond:"used",rows:rows.map(x=>({n:x.n,p:x.p,s:x.s,d:x.d}))});
+  try{const r={read:0,fresh:0,models:0,saved:0,few:0,kept:0,top:[]},seen=new Map();
+    for(let i=0;i<rows.length;i+=1500){const x=await api("fill=1",{cat:c.id,catName:c.name,cond:"used",rows:rows.slice(i,i+1500).map(x=>({id:x.id,n:x.n,p:x.p,s:x.s,d:x.d}))});
+      ["read","fresh","models","few","kept"].forEach(k=>r[k]+=x[k]||0);(x.top||[]).forEach(t=>seen.set(t.label,t))}
+    r.top=[...seen.values()].sort((a,b)=>b.n-a.n);r.saved=r.top.length;
     BK.list=null;loadBook();
-    openSheet(`<h2 style="margin-top:0">Saved ${r.saved} prices</h2><div class="mu">${esc(c.name)} · ${r.read} sales read, ${r.models} models found</div>
+    openSheet(`<h2 style="margin-top:0">Saved ${r.saved} prices</h2><div class="mu">${esc(c.name)} · ${r.read} sales read, ${r.fresh} new (repeats skipped)</div>
      <div style="margin-top:10px;max-height:46vh;overflow:auto">${(r.top||[]).map(x=>`<div class="li" style="padding:7px 0"><span style="flex:1;min-width:0">${esc(x.label)} <span class="mu">· ${x.n} sold</span></span><span class="num-t" style="font-weight:700">${gbp(x.avg)}</span></div>`).join("")||`<div class="mu">No model had enough sales yet. Try a few more pages.</div>`}</div>
      ${r.few?`<div class="hint">${r.few} model${r.few>1?"s":""} had fewer than 5 sales, so ${r.few>1?"they weren't":"it wasn't"} saved. More pages next time will add them.</div>`:""}
      ${r.kept?`<div class="hint">${r.kept} price${r.kept>1?"s":""} you checked yourself this week ${r.kept>1?"were":"was"} kept.</div>`:""}

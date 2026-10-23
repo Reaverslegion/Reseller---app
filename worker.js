@@ -95,6 +95,7 @@ async function schema(env) {
     D.prepare("CREATE INDEX IF NOT EXISTS de_exp ON deals(expires)"),
     D.prepare("CREATE TABLE IF NOT EXISTS follows (id TEXT PRIMARY KEY, data TEXT, max REAL, created INTEGER, alerted TEXT)"),
     // price book: values users read off eBay's research page and type in, one row per product group
+    D.prepare("CREATE TABLE IF NOT EXISTS fillsales (pkey TEXT PRIMARY KEY, data TEXT, at INTEGER)"),
     D.prepare("CREATE TABLE IF NOT EXISTS prices (pkey TEXT PRIMARY KEY, label TEXT, q TEXT, avg REAL, st REAL, post REAL, trend TEXT, at INTEGER)"),
   ]);
   for (const sql of ["ALTER TABLE listings ADD COLUMN data TEXT", "ALTER TABLE deals ADD COLUMN checked INTEGER DEFAULT 0"]) {
@@ -395,43 +396,50 @@ let srcReady = false;
 async function ensureSrc(env) { if (srcReady) return; try { await env.DB.prepare("ALTER TABLE prices ADD COLUMN src TEXT").run(); } catch (e) {} srcReady = true; }
 const FILL_SKIP = /\b(faulty|spares|repairs?|broken|for parts|parts only|job ?lot|joblot|bundle|empty box|box only|untested|read desc|read description|see desc|see description|please read|not working|cracked|icloud locked)\b/i;
 async function fillPrices(env, b) {
+  // Every sale is kept by its eBay item number (so pages read twice, or on different days, never count twice)
+  // in one small record per model; each model's price comes from all its sales in the last 90 days.
   const cat = String(b.cat || "").replace(/\D/g, ""), catName = String(b.catName || "").slice(0, 80), cond = b.cond === "new" ? "new" : "used";
-  const rows = (Array.isArray(b.rows) ? b.rows : []).slice(0, 20000), groups = new Map();
+  const rows = (Array.isArray(b.rows) ? b.rows : []).slice(0, 3000), groups = new Map(), now = Date.now(), cut = now - 90 * DAY;
   for (const r of rows) {
-    const t = String((r && r.n) || "").slice(0, 200), p = +r.p;
-    if (!t || !(p > 0 && p < 100000) || FILL_SKIP.test(t)) continue;
+    const t = String((r && r.n) || "").slice(0, 200), p = +r.p, id = String((r && r.id) || "").replace(/\D/g, "").slice(0, 20);
+    if (!t || !id || !(p > 0 && p < 100000) || FILL_SKIP.test(t)) continue;
     const g = groupOf({ title: t }, cat, catName, cond);
-    // known kinds are matched model by model; anything else is grouped by its key title words (needs a strong match)
-    // (a single model code like "75192" or "1000xm4" is strong enough on its own)
+    // known kinds are matched model by model; anything else needs a strong title match or a single model code like "75192"
     const known = /^(gpu|lap|phone|con|tab|cpu|ram|sto|mon|fas):/.test(g && g.key), code = g && /^t\d*:([a-z0-9]{4,})\|/.exec(g.key);
     if (!g || g.match < (known ? 0.6 : code ? 0.45 : 0.7)) continue;
     const key = bareKey(g.key);
-    let x = groups.get(key); if (!x) groups.set(key, (x = { label: bookLabel(g.label, t, key), q: lookupQ(t, g.key), rows: [] }));
-    x.rows.push({ p, s: r.s != null && +r.s >= 0 && +r.s < 500 ? +r.s : null, d: +r.d || null });
+    let x = groups.get(key); if (!x) groups.set(key, (x = { label: bookLabel(g.label, t, key), q: lookupQ(t, g.key), add: [] }));
+    x.add.push([id, Math.round(p * 100) / 100, r.s != null && +r.s >= 0 && +r.s < 500 ? Math.round(+r.s * 100) / 100 : null, +r.d || null]);
   }
-  const now = Date.now(), old = await env.DB.prepare("SELECT pkey, at, src FROM prices").all();
-  const mine = new Set((old.results || []).filter((r) => r.src !== "fill" && now - r.at < 7 * DAY).map((r) => r.pkey));
-  const SQL = ("INSERT INTO prices (pkey,label,q,avg,st,post,trend,at,src) VALUES (?,?,?,?,?,?,?,?,'fill') ON CONFLICT(pkey) DO UPDATE SET label=excluded.label, q=excluded.q, avg=excluded.avg, post=excluded.post, trend=excluded.trend, at=excluded.at, src='fill'"), ins = { bind: (...v) => env.DB.prepare(SQL).bind(...v) };
-  const st = [], saved = []; let few = 0, kept = 0;
+  const keys = [...groups.keys()], have = new Map();
+  for (let i = 0; i < keys.length; i += 90) {
+    const part = keys.slice(i, i + 90), q = await env.DB.prepare("SELECT pkey, data FROM fillsales WHERE pkey IN (" + part.map(() => "?").join(",") + ")").bind(...part).all();
+    for (const r of q.results || []) { try { have.set(r.pkey, JSON.parse(r.data)); } catch (e) {} }
+  }
+  const old = await env.DB.prepare("SELECT pkey, at, src FROM prices WHERE at > ?").bind(now - 7 * DAY).all();
+  const mine = new Set((old.results || []).filter((r) => r.src !== "fill").map((r) => r.pkey));
+  const blobs = [], prices = [], saved = []; let few = 0, kept = 0, fresh = 0;
   for (const [key, x] of groups) {
-    const m = median(x.rows.map((r) => r.p)), keep = x.rows.filter((r) => r.p >= m * 0.5 && r.p <= m * 1.5);
+    const all = new Map((have.get(key) || []).filter((r) => !r[3] || r[3] >= cut).map((r) => [r[0], r]));
+    for (const r of x.add) if (!all.has(r[0])) { all.set(r[0], r); fresh++; }
+    const list = [...all.values()].sort((a, c) => (c[3] || 0) - (a[3] || 0)).slice(0, 3000);
+    blobs.push([key, JSON.stringify(list), now]);
+    const m = median(list.map((r) => r[1])), keep = list.filter((r) => r[1] >= m * 0.5 && r[1] <= m * 1.5);
     if (keep.length < 5) { few++; continue; }
     if (mine.has(key)) { kept++; continue; }
-    const avg = Math.round(median(keep.map((r) => r.p)) * 100) / 100, sh = keep.map((r) => r.s).filter((v) => v != null);
-    const dated = keep.filter((r) => r.d).sort((a, c) => a.d - c.d); let trend = "steady";
-    if (dated.length >= 8) { const h = dated.length >> 1, o = median(dated.slice(0, h).map((r) => r.p)), nw = median(dated.slice(h).map((r) => r.p)); trend = nw > o * 1.05 ? "rising" : nw < o * 0.95 ? "falling" : "steady"; }
-    st.push(ins.bind(key, x.label.slice(0, 120), x.q.slice(0, 400), avg, null, sh.length ? Math.round(median(sh) * 100) / 100 : null, trend, now));
+    const avg = Math.round(median(keep.map((r) => r[1])) * 100) / 100, sh = keep.map((r) => r[2]).filter((v) => v != null);
+    const dated = keep.filter((r) => r[3]).sort((a, c) => a[3] - c[3]); let trend = "steady";
+    if (dated.length >= 8) { const h = dated.length >> 1, o = median(dated.slice(0, h).map((r) => r[1])), nw = median(dated.slice(h).map((r) => r[1])); trend = nw > o * 1.05 ? "rising" : nw < o * 0.95 ? "falling" : "steady"; }
+    prices.push([key, x.label.slice(0, 120), x.q.slice(0, 400), avg, null, sh.length ? Math.round(median(sh) * 100) / 100 : null, trend, now, "fill"]);
     saved.push({ label: x.label, n: keep.length, avg });
   }
-  for (let i = 0; i < st.length; i += 50) await env.DB.batch(st.slice(i, i + 50));
+  // few queries per save (free plan allows 50): many rows per statement
+  const multi = (head, tail, cols, list, per) => { const st = []; for (let i = 0; i < list.length; i += per) { const part = list.slice(i, i + per); st.push(env.DB.prepare(head + part.map(() => "(" + Array(cols).fill("?").join(",") + ")").join(",") + tail).bind(...part.flat())); } return st; };
+  const st = [...multi("INSERT INTO fillsales (pkey,data,at) VALUES ", " ON CONFLICT(pkey) DO UPDATE SET data=excluded.data, at=excluded.at", 3, blobs, 30),
+    ...multi("INSERT INTO prices (pkey,label,q,avg,st,post,trend,at,src) VALUES ", " ON CONFLICT(pkey) DO UPDATE SET label=excluded.label, q=excluded.q, avg=excluded.avg, post=excluded.post, trend=excluded.trend, at=excluded.at, src='fill'", 9, prices, 11)];
+  if (st.length) await env.DB.batch(st);
   saved.sort((a, c) => c.n - a.n);
-  return { read: rows.length, models: groups.size, saved: saved.length, few, kept, top: saved.slice(0, 40) };
-} // price book values are used for 30 days, then FlipScout asks for a refresh
-// what the app needs to open eBay's research page for a listing and save the answer
-function lookInfo(s, alt) {
-  if (!s.pkey || s.bucket === "parts") return null;
-  const q = lookupQ(s.title, s.pkey);
-  return { key: s.pkey, label: bookLabel(s.matchLabel, s.title, s.pkey), q, url: lookupUrl(q), expect: alt ? Math.round(alt.med) : null };
+  return { read: rows.length, fresh, models: groups.size, saved: saved.length, few, kept, top: saved.slice(0, 40) };
 }
 
 /* ---------------- what the hunter avoids ---------------- */

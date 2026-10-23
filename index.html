@@ -929,6 +929,10 @@ const soldUrl=L=>"https://www.ebay.co.uk/sch/i.html?_nkw="+encodeURIComponent(L.
 // 1) finds each listing from its item link (also inside sealed sections and frames) and the box around it;
 // 2) if eBay shows no item links, reads the visible text: each "Sold <date>" starts a listing.
 // Keeps only listings showing "Sold <date>", above eBay's "fewer words" results; skips "Best Offer accepted" (real price hidden).
+// the page's text as a person would copy it with "select all" (includes parts of the page scripts can't look inside)
+function selText(){var t="";try{var sel=window.getSelection(),keep=[];for(var i=0;i<sel.rangeCount;i++)keep.push(sel.getRangeAt(i));
+  var bar=document.getElementById("fs_bar");if(bar)bar.style.userSelect="none";
+  document.execCommand("selectAll");t=sel.toString();sel.removeAllRanges();keep.forEach(function(r){sel.addRange(r)})}catch(e){}return t}
 function soldReader(given){
   var roots=given||[document],seenR=[];
   if(!given)(function walk(r,depth){if(depth>6)return;var all=r.querySelectorAll("*");for(var i=0;i<all.length;i++){var el=all[i];if(el.shadowRoot&&seenR.indexOf(el.shadowRoot)<0){seenR.push(el.shadowRoot);roots.push(el.shadowRoot);walk(el.shadowRoot,depth+1)}
@@ -953,7 +957,7 @@ function soldReader(given){
   if(out.length)return out;
   // no item links: read the visible text, one "Sold <date>" block at a time
   if(given)return out;
-  var text=roots.map(function(r){var b=r.body||r;return b.innerText||Array.prototype.map.call(r.children||[],function(c){return c.innerText||""}).join("\n")}).join("\n");
+  var parse=function(text){
   var cut=text.search(/Results matching fewer words|fewer words/i);if(cut>0)text=text.slice(0,cut);
   var parts=text.split(/(?=Sold\s+\d{1,2}\s+[A-Za-z]{3}\s+\d{4})/);
   for(var k=1;k<parts.length;k++){var blk=parts[k],sm2=blk.match(SOLD);if(!sm2)continue;
@@ -963,7 +967,9 @@ function soldReader(given){
     title=title.replace(/^New listing\s*/i,"").slice(0,200);if(!title)continue;
     var key="t"+(title+"|"+pm2[1]+"|"+sm2[1]).split("").reduce(function(h,c){return(h*31+c.charCodeAt(0))>>>0},7);
     if(seen[key])continue;seen[key]=1;var po2=postOf(blk);
-    out.push({id:key,n:title,p:num(pm2[1]),d:Date.parse(sm2[1]),s:po2==null?null:num(po2)})}
+    out.push({id:key,n:title,p:num(pm2[1]),d:Date.parse(sm2[1]),s:po2==null?null:num(po2)})}};
+  parse(roots.map(function(r){var b=r.body||r;return b.innerText||Array.prototype.map.call(r.children||[],function(c){return c.innerText||""}).join("\n")}).join("\n"));
+  if(!out.length)parse(selText());
   return out}
 // eBay's new design can draw results in a locked section page scripts can't see; the page's own text (fetched again with the user's sign-in) isn't locked
 function copyRead(){var u=location.href,F=window.__fsF;if(F&&F.u===u)return F;F=window.__fsF={u:u,st:"loading"};
@@ -985,15 +991,24 @@ var u=document.getElementById("fs_use");if(u)u.onclick=function(){var m=JSON.str
 // read the page and its address together; never throws, so the bar always appears
 function pageDiag(){var sh=0,fr=document.querySelectorAll("iframe").length,all=document.querySelectorAll("*");for(var i=0;i<all.length;i++)if(all[i].shadowRoot)sh++;
   var A=document.querySelectorAll("a[href]"),it=0,ex="";for(var j=0;j<A.length;j++){if(/itm/.test(A[j].href)){it++;if(!ex)ex=A[j].href.slice(0,60)}}
-  var t=document.body?document.body.innerText||"":"";return{l:it,a:A.length,s:(t.match(/Sold\s+\d{1,2}\s+[A-Za-z]{3}\s+\d{4}/g)||[]).length,sh:sh,fr:fr,ex:ex,len:t.length}}
-const PAGE_READ=`(function(){var soldReader=${soldReader};var copyRead=${copyRead};var u=location.href,b=!!document.getElementById("fs_bar"),g={};try{g=(${pageDiag})()}catch(e){}
+  var t=document.body?document.body.innerText||"":"",tc=document.body?(document.body.textContent||"").length:0,x=selText(),ce=0;for(var k=0;k<all.length;k++)if(all[k].tagName.indexOf("-")>0)ce++;
+  return{l:it,a:A.length,s:(t.match(/Sold\s+\d{1,2}\s+[A-Za-z]{3}\s+\d{4}/g)||[]).length,sh:sh,fr:fr,ex:ex,len:t.length,tc:tc,sl:x.length,ss:(x.match(/Sold\s+\d{1,2}\s+[A-Za-z]{3}\s+\d{4}/g)||[]).length,ce:ce,n:all.length}}
+// admin "Details": a short summary of how eBay's page is built, for fixing the reader
+function pageDump(){var o={u:location.href,ua:navigator.userAgent,ready:document.readyState},b=document.body;
+  var tree=function(el,d){if(!el||d>3)return"";var kids=el.children||[],s="",n=0;for(var i=0;i<kids.length&&n<12;i++,n++){var k=kids[i];if(/^(SCRIPT|STYLE|LINK|META|NOSCRIPT)$/.test(k.tagName))continue;
+    s+="\n"+Array(d+1).join("  ")+k.tagName.toLowerCase()+(k.id?"#"+k.id:"")+(k.className&&k.className.baseVal==null?"."+String(k.className).trim().split(/\s+/).slice(0,2).join("."):"")+" ["+k.children.length+"]"+(k.shadowRoot?" SHADOW":"")+tree(k,d+1)}return s};
+  o.tree=tree(document.documentElement,0).slice(0,3000);o.inner=(b&&b.innerText||"").slice(0,400);o.text=(b&&b.textContent||"").replace(/\s+/g," ").slice(0,1500);
+  var A=document.querySelectorAll("a[href]");o.links=[];for(var i=0;i<A.length&&o.links.length<6;i++)o.links.push(A[i].getAttribute("href").slice(0,80));o.nlinks=A.length;
+  o.scripts=document.scripts.length;o.html=document.documentElement.outerHTML.length;var F=window.__fsF;if(F)o.copy={st:F.st,len:F.len,items:F.items,e:F.e};
+  var h=document.documentElement.outerHTML,k=h.search(/Sold\s+\d|SOLD|soldDate|"sold/i);o.soldAt=k;if(k>0)o.soldBit=h.slice(Math.max(0,k-600),k+900);return JSON.stringify(o)}
+const PAGE_READ=`(function(){var selText=${selText};var soldReader=${soldReader};var copyRead=${copyRead};var u=location.href,b=!!document.getElementById("fs_bar"),g={};try{g=(${pageDiag})()}catch(e){g={de:String(e)}}
   try{var r=soldReader();if(!r.length&&/\\/sch\\//.test(u)){var F=copyRead();g.f=F.st;g.fi=F.items||0;g.fl=F.len||0;if(F.e)g.fe=F.e;if(F.st==="done")r=F.rows||[];else if(F.st==="loading")return{u:u,b:b,g:g,r:[],wait:1}}return{u:u,b:b,g:g,r:r}}catch(e){return{u:u,b:b,g:g,r:[],e:String(e)}}})()`;
 const isSignIn=u=>/signin\.ebay|\/signin|SignIn/i.test(u);
 // eBay's pages keep loading pictures as you scroll, so don't wait for "finished": check every few seconds while open
 const PAGE_PROBE=`(function(){return location.href+"|"+document.querySelectorAll("a[href]").length+"|"+Math.round(((document.body&&document.body.innerText)||"").length/500)+"|"+(!!document.getElementById("fs_bar"))+"|"+(window.__fsF&&window.__fsF.st)})()`;
 function iabWatch(w,tick){let busy=0,last="",lastRead=null;const run=()=>{if(busy&&Date.now()-busy<8000)return;busy=Date.now();
   w.executeScript({code:PAGE_PROBE},p=>{const k=String((p&&p[0])||"");if(k&&k===last&&lastRead){busy=0;return}
-   w.executeScript({code:PAGE_READ},r=>{busy=0;const x=(r&&r[0])||{};last=k;lastRead=x;const g=x.g||{};window.FSDIAG=`${g.l||0} item links of ${g.a||0}, ${g.s||0} sold dates, ${g.sh||0} sealed, ${g.fr||0} frames, ${g.len||0} chars${g.ex?", e.g. "+g.ex:""}${g.f?`, copy ${g.f} (${g.fi} items, ${g.fl} chars${g.fe?", "+g.fe:""})`:""}${x.e?", error: "+x.e:""}`;tick(String(x.u||""),x.r||[],!!x.b,!!x.wait)})})};
+   w.executeScript({code:PAGE_READ},r=>{busy=0;const x=(r&&r[0])||{};last=k;lastRead=x;const g=x.g||{};window.FSDIAG=`${g.l||0} item links of ${g.a||0}, ${g.s||0} sold dates, ${g.sh||0} sealed, ${g.fr||0} frames, ${g.len||0} chars${g.ex?", e.g. "+g.ex:""}${g.tc!=null?`, text ${g.tc}, select-all ${g.sl} (${g.ss} sold), ${g.ce} custom of ${g.n}`:""}${g.de?", diag error "+g.de:""}${g.f?`, copy ${g.f} (${g.fi} items, ${g.fl} chars${g.fe?", "+g.fe:""})`:""}${x.e?", error: "+x.e:""}`;tick(String(x.u||""),x.r||[],!!x.b,!!x.wait)})})};
   w.addEventListener("loadstop",run);const t=setInterval(run,3000);w.addEventListener("exit",()=>clearInterval(t));setTimeout(run,1500)}
 function soldCheck(L){BK.cur=L;const IAB=window.cordova&&window.cordova.InAppBrowser,url=soldUrl(L);
   if(!IAB){window.open(url,"_blank");setTimeout(()=>{BK.mode="sold";priceSheet()},300);return}
@@ -1012,13 +1027,13 @@ const FILL_WORDS={"27386":"(graphics,gpu,video card,rtx,gtx,rx,radeon,arc,quadro
 // any other category: every word of its name and its singular ("Vintage Cameras" → vintage, cameras, camera)
 const fillWords=c=>{if(FILL_WORDS[c.id])return FILL_WORDS[c.id];const w=String(c.name||"").toLowerCase().replace(/[&()]/g," ").split(/[\s,/]+/).filter(x=>x.length>2&&!/^(and|for|the|other|with|non)$/.test(x));
   const all=[...new Set(w.flatMap(x=>/(ch|sh|x|ss)es$/.test(x)?[x,x.slice(0,-2)]:/[^s]s$/.test(x)?[x,x.slice(0,-1)]:[x]))].slice(0,10);return all.length>1?"("+all.join(",")+")":all[0]||""};
-const fillUrl=(c,pg)=>"https://www.ebay.co.uk/sch/i.html?_sacat="+encodeURIComponent(c.id)+"&_nkw="+encodeURIComponent(fillWords(c))+"&LH_Sold=1&LH_Complete=1&LH_PrefLoc=1&_ipg=240&_sop=13&LH_ItemCondition=3000"+(pg>1?"&_pgn="+pg:"");
+const fillUrl=(c,pg)=>"https://www.ebay.co.uk/sch/i.html?_nkw="+encodeURIComponent(fillWords(c))+"&LH_Sold=1&LH_Complete=1&LH_PrefLoc=1&_ipg=240&_sop=13&LH_ItemCondition=3000"+(pg>1?"&_pgn="+pg:"");
 const fsMsg=`function(m){m=JSON.stringify(m);try{cordova_iab.postMessage(m)}catch(e){try{webkit.messageHandlers.cordova_iab.postMessage(m)}catch(e2){}}}`;
 const fillBar=(n,pages,sign,bad)=>`(function(){document.body.style.paddingBottom="150px";var send=${fsMsg};var b=document.getElementById("fs_bar");if(!b){b=document.createElement("div");b.id="fs_bar";document.body.appendChild(b)}
 b.style.cssText="position:fixed;left:0;right:0;bottom:0;z-index:2147483647;background:#0D172C;color:#fff;font:15px/1.35 sans-serif;padding:12px 14px calc(12px + env(safe-area-inset-bottom));box-shadow:0 -4px 16px rgba(0,0,0,.3)";b.style.zoom=Math.max(1,(window.innerWidth||400)/400);
 b.innerHTML=${JSON.stringify(bad?`<b style="color:#fbbf24">FlipScout</b> this isn't eBay's sold listings, so nothing here is counted. Tap <b>Done</b> and try again.${n?` (${n} sold read so far are kept.)`:""}<div style="opacity:.7;font-size:12px;margin-top:4px">Check: ${window.FSDIAG||"no reading yet"}</div>`:sign?`<b style="color:#4ade80">FlipScout</b> eBay only shows sold prices when you're signed in. Sign in once with your email or username and keep <b>Stay signed in</b> ticked. FlipScout never sees your password.`
- :`<div><b style="color:#4ade80">FlipScout</b> read <b>${n} sold</b> from ${pages} page${pages===1?"":"s"}</div><div style="opacity:.75;font-size:13px;margin-top:2px">Take it steady: a few pages, then a break.</div><div style="opacity:.55;font-size:11px;margin-top:2px">Check: ${esc(window.FSDIAG||"")}</div><div style="display:flex;gap:8px;margin-top:10px"><button id="fs_next" style="flex:1;background:#1b2a4b;color:#fff;border:1px solid #33456b;border-radius:12px;padding:10px;font-weight:700;font-size:15px">Next page ›</button><button id="fs_save" style="flex:1;background:linear-gradient(135deg,#10d98a,#a3e635);color:#0b1a14;border:0;border-radius:12px;padding:10px;font-weight:800;font-size:15px">Save all</button></div>`)};
-var x=document.getElementById("fs_next");if(x)x.onclick=function(){x.disabled=true;x.textContent="Loading…";send({fs:"next"})};var y=document.getElementById("fs_save");if(y)y.onclick=function(){send({fs:"save"})}})()`;
+ :`<div><b style="color:#4ade80">FlipScout</b> ${n||pages?`read <b>${n} sold</b> from ${pages} page${pages===1?"":"s"}`:"is reading this page…"}</div><div style="opacity:.75;font-size:13px;margin-top:2px">Take it steady: a few pages, then a break.</div><div style="opacity:.55;font-size:11px;margin-top:2px">Check: ${esc(window.FSDIAG||"")}</div><div style="display:flex;gap:8px;margin-top:10px"><button id="fs_next" style="flex:1;background:#1b2a4b;color:#fff;border:1px solid #33456b;border-radius:12px;padding:10px;font-weight:700;font-size:15px">Next page ›</button><button id="fs_save" style="flex:1;background:linear-gradient(135deg,#10d98a,#a3e635);color:#0b1a14;border:0;border-radius:12px;padding:10px;font-weight:800;font-size:15px">Save all</button></div>`)};
+var x=document.getElementById("fs_next");if(x)x.onclick=function(){x.disabled=true;x.textContent="Loading…";send({fs:"next"})};var y=document.getElementById("fs_save");if(y)y.onclick=function(){send({fs:"save"})};var z=document.getElementById("fs_dump");if(z)z.onclick=function(){send({fs:"dump"})}})()`;
 const FILLPG="flipscout_fill_pages";
 const fillPg=id=>{try{return(JSON.parse(localStorage.getItem(FILLPG)||"{}")[id])||null}catch(e){return null}};
 function fillPgSet(id,pg){try{const m=JSON.parse(localStorage.getItem(FILLPG)||"{}");m[id]={pg,at:Date.now()};localStorage.setItem(FILLPG,JSON.stringify(m))}catch(e){}}
@@ -1027,14 +1042,18 @@ function fillCat(c,start){if(!c)return;const IAB=window.cordova&&window.cordova.
   const acc=new Map();let page=start||1,pages=new Set(),signing=false,save=false;
   const w=IAB.open(fillUrl(c,page),"_blank","location=yes,hideurlbar=yes,toolbarcolor=#0D172C,closebuttoncolor=#ffffff,navigationbuttoncolor=#ffffff,closebuttoncaption=Done,zoom=no");
   let shown="";
+  w.addEventListener("loadstop",e=>{const u=String(e&&e.url||"");if(!isSignIn(u))w.executeScript({code:fillBar(acc.size,pages.size)});else w.executeScript({code:fillBar(0,0,1)})});
   iabWatch(w,(u,got,hasBar,wait)=>{
    if(isSignIn(u)){if(!signing||!hasBar)w.executeScript({code:fillBar(0,0,1)});signing=true;return}
    if(signing&&!/\/sch\//.test(u)){signing=false;w.executeScript({code:"location.href="+JSON.stringify(fillUrl(c,page))});return}
    signing=false;const pm=u.match(/_pgn=(\d+)/);if(pm)page=+pm[1];
    got.forEach(x=>{if(x&&x.n&&!acc.has(x.id))acc.set(x.id,x)});if(got.length){pages.add(page);const f=fillPg(c.id);if(!f||page>f.pg||Date.now()-f.at>14*864e5)fillPgSet(c.id,page)}
    const st=acc.size+"|"+pages.size+"|"+(got.length?1:wait?2:0);if(st!==shown||!hasBar){shown=st;w.executeScript({code:fillBar(acc.size,pages.size,0,!got.length&&!wait)})}});
-  w.addEventListener("message",e=>{const m=e&&e.data&&e.data.fs;if(m==="next"){page++;w.executeScript({code:"location.href="+JSON.stringify(fillUrl(c,page))})}else if(m==="save"){save=true;w.close()}});
-  w.addEventListener("exit",()=>{if(!acc.size){toast("No sold prices read.");return}
+  w.addEventListener("message",e=>{const m=e&&e.data&&e.data.fs;if(m==="dump"){w.executeScript({code:`(${pageDump})()`},r=>{window.FSDUMP=(window.FSDIAG||"")+"\n"+String((r&&r[0])||"no reply");dumpNext=true;w.close()});return}
+   if(m==="next"){page++;w.executeScript({code:"location.href="+JSON.stringify(fillUrl(c,page))})}else if(m==="save"){save=true;w.close()}});
+  let dumpNext=false;
+  w.addEventListener("exit",()=>{if(dumpNext){openSheet(`<h2 style="margin-top:0">Page details</h2><div class="mu">Copy all of this and paste it to Claude.</div><textarea id="dumpt" rows="12" style="width:100%;font-size:12px" readonly>${esc(window.FSDUMP||"")}</textarea><div class="btns"><button onclick="const t=$('dumpt');t.focus();t.select();try{navigator.clipboard.writeText(t.value).then(()=>toast('Copied.'),()=>{document.execCommand('copy');toast('Copied.')})}catch(e){document.execCommand('copy');toast('Copied.')}">Copy</button><button class="s" onclick="closeSheet()">Close</button></div>`);return}
+    if(!acc.size){toast("No sold prices read.");return}
     if(save)fillSave(c,[...acc.values()]);
     else openSheet(`<h2 style="margin-top:0">Save what FlipScout read?</h2><div class="mu" style="font-size:16px">${acc.size} sold prices from ${esc(c.name)}.</div><div class="btns"><button onclick="fillSave(FILLC,FILLR)">Save all</button><button class="s" onclick="closeSheet();toast('Not saved.')">Don't save</button></div>`);
     window.FILLC=c;window.FILLR=[...acc.values()]})}

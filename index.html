@@ -925,23 +925,46 @@ const soldUrl=L=>"https://www.ebay.co.uk/sch/i.html?_nkw="+encodeURIComponent(L.
 // runs inside the eBay page: reads the sold results above eBay's "fewer words" line
 // runs inside the eBay page. Works with any eBay layout: finds each listing from its link, then the box around it
 // that holds only that listing; keeps it only if it shows "Sold <date>" and sits above eBay's "fewer words" results
-const SOLD_READ=`(function(){var out=[],seen={},idOf=function(h){var m=String(h).match(/itm\\/(?:[^\\/?#]*\\/)?(\\d{9,})/);return m?m[1]:null};
-var cutEl=null;try{cutEl=document.evaluate("//*[contains(text(),'fewer words')]",document,null,9,null).singleNodeValue}catch(e){}
-var A=document.querySelectorAll("a[href*='/itm/']");
-for(var i=0;i<A.length;i++){var a=A[i],id=idOf(a.href);if(!id||seen[id])continue;
- if(cutEl&&(cutEl.compareDocumentPosition(a)&4)&&!(cutEl.compareDocumentPosition(a)&16))continue;
- var box=a,up=a.parentElement;
- while(up&&up!==document.body){var ids={},n=0,L=up.querySelectorAll("a[href*='/itm/']");for(var j=0;j<L.length;j++){var x=idOf(L[j].href);if(x&&!ids[x]){ids[x]=1;n++;if(n>1)break}}if(n>1)break;box=up;up=up.parentElement}
- var t=(box.innerText||"").replace(/\\s+/g," ");
- if(/Shop on eBay/i.test(t)||/best offer accepted/i.test(t))continue;
- var sm=t.match(/Sold\\s+(\\d{1,2}\\s+[A-Za-z]{3}\\s+\\d{4})/);if(!sm)continue;
- var pm=t.match(/£\\s?([\\d,]+\\.\\d{2})(\\s*to\\s*£)?/);if(!pm||pm[2])continue;
- var po=/free (postage|delivery)/i.test(t)?0:((t.match(/£\\s?([\\d,]+\\.\\d{2})\\s*(postage|delivery|p&p)/i)||[])[1]);
- var tt=box.querySelector(".s-item__title,.s-card__title,[role=heading],h3"),nm=((tt&&tt.innerText)||"");
- if(!nm){var LL=box.querySelectorAll("a[href*='/itm/']");for(var q=0;q<LL.length;q++){var s2=(LL[q].innerText||"").trim();if(s2.length>nm.length)nm=s2}}
- nm=nm.replace(/^New listing\\s*/i,"").replace(/Opens in a new window or tab/i,"").replace(/\\s+/g," ").trim().slice(0,200);if(!nm)continue;
- seen[id]=1;out.push({id:id,n:nm,p:+pm[1].replace(/,/g,""),d:Date.parse(sm[1]),s:po==null?null:+String(po).replace(/,/g,"")})}
-return out})()`;
+// Runs inside the eBay page (sent as its own source text). Works with any eBay layout:
+// 1) finds each listing from its item link (also inside sealed sections and frames) and the box around it;
+// 2) if eBay shows no item links, reads the visible text: each "Sold <date>" starts a listing.
+// Keeps only listings showing "Sold <date>", above eBay's "fewer words" results; skips "Best Offer accepted" (real price hidden).
+function soldReader(){
+  var roots=[document],seenR=[];
+  (function walk(r,depth){if(depth>6)return;var all=r.querySelectorAll("*");for(var i=0;i<all.length;i++){var el=all[i];if(el.shadowRoot&&seenR.indexOf(el.shadowRoot)<0){seenR.push(el.shadowRoot);roots.push(el.shadowRoot);walk(el.shadowRoot,depth+1)}
+    if(el.tagName==="IFRAME"){try{var d=el.contentDocument;if(d&&d.body){roots.push(d);walk(d,depth+1)}}catch(e){}}}})(document,0);
+  var idOf=function(h){var m=String(h||"").match(/\/itm\/(?:[^\/?#]*\/)?(\d{9,})/)||String(h||"").match(/[?&](?:item|itm|itemId)=(\d{9,})/i);return m?m[1]:null};
+  var SOLD=/Sold\s+(\d{1,2}\s+[A-Za-z]{3}\s+\d{4})/,PRICE=/£\s?([\d,]+\.\d{2})(\s*to\s*£)?/,num=function(x){return+String(x).replace(/,/g,"")};
+  var postOf=function(t){return/free (postage|delivery)/i.test(t)?0:((t.match(/£\s?([\d,]+\.\d{2})\s*(postage|delivery|p&p)/i)||[])[1])};
+  var out=[],seen={},links=[];
+  roots.forEach(function(r){var L=r.querySelectorAll("a[href]");for(var i=0;i<L.length;i++)if(idOf(L[i].href))links.push(L[i])});
+  var cutEl=null;roots.forEach(function(r){if(cutEl)return;var all=r.querySelectorAll("h2,h3,h4,li,div,span,p");for(var i=0;i<all.length;i++){var t=all[i].textContent||"";if(t.length<150&&/fewer words/i.test(t)){cutEl=all[i];break}}});
+  var after=function(a){if(!cutEl)return false;try{var p=cutEl.compareDocumentPosition(a);return!!(p&4)&&!(p&16)}catch(e){return false}};
+  for(var i=0;i<links.length;i++){var a=links[i],id=idOf(a.href);if(seen[id]||after(a))continue;
+    var box=a,up=a.parentElement;
+    while(up&&up!==document.body){var ids={},n=0,L=up.querySelectorAll("a[href]");for(var j=0;j<L.length;j++){var x=idOf(L[j].href);if(x&&!ids[x]){ids[x]=1;n++;if(n>1)break}}if(n>1)break;box=up;up=up.parentElement}
+    var t=(box.innerText||box.textContent||"").replace(/\s+/g," ");
+    if(/Shop on eBay/i.test(t)||/best offer accepted/i.test(t))continue;
+    var sm=t.match(SOLD);if(!sm)continue;var pm=t.match(PRICE);if(!pm||pm[2])continue;
+    var tt=box.querySelector(".s-item__title,.s-card__title,[role=heading],h3"),nm=(tt&&tt.innerText)||"";
+    if(!nm){var LL=box.querySelectorAll("a[href]");for(var q=0;q<LL.length;q++){var s2=(LL[q].innerText||"").trim();if(s2.length>nm.length)nm=s2}}
+    nm=nm.replace(/^New listing\s*/i,"").replace(/Opens in a new window or tab/i,"").replace(/\s+/g," ").trim().slice(0,200);if(!nm)continue;
+    var po=postOf(t);seen[id]=1;out.push({id:id,n:nm,p:num(pm[1]),d:Date.parse(sm[1]),s:po==null?null:num(po)})}
+  if(out.length)return out;
+  // no item links: read the visible text, one "Sold <date>" block at a time
+  var text=roots.map(function(r){var b=r.body||r;return b.innerText||Array.prototype.map.call(r.children||[],function(c){return c.innerText||""}).join("\n")}).join("\n");
+  var cut=text.search(/Results matching fewer words|fewer words/i);if(cut>0)text=text.slice(0,cut);
+  var parts=text.split(/(?=Sold\s+\d{1,2}\s+[A-Za-z]{3}\s+\d{4})/);
+  for(var k=1;k<parts.length;k++){var blk=parts[k],sm2=blk.match(SOLD);if(!sm2)continue;
+    if(/best offer accepted/i.test(blk))continue;var pm2=blk.match(PRICE);if(!pm2||pm2[2])continue;
+    var lines=blk.split("\n").map(function(x){return x.trim()}).filter(Boolean),title="";
+    for(var z=1;z<lines.length;z++){var ln=lines[z];if(/^£|^(Pre-owned|Brand new|New|Used|Refurbished|Opened|Parts only)\b/i.test(ln))break;if(ln.length>title.length)title=ln}
+    title=title.replace(/^New listing\s*/i,"").slice(0,200);if(!title)continue;
+    var key="t"+(title+"|"+pm2[1]+"|"+sm2[1]).split("").reduce(function(h,c){return(h*31+c.charCodeAt(0))>>>0},7);
+    if(seen[key])continue;seen[key]=1;var po2=postOf(blk);
+    out.push({id:key,n:title,p:num(pm2[1]),d:Date.parse(sm2[1]),s:po2==null?null:num(po2)})}
+  return out}
+const SOLD_READ=`(${soldReader})()`;
 function soldSum(rows){const cut=Date.now()-90*864e5;rows=rows.filter(r=>!r.d||r.d>=cut);const p=rows.map(r=>r.p).filter(x=>x>0);if(!p.length)return null;
   const m=median(p),keep=p.length>=4?rows.filter(r=>r.p>=m*0.5&&r.p<=m*1.5):rows,ps=keep.map(r=>r.p).sort((a,b)=>a-b);
   const q=f=>ps[Math.min(ps.length-1,Math.floor(f*(ps.length-1)+0.5))],sh=keep.map(r=>r.s).filter(x=>x!=null),ds=keep.map(r=>r.d).filter(Boolean).sort((a,b)=>a-b);
@@ -953,13 +976,16 @@ b.style.cssText="position:fixed;left:0;right:0;bottom:0;z-index:2147483647;backg
 b.innerHTML=${JSON.stringify(`<div style="flex:1"><b style="color:#4ade80">FlipScout</b> ${sign?"eBay only shows sold prices when you're signed in. Sign in once with your email or username and keep <b>Stay signed in</b> ticked. Google, Apple and Facebook buttons may not work here. FlipScout never sees your password.":x?`read <b>${x.n} sold</b> · typical <b>${gbp(x.typical)}</b>`:"found no sold prices on this page yet"}</div>`+(x?`<button id="fs_use" style="background:linear-gradient(135deg,#10d98a,#a3e635);color:#0b1a14;border:0;border-radius:12px;padding:10px 14px;font-weight:800;font-size:15px">Use these</button>`:""))};
 var u=document.getElementById("fs_use");if(u)u.onclick=function(){var m=JSON.stringify({fs:"use"});try{cordova_iab.postMessage(m)}catch(e){try{webkit.messageHandlers.cordova_iab.postMessage(m)}catch(e2){}}}})()`;
 // read the page and its address together; never throws, so the bar always appears
-const PAGE_READ=`(function(){var u=location.href,b=!!document.getElementById("fs_bar"),l=document.querySelectorAll("a[href*='/itm/']").length,s=((document.body&&document.body.innerText||"").match(/Sold\\s+\\d{1,2}\\s+[A-Za-z]{3}\\s+\\d{4}/g)||[]).length;try{return{u:u,b:b,l:l,s:s,r:${SOLD_READ}}}catch(e){return{u:u,b:b,l:l,s:s,r:[],e:String(e)}}})()`;
+function pageDiag(){var sh=0,fr=document.querySelectorAll("iframe").length,all=document.querySelectorAll("*");for(var i=0;i<all.length;i++)if(all[i].shadowRoot)sh++;
+  var A=document.querySelectorAll("a[href]"),it=0,ex="";for(var j=0;j<A.length;j++){if(/itm/.test(A[j].href)){it++;if(!ex)ex=A[j].href.slice(0,60)}}
+  var t=document.body?document.body.innerText||"":"";return{l:it,a:A.length,s:(t.match(/Sold\s+\d{1,2}\s+[A-Za-z]{3}\s+\d{4}/g)||[]).length,sh:sh,fr:fr,ex:ex,len:t.length}}
+const PAGE_READ=`(function(){var u=location.href,b=!!document.getElementById("fs_bar"),g={};try{g=(${pageDiag})()}catch(e){}try{return{u:u,b:b,g:g,r:${SOLD_READ}}}catch(e){return{u:u,b:b,g:g,r:[],e:String(e)}}})()`;
 const isSignIn=u=>/signin\.ebay|\/signin|SignIn/i.test(u);
 // eBay's pages keep loading pictures as you scroll, so don't wait for "finished": check every few seconds while open
-const PAGE_PROBE=`(function(){return location.href+"|"+document.querySelectorAll("a[href*='/itm/']").length+"|"+(!!document.getElementById("fs_bar"))})()`;
+const PAGE_PROBE=`(function(){return location.href+"|"+document.querySelectorAll("a[href]").length+"|"+Math.round(((document.body&&document.body.innerText)||"").length/500)+"|"+(!!document.getElementById("fs_bar"))})()`;
 function iabWatch(w,tick){let busy=0,last="",lastRead=null;const run=()=>{if(busy&&Date.now()-busy<8000)return;busy=Date.now();
   w.executeScript({code:PAGE_PROBE},p=>{const k=String((p&&p[0])||"");if(k&&k===last&&lastRead){busy=0;return}
-   w.executeScript({code:PAGE_READ},r=>{busy=0;const x=(r&&r[0])||{};last=k;lastRead=x;window.FSDIAG=`saw ${x.l||0} listing links, ${x.s||0} sold dates${x.e?", error: "+x.e:""}`;tick(String(x.u||""),x.r||[],!!x.b)})})};
+   w.executeScript({code:PAGE_READ},r=>{busy=0;const x=(r&&r[0])||{};last=k;lastRead=x;const g=x.g||{};window.FSDIAG=`${g.l||0} item links of ${g.a||0}, ${g.s||0} sold dates, ${g.sh||0} sealed, ${g.fr||0} frames, ${g.len||0} chars${g.ex?", e.g. "+g.ex:""}${x.e?", error: "+x.e:""}`;tick(String(x.u||""),x.r||[],!!x.b)})})};
   w.addEventListener("loadstop",run);const t=setInterval(run,3000);w.addEventListener("exit",()=>clearInterval(t));setTimeout(run,1500)}
 function soldCheck(L){BK.cur=L;const IAB=window.cordova&&window.cordova.InAppBrowser,url=soldUrl(L);
   if(!IAB){window.open(url,"_blank");setTimeout(()=>{BK.mode="sold";priceSheet()},300);return}

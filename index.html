@@ -691,8 +691,10 @@ function dealCard(d,i){
    :`<div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:8px"><div class="stat ok" style="font-size:22px">${d.type==="AUC"?"Bid up to "+gbp(d.maxBid):"+"+gbp(d.profit)+" profit"}</div><div class="mu">${d.type==="AUC"?`${gbp(d.price)} bid + ${gbp(d.ship)} post`:gbp(d.cost)+" now"} · worth ${gbp(d.med)}</div></div>`}
   ${d.tags&&d.tags.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${d.tags.map(t=>`<span class="chip">${esc(t)}</span>`).join("")}</div>`:""}
   </div>`}
-const FILTERS=[["all","All"],["bin","Buy It Now"],["auc","Auctions"],["mis","Misspelt"],["spares","Spares"]];
-function fDeals(){const L=HD.deals||[];return{all:L.filter(d=>d.kind!=="spares"),bin:L.filter(d=>d.kind!=="spares"&&d.type==="BIN"),auc:L.filter(d=>d.kind!=="spares"&&d.type==="AUC"),mis:L.filter(d=>(d.tags||[]).includes("Misspelt title")),spares:L.filter(d=>d.kind==="spares")}}
+const FILTERS=[["all","All"],["bin","Buy It Now"],["auc","Auctions"],["mis","Misspelt"],["spares","Spares"],["guess","Guesses"]];
+// Deals priced only from asking prices (what sellers want, not what things sold for) are kept apart as "Guesses"
+const isGuess=d=>d.kind!=="spares"&&d.src==="asking";
+function fDeals(){const A=HD.deals||[],L=A.filter(d=>!isGuess(d));return{all:L.filter(d=>d.kind!=="spares"),bin:L.filter(d=>d.kind!=="spares"&&d.type==="BIN"),auc:L.filter(d=>d.kind!=="spares"&&d.type==="AUC"),mis:L.filter(d=>(d.tags||[]).includes("Misspelt title")),spares:L.filter(d=>d.kind==="spares"),guess:A.filter(isGuess)}}
 function vHunt(){
   const h=H();
   if(!connected())return`<h2>Today's deals</h2><div class="card empty">${I.bolt}<b>Connect your Scan service</b><div class="mu">FlipScout hunts eBay for you around the clock. Paste your setup code in Settings › Advanced to start.</div><button onclick="go('settings')">Open Settings</button></div>`;
@@ -706,7 +708,8 @@ function vHunt(){
    <div class="card" style="margin:0;padding:10px 12px"><div class="mu">Deals</div><div class="stat">${F2.all.length}</div></div>
    <div class="card" style="margin:0;padding:10px 12px"><div class="mu">Strong deals</div><div class="stat ok">${high}</div></div>
    <div class="card" style="margin:0;padding:10px 12px"><div class="mu">Buy It Now profit</div><div class="stat">${gbp(pot).replace(".00","")}</div></div></div>
-  <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;margin-bottom:6px">${FILTERS.filter(f=>f[0]!=="spares"||h.types.spares).map(f=>`<button class="${HD.filter===f[0]?"":"s"}" style="margin:0;min-height:40px;padding:6px 14px;border-radius:99px;white-space:nowrap;flex:none" onclick="HD.filter='${f[0]}';render()">${f[1]} ${F2[f[0]].length}</button>`).join("")}</div>
+  <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;margin-bottom:6px">${FILTERS.filter(f=>(f[0]!=="spares"||h.types.spares)&&(f[0]!=="guess"||F2.guess.length)).map(f=>`<button class="${HD.filter===f[0]?"":"s"}" style="margin:0;min-height:40px;padding:6px 14px;border-radius:99px;white-space:nowrap;flex:none" onclick="HD.filter='${f[0]}';render()">${f[1]} ${F2[f[0]].length}</button>`).join("")}</div>
+  ${HD.filter==="guess"?`<div class="hint" style="margin:0 4px 10px">Guesses are priced from what sellers are <b>asking</b>, not what things actually sold for. Check sold prices before buying. No alerts for these.</div>`:""}
   ${rep.hidden?`<div class="hint" style="margin:0 4px 10px">🛡 Scam shield hid ${rep.hidden} risky listing${rep.hidden>1?"s":""} last check.</div>`:""}
   ${HD.deals===null?`<div class="card mu">Loading deals…</div>`:list.length?list.map(d=>dealCard(d,(HD.deals||[]).indexOf(d))).join("")
    :`<div class="card empty">${I.bolt}<b>No deals right now</b><div class="mu">Real bargains are rare, so FlipScout only shows ones backed by real sold prices. It keeps checking and alerts you when one turns up.</div>${whyLine(rep)}<button class="s" onclick="go('cats')">My categories</button></div>`}

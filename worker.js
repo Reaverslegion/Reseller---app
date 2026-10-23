@@ -206,10 +206,15 @@ function phoneKey(t) {
   return { key: "phone:" + model + (st ? " " + st : ""), label: model.replace(/\b\w/g, (c) => c.toUpperCase()).replace("Iphone", "iPhone") + (st ? " " + stLabel(st) : ""), match: st ? 0.9 : 0.7 };
 }
 const NOT_CONSOLE = /\b(portal|remote play|vr2?|psvr2?|camera|headset|pulse|dualsense edge|charging station|disc drive|drive only|media remote|cover plates?|vertical stand|cooling|games?|game bundle only|steelbook|amiibo|gift card|voucher|membership|subscription|ps plus|game pass)\b/i;
+const CON_ACC = /\b(controllers?|joy[- ]?cons?|gamepads?|dualsense|dualshock|grips?|docks?|charg(?:er|ers|ing)|cables?|cases?|covers?|skins?|stands?|headsets?|faceplates?|shells?|screen protectors?|tempered glass|memory cards?|sd cards?|carry(?:ing)? (?:bag|case)|power (?:supply|adapter)|psu|fans?|cooling|replacement|thumb ?sticks?|joysticks?|buttons?)\b/i;
+const CON_YES = /\b(console|system|handheld|bundle|with|inc|includes?|including|boxed|complete|\+)(?=\W|$)/i;
+const CON_BARE = /\b(console only|tablet only|unit only|handheld only|screen only|system only|main unit|no (?:joy[- ]?cons?|controllers?|pads?|dock|charger|cables?|leads?|power (?:lead|cable|supply))|without (?:joy[- ]?cons?|controllers?|pads?|dock|charger|cables?|leads?))\b/i;
 function consoleKey(t) {
   if (NOT_CONSOLE.test(t) && !/\b(console|with|\+|inc|includes?|bundle)\b/i.test(t.replace(NOT_CONSOLE, ""))) return null;
   if (/\b(portal|remote play|psvr|vr2|disc drive|drive only)\b/i.test(t)) return null;
-  if (ACCESSORY.test(t) || (/\b(game|games only|disc only|controller|dualsense|dualshock|joy-?cons?|headset|pro controller|faceplate|shell)\b/i.test(t) && !/\b(console|with|\+|inc|includes?|bundle)\b/i.test(t))) return null;
+  // accessories on their own (controllers, docks, cases...) are not consoles; a console listing that mentions them is fine
+  if (CON_ACC.test(t) && !CON_YES.test(t)) return null;
+  if (/\b(lcd|screen replacement|motherboard|housing|shell|faceplate|for parts)\b/i.test(t)) return null;
   const l = t.toLowerCase(); let m, k = null;
   if ((m = l.match(/\b(ps5|playstation\s*5)\b/))) k = "ps5 " + (/\bpro\b/.test(l) ? "pro" : /digital/.test(l) ? "digital" : "disc") + (/\bslim\b/.test(l) ? " slim" : "");
   else if ((m = l.match(/\b(ps4|playstation\s*4)\b/))) k = "ps4" + (/\bpro\b/.test(l) ? " pro" : /\bslim\b/.test(l) ? " slim" : "");
@@ -218,7 +223,10 @@ function consoleKey(t) {
   else if ((m = l.match(/\bnintendo\s*switch\b|\bswitch\s*(oled|lite)\b/))) k = "switch" + (/\boled\b/.test(l) ? " oled" : /\blite\b/.test(l) ? " lite" : /\bswitch\s*2\b/.test(l) ? " 2" : "");
   else if ((m = l.match(/\bsteam\s*deck\b/))) k = "steam deck" + (/\boled\b/.test(l) ? " oled" : "") + ((m = l.match(/\b(64|256|512)\s*gb\b/)) ? " " + m[1] : "") + (/\b1\s*tb\b/.test(l) ? " 1tb" : "");
   if (!k) return null;
-  return { key: "con:" + k, label: k.replace(/\b\w/g, (c) => c.toUpperCase()).replace(/^Ps/, "PS").replace("Oled", "OLED"), match: 0.9 };
+  // "console only", "no controller" etc. sell for less than a complete set, so they're compared with each other
+  const bare = CON_BARE.test(t);
+  const label = k.replace(/\b\w/g, (c) => c.toUpperCase()).replace(/^Ps/, "PS").replace("Oled", "OLED") + (bare ? " (not complete)" : "");
+  return { key: "con:" + k + (bare ? " bare" : ""), label, match: 0.9 };
 }
 function tabletKey(t) {
   if (ACCESSORY.test(t)) return null;
@@ -279,7 +287,13 @@ function groupOf(it, cat, catName, bucket) {
   const lapCat = /laptop|netbook|notebook/i.test(catName || "") || cat === "177" || cat === "111422";
   let g = null;
   if (lapCat || LAPTOP_RE.test(title)) g = laptopKey(title);
-  if (!g && !lapCat) g = gpuKey(title) || phoneKey(title) || consoleKey(title) || tabletKey(title) || cpuKey(title, catName) || ramKey(title, catName) || storageKey(title, catName) || monitorKey(title, catName);
+  // each spec group only applies in a category where that kind of item belongs (sellers mis-file things)
+  const cn = catName || "", fits = (re) => !cn || re.test(cn);
+  if (!g && !lapCat) g = (fits(/graphic|video card|gpu|component|computer/i) && gpuKey(title))
+    || (fits(/phone|mobile/i) && phoneKey(title))
+    || (fits(/console|video game|gaming|handheld/i) && consoleKey(title))
+    || (fits(/tablet|ipad|e-?book/i) && tabletKey(title))
+    || cpuKey(title, catName) || ramKey(title, catName) || storageKey(title, catName) || monitorKey(title, catName) || null;
   if (g) return { key: g.key + "|" + bucket, label: g.label, match: g.match };
   if (it.epid) return { key: "e" + it.epid + "|" + bucket, label: "Same eBay product", match: 1 };
   const s = sig(title);
@@ -448,6 +462,19 @@ async function sweep(env, manual) {
       D.prepare(`UPDATE listings SET pkey=NULL, data=NULL WHERE ${bad}`),
     ]);
     await kvSet(env, "fix1", true);
+  }
+  // 0c. one-off: re-file console sales/listings under the new rules (accessories out, "console only" separate)
+  if (!(await kvGet(env, "fix2", false))) {
+    const rows = await D.prepare("SELECT id, cat, title, cond FROM listings WHERE pkey LIKE 'con:%'").all();
+    const up = [];
+    for (const r0 of rows.results || []) {
+      const g = groupOf({ title: r0.title }, r0.cat, "Video Game Consoles", r0.cond || "used");
+      const nk = g ? g.key : null;
+      up.push(D.prepare("UPDATE listings SET pkey=? WHERE id=?").bind(nk, r0.id), D.prepare("UPDATE sales SET pkey=? WHERE id=?").bind(nk, r0.id));
+    }
+    for (let i = 0; i < up.length; i += 100) await D.batch(up.slice(i, i + 100));
+    await D.prepare("DELETE FROM deals WHERE data LIKE '%\"pkey\":\"con:%'").run();
+    await kvSet(env, "fix2", true);
   }
   // 1. auctions that have ended become sold prices (only if they had bids)
   // (the free database allows 5 million rows read a day, so every query here must use an index)

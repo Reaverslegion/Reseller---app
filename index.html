@@ -24,6 +24,11 @@ body{margin:0;color:var(--tx);font:16px/1.45 system-ui,-apple-system,"Segoe UI",
 header{display:flex;align-items:center;gap:10px;padding:14px 16px 8px;max-width:680px;margin:auto}
 /* light mode: navy brand bar behind the logo (the logo's colours are made for navy) */
 .brandbar{background:var(--brandbar,transparent)}
+#pick{position:fixed;inset:0;z-index:60}.pk-bg{position:absolute;inset:0;background:rgba(5,10,25,.55)}
+.pk{position:absolute;left:0;right:0;bottom:0;max-height:72vh;display:flex;flex-direction:column;background:var(--card);color:var(--tx);border-radius:22px 22px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.35);padding:14px 12px calc(12px + env(safe-area-inset-bottom))}
+.pk-h{font-weight:800;font-size:17px;padding:4px 8px 10px}.pk-l{overflow:auto}
+.pk-o{display:flex;width:100%;justify-content:space-between;align-items:center;gap:10px;margin:0 0 4px;min-height:52px;padding:10px 14px;border-radius:14px;background:none;border:0;color:var(--tx);font:inherit;font-size:16px;font-weight:600;text-align:left}
+.pk-o:hover{background:var(--card2)}.pk-o.on{background:var(--acbg);color:var(--ac)}.pk-o b{color:var(--ac)}
 :root{--brandbar:#0D172C;--brandtx:#ffffff}
 :root[data-theme=dark]{--brandbar:transparent;--brandtx:var(--tx)}
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--brandbar:transparent;--brandtx:var(--tx)}}
@@ -114,7 +119,7 @@ a{color:inherit;text-decoration:none}
 <nav id="nav"></nav>
 <div id="toast"><span id="tmsg"></span><button id="tbtn"></button></div>
 <div id="ov" onclick="closeSheet()"></div>
-<div id="sheet"></div>
+<div id="sheet"></div><div id="pick" style="display:none"></div>
 <div id="onb"></div>
 <script>
 const KEY="resell_helper_v1",DKEY="flipscout_draft",OKEY="flipscout_seen_v2",VER="2.0";
@@ -297,9 +302,23 @@ function vAdmin(){if(!S.set.admin)return`<div class="card">Admin tools are off.<
    <div class="hint">Take it steady: a few pages, then a break.</div></div>
   <div class="card"><b>Fill any eBay category</b><div class="mu">Pick it like on eBay, down to the most specific one you can, then tap Fill.</div><div id="catbox_a" style="margin-top:10px"></div>
    <div class="hint">Phones, graphics cards, consoles, laptops and the other popular kinds are sorted model by model. Anything else is grouped by matching titles, which is rougher, so the most specific category gives the best prices.</div></div>`:`<div class="card">Connect your Scan service first.</div>`}`}
+/* ---------- themed picker for every drop-down (the phone's own list is grey and ignores the app theme) ---------- */
+let pickOn=null;
+function pickFor(sel){const lab=(sel.labels&&sel.labels[0]&&sel.labels[0].textContent)||sel.getAttribute("aria-label")||"Choose";pickOn=sel;
+  const o=$("pick");o.innerHTML=`<div class="pk-bg" onclick="pickClose()"></div><div class="pk" role="listbox" aria-label="${esc(lab)}"><div class="pk-h">${esc(lab)}</div><div class="pk-l">${[...sel.options].map((op,i)=>`<button class="pk-o${op.selected?" on":""}" role="option" aria-selected="${op.selected}" onclick="pickSet(${i})"><span>${esc(op.textContent)}</span>${op.selected?"<b>✓</b>":""}</button>`).join("")}</div></div>`;
+  o.style.display="block";const on=o.querySelector(".pk-o.on");if(on)on.scrollIntoView({block:"center"})}
+function pickSet(i){const s=pickOn;pickClose();if(!s)return;if(s.selectedIndex!==i){s.selectedIndex=i;s.dispatchEvent(new Event("change",{bubbles:true}))}}
+function pickClose(){$("pick").style.display="none";$("pick").innerHTML="";pickOn=null}
+(function(){let tx=0,ty=0,moved=false;const sel=e=>e.target&&e.target.closest&&e.target.closest("select:not([disabled]):not([multiple])");
+  document.addEventListener("touchstart",e=>{const t=e.touches[0];tx=t.clientX;ty=t.clientY;moved=false},{passive:true,capture:true});
+  document.addEventListener("touchmove",e=>{const t=e.touches[0];if(Math.abs(t.clientX-tx)+Math.abs(t.clientY-ty)>10)moved=true},{passive:true,capture:true});
+  document.addEventListener("touchend",e=>{const s=sel(e);if(!s)return;e.preventDefault();if(!moved){s.blur();pickFor(s)}},{capture:true});
+  document.addEventListener("mousedown",e=>{const s=sel(e);if(!s)return;e.preventDefault();s.blur();pickFor(s)},true);
+  document.addEventListener("keydown",e=>{const s=sel(e);if(s&&(e.key==="Enter"||e.key===" ")){e.preventDefault();pickFor(s)}},true)})();
 function goConnect(){go("settings");setTimeout(()=>{const a=$("adv");if(a){a.open=true;a.scrollIntoView({behavior:"smooth",block:"start"})}},60)}
 function go(t){if(t===tab)return;prev.push(tab);if(prev.length>20)prev.shift();tab=t;render()}
 function onBack(){
+  if(pickOn){pickClose();return true}
   if(sheetOn){closeSheet();return true}
   if($("onb").style.display==="flex"){if(ob>0){ob--;renderOnb()}return true}
   if(prev.length){tab=prev.pop();render();return true}
@@ -692,7 +711,7 @@ function vScan(){
 
 /* ---------- HUNTING (Today's Deals, Following, My categories, alerts) ---------- */
 const HDEF={cats:[],types:{bin:true,auction:true,misspelt:true,spares:false},alerts:false,interval:10,alertScore:70,minScore:40,post:5,pack:1,bpf:true,paused:false};
-let HD={cat:(()=>{try{return localStorage.getItem("flipscout_dcat")||""}catch(e){return""}})(),deals:null,report:null,learned:[],busy:false,err:"",filter:"all",at:0,q:"",sort:(()=>{try{return localStorage.getItem("flipscout_sort")||"score"}catch(e){return"score"}})()},FL={list:null,busy:false,err:""},DV=null;
+let HD={cat:(()=>{try{const v=localStorage.getItem("flipscout_dcat")||"";return/^\d+$/.test(v)?v:""}catch(e){return""}})(),deals:null,report:null,learned:[],busy:false,err:"",filter:"all",at:0,q:"",sort:(()=>{try{return localStorage.getItem("flipscout_sort")||"score"}catch(e){return"score"}})()},FL={list:null,busy:false,err:""},DV=null;
 const H=()=>{S.hunt={...HDEF,...(S.hunt||{}),types:{...HDEF.types,...((S.hunt||{}).types||{})}};return S.hunt};
 const api=(q,body)=>fetch(`${S.set.url}?key=${encodeURIComponent(S.set.key)}&${q}`,body!==undefined?{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(body)}:{}).then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok||d.error)throw new Error(d.error||("error "+r.status));return d});
 const errText=e=>e.message==="Failed to fetch"?"no connection":e.message;
@@ -767,7 +786,7 @@ const FILTERS=[["all","All"],["bin","Buy It Now"],["auc","Auctions"],["mis","Mis
 let HIDE=(()=>{try{return JSON.parse(localStorage.getItem("flipscout_hidden")||"[]")}catch(e){return[]}})();
 function hideDeal(id){HIDE=[id,...HIDE.filter(x=>x!==id)].slice(0,500);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}render();toast("Hidden.","Undo",()=>{HIDE=HIDE.filter(x=>x!==id);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}render()})}
 const isGuess=d=>d.kind!=="spares"&&d.src==="asking";
-function fDeals(){const A=(HD.deals||[]).filter(d=>!HIDE.includes(d.id)&&(!HD.cat||d.catName===HD.cat)),L=A.filter(d=>!isGuess(d));return{all:L.filter(d=>d.kind!=="spares"),bin:L.filter(d=>d.kind!=="spares"&&d.type==="BIN"),auc:L.filter(d=>d.kind!=="spares"&&d.type==="AUC"),mis:L.filter(d=>(d.tags||[]).includes("Misspelt title")),spares:L.filter(d=>d.kind==="spares"),guess:A.filter(isGuess)}}
+function fDeals(){const A=(HD.deals||[]).filter(d=>!HIDE.includes(d.id)&&(!HD.cat||String(d.cat)===HD.cat)),L=A.filter(d=>!isGuess(d));return{all:L.filter(d=>d.kind!=="spares"),bin:L.filter(d=>d.kind!=="spares"&&d.type==="BIN"),auc:L.filter(d=>d.kind!=="spares"&&d.type==="AUC"),mis:L.filter(d=>(d.tags||[]).includes("Misspelt title")),spares:L.filter(d=>d.kind==="spares"),guess:A.filter(isGuess)}}
 function vHunt(){
   const h=H();
   if(!connected())return`<h2>Today's deals</h2><div class="card empty">${I.bolt}<b>Connect your Scan service</b><div class="mu">FlipScout hunts eBay for you around the clock. Paste your setup code to start.</div><button onclick="goConnect()">Connect now</button></div>`;
@@ -783,7 +802,9 @@ function vHunt(){
    <div class="card" style="margin:0;padding:10px 12px"><div class="mu">Best profit</div><div class="stat ok">${gbp(top).replace(".00","")}</div></div></div>
   <div style="position:relative;margin-bottom:6px"><div id="chips" onscroll="const e=this,h=$('chipsmore');if(h)h.style.opacity=e.scrollLeft+e.clientWidth>=e.scrollWidth-4?0:1" style="display:flex;gap:8px;overflow-x:auto;padding:0 28px 6px 0">${FILTERS.filter(f=>(f[0]!=="spares"||h.types.spares)&&(f[0]!=="guess"||F2.guess.length)).map(f=>`<button class="${HD.filter===f[0]?"":"s"}" style="margin:0;min-height:40px;padding:6px 14px;border-radius:99px;white-space:nowrap;flex:none" onclick="HD.filter='${f[0]}';render()">${f[1]} ${F2[f[0]].length}</button>`).join("")}</div><div id="chipsmore" aria-hidden="true" style="position:absolute;right:0;top:0;bottom:6px;width:44px;pointer-events:none;background:linear-gradient(90deg,transparent,var(--bg) 70%);display:flex;align-items:center;justify-content:flex-end;color:var(--mu);font-size:22px;font-weight:700;transition:opacity .2s">›</div></div>
   ${(HD.deals||[]).length?`<div style="margin:4px 0 10px"><div><label for="dq" style="margin:0 0 4px">Search deals</label><input id="dq" type="search" enterkeyhint="search" placeholder="e.g. switch, rtx" value="${esc(HD.q)}" oninput="HD.q=this.value;clearTimeout(window._dqT);window._dqT=setTimeout(()=>{render();const e=$('dq');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length)}},250)"></div>
-   <div style="display:flex;gap:8px;margin-top:8px"><div style="flex:1;min-width:0"><label for="dc" style="margin:0 0 4px">Category</label><select id="dc" onchange="setDcat(this.value)"><option value="">All categories</option>${(()=>{const m={};(HD.deals||[]).filter(d=>!HIDE.includes(d.id)&&d.catName).forEach(d=>m[d.catName]=(m[d.catName]||0)+1);if(HD.cat&&!m[HD.cat])m[HD.cat]=0;return Object.keys(m).sort().map(c=>`<option value="${esc(c)}"${HD.cat===c?" selected":""}>${esc(c)} (${m[c]})</option>`).join("")})()}</select></div>
+   <div style="display:flex;gap:8px;margin-top:8px"><div style="flex:1;min-width:0"><label for="dc" style="margin:0 0 4px">Category</label><select id="dc" onchange="setDcat(this.value)"><option value="">All categories (${(HD.deals||[]).filter(d=>!HIDE.includes(d.id)).length})</option>${(()=>{const m={},nm={};(HD.deals||[]).filter(d=>!HIDE.includes(d.id)).forEach(d=>{const k=String(d.cat||"");if(!k)return;m[k]=(m[k]||0)+1;nm[k]=nm[k]||d.catName||"Other"});
+     const L=H().cats.map(c=>[String(c.id),c.name]);Object.keys(m).forEach(k=>{if(!L.some(x=>x[0]===k))L.push([k,nm[k]])});
+     return L.map(([k,n])=>`<option value="${esc(k)}"${HD.cat===k?" selected":""}>${esc(n)} (${m[k]||0})</option>`).join("")})()}</select></div>
    <div style="flex:1;min-width:0"><label for="ds" style="margin:0 0 4px">Sort by</label><select id="ds" onchange="setSort(this.value)">${SORTS.map(([k,l])=>`<option value="${k}"${HD.sort===k?" selected":""}>${l}</option>`).join("")}</select></div></div></div>
    ${qq?`<div class="hint" style="margin:0 4px 10px" role="status">Showing ${list.length} of ${base.length} for “${esc(HD.q)}” · <button class="link" style="margin:0;min-height:0;padding:0" onclick="HD.q='';render()">Clear</button></div>`:""}`:""}
   ${HD.filter==="guess"?`<div class="hint" style="margin:0 4px 10px">Guesses are priced from what sellers are <b>asking</b>, not what things actually sold for. Check sold prices before buying. No alerts for these.</div>`:""}

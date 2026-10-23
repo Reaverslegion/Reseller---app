@@ -443,6 +443,13 @@ async function fillPrices(env, b) {
   return { read: rows.length, fresh, models: groups.size, saved: saved.length, few, kept, top: saved.slice(0, 40) };
 }
 
+// the sold-price search FlipScout opens for a listing's product (Check sold prices)
+function lookInfo(s, alt) {
+  if (!s.pkey || s.bucket === "parts") return null;
+  const q = lookupQ(s.title, s.pkey);
+  return { key: s.pkey, label: bookLabel(s.matchLabel, s.title, s.pkey), q, url: lookupUrl(q), expect: alt ? Math.round(alt.med) : null };
+}
+
 /* ---------------- what the hunter avoids ---------------- */
 const RISK_WORDS = /\b(box only|empty box|read desc|read description|see desc|see description|please read|photo of|picture of|image of|replica|fake|not genuine|dummy|display only|case only|cover only|manual only|cable only|stand only|bundle only|no console|card only|for parts|spares|repairs?|faulty|broken|cracked|not working|untested|bios lock|icloud|activation lock|locked|blacklisted|no power|water damage|liquid damage)\b/i;
 const SCAM_WORDS = /\b(read desc|read description|photo of|picture of|image of|empty box|box only|replica|fake|not genuine|contact me|message me before|whatsapp|bank transfer)\b/i;

@@ -723,7 +723,7 @@ function pushConfig(now){clearTimeout(pcT);const go_=async()=>{if(!connected())r
   catch(e){toast("Couldn't save hunting settings: "+errText(e))}};
   if(now)return go_();pcT=setTimeout(go_,800)}
 async function loadDeals(){if(!connected()||HD.busy)return;HD.busy=true;HD.err="";
-  try{const d=await api("deals=1");HD.deals=d.deals||[];HD.report=d.report;HD.learned=d.learned||[];HD.close=d.close||[];HD.learning=d.learning||null;HD.at=Date.now()}catch(e){HD.err=errText(e)}
+  try{const d=await api("deals=1");HD.deals=d.deals||[];HD.report=d.report;HD.learned=d.learned||[];HD.close=d.close||[];HD.aucLearn=d.aucLearn||{};HD.learning=d.learning||null;HD.at=Date.now()}catch(e){HD.err=errText(e)}
   HD.busy=false;if(tab==="deals"||tab==="cats")render()}
 async function huntNow(){if(HD.busy)return;if(!H().cats.length){go("cats");toast("Pick some categories first.");return}
   HD.busy=true;render();
@@ -751,11 +751,12 @@ function priceRow(d){
 function shownProfit(d){return d.type==="AUC"&&d.profitAtMax!=null?d.profitAtMax:d.profit}
 function retPct(d){const auc=d.type==="AUC",item=auc?(d.maxItem!=null?d.maxItem:d.maxBid):d.price,pay=(item||0)+(d.ship||0)+(H().bpf?bpfA(item||0):0)+(+H().pack||0);return pay>0?Math.round(shownProfit(d)/pay*100):null}
 // Where the "sells for" figure comes from, in a few words
-function evShort(d){return d.src==="book"?"from your saved prices":d.src==="sold"?`${d.n} sale${d.n===1?"":"s"} in 30 days`:`${d.n} asking prices, no sales yet`}
+function evShort(d){return d.src==="book"?(d.fill?`from ${d.bookN?d.bookN+" sales":"your category check"}${d.rangeLo!=null?` (most £${d.rangeLo}–£${d.rangeHi})`:""}`:"from sold prices you checked"):d.src==="sold"?`${d.n} sale${d.n===1?"":"s"} in 30 days`:`${d.n} asking prices, no sales yet`}
 // Likely final price of an auction: bids usually climb towards what these sell for, less so when it ends soon with few bids.
 // A simple estimate for now; it gets better as FlipScout records more finished auctions.
 function likelyEnd(d){if(d.type!=="AUC")return null;const mins=Math.max(0,((d.end||0)-Date.now())/60000),target=Math.max(d.price,(d.med||0)*0.88-(d.ship||0));
-  const w=mins>1440?0.9:mins>120?0.8:mins>30?(d.bids>2?0.7:0.55):(d.bids>2?0.5:0.3);return Math.round((d.price+(target-d.price)*w)*100)/100}
+  const b=(mins>1440?"d":mins>120?"h":mins>30?"m":"s")+(d.bids>2?"+":"-"),L=(HD.aucLearn||{})[b];
+  const w=L&&L.n>=8?Math.max(0,Math.min(1.5,L.s/L.n)):mins>1440?0.9:mins>120?0.8:mins>30?(d.bids>2?0.7:0.55):(d.bids>2?0.5:0.3);return Math.round((d.price+(target-d.price)*w)*100)/100}
 function likelyProfit(d){if(d.type!=="AUC")return shownProfit(d);const it=likelyEnd(d),bf=H().bpf?bpfA(it):0;return Math.round((d.med-(d.sellFee||0)-(d.out||0)-(it+(d.ship||0)+bf))*100)/100}
 // how soon you need to act: auctions ending soon, Buy It Now listings that just appeared
 function urgency(d){const now=Date.now();if(d.type==="AUC"&&d.end){const m=(d.end-now)/60000;return m<30?1.6:m<120?1.35:m<720?1.1:1}
@@ -777,12 +778,13 @@ const TAGS={"New listing":["Just listed","Listed in the last hour, so few people
  "Best Offer":["Best Offer","The seller accepts offers, so you may get it for less."],
  "Price not confirmed by sales":["Guess – no sales yet","FlipScout hasn't seen enough of these sell, so this price is a guess based on what sellers are asking. Tap Check sold prices to be sure."],
  "Price from price book":["✓ You checked this price","The sells-for price comes from eBay sold prices you checked and saved."],
+ "Special version":["Special version – check prices","Water-cooled, blower, low-profile, mini, OEM and similar versions can sell for more or less than the standard model. Check sold prices for this exact version before buying."],
  "Price from category check":["✓ From your category check","The sells-for price comes from recent eBay sales collected when you filled prices for this category."],
  "Slow seller":["Slow to sell","These don't sell often, so it may take a while to resell."],
  "Prices falling":["Prices dropping","Sold prices for this have been going down lately."]};
 const tagOf=t=>TAGS[t]||(/^Ships from /.test(t)?[t,"The item is posted from outside the UK, so delivery may be slow and you may pay import charges."]:[t,""]);
 function tagSheet(t){const[l,m]=tagOf(t);openSheet(`<h2 style="margin-top:0">${esc(l)}</h2><div style="font-size:16px">${esc(m)}</div><div class="btns"><button onclick="closeSheet()">Got it</button></div>`)}
-const tagChips=tg=>tg.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${tg.map(t=>`<button class="chip${/^Price from (price book|category check)$/.test(t)?" ok":/^Price not|^Prices falling|^Slow|^Ships/.test(t)?" warn":""}" style="margin:0;min-height:32px;cursor:pointer" onclick="event.stopPropagation();tagSheet(${esc(JSON.stringify(t))})">${esc(tagOf(t)[0])} ⓘ</button>`).join("")}</div>`:"";
+const tagChips=tg=>tg.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${tg.map(t=>`<button class="chip${/^Price from (price book|category check)$/.test(t)?" ok":/^Price not|^Prices falling|^Slow|^Ships|^Special/.test(t)?" warn":""}" style="margin:0;min-height:32px;cursor:pointer" onclick="event.stopPropagation();tagSheet(${esc(JSON.stringify(t))})">${esc(tagOf(t)[0])} ⓘ</button>`).join("")}</div>`:"";
 function dealCard(d,i){
   const sp=d.kind==="spares";
   return`<div class="card" style="cursor:pointer" onclick="openDeal(${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openDeal(${i})}" role="button" tabindex="0" aria-label="${esc(d.title)}">
@@ -790,7 +792,7 @@ function dealCard(d,i){
   <div style="display:flex;gap:12px;margin-top:10px">${d.img?`<img src="${esc(d.img)}" alt="" style="width:72px;height:72px;object-fit:cover;border-radius:12px;flex:none;background:var(--card2)" loading="lazy">`:""}
    <div style="min-width:0"><div style="font-weight:700;line-height:1.3">${esc(d.title)}</div><div class="mu">${[d.cond,d.catName].filter(Boolean).map(esc).join(" · ")}</div>${d.matchLabel?`<div class="mu" style="margin-top:2px">vs ${esc(d.matchLabel)}</div>`:""}</div></div>
   ${sp?`<div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:8px"><div class="stat">${pp(d)}</div><div class="mu">working ones sell for ${gbp(d.workMed)}</div></div>`
-   :priceRow(d)+(d.type==="AUC"?`<div style="margin-top:8px;font-size:var(--fs-meta)"><span class="mu">Likely to end around</span> <b class="num-t">${gbp(likelyEnd(d))}</b> <span class="mu">· profit then about</span> <b class="${likelyProfit(d)>=0?"ok":"bad"} num-t">${likelyProfit(d)>=0?"+":"−"}${gbp(Math.abs(likelyProfit(d)))}</b>${likelyEnd(d)>(d.maxItem!=null?d.maxItem:d.maxBid)?' <span class="warn">· may go over your max</span>':""}</div>`:"")+`<div class="mu" style="margin-top:8px;font-size:var(--fs-meta)">Sells for about <b class="num-t">${gbp(d.med)}</b> (estimate) · ${evShort(d)}${retPct(d)!=null?` · <b class="num-t">${retPct(d)}%</b> return`:""}</div>`}
+   :priceRow(d)+(d.type==="AUC"?`<div style="margin-top:8px;font-size:var(--fs-meta)"><span class="mu">Likely to end around</span> <b class="num-t">${gbp(likelyEnd(d))}</b> <span class="mu">· profit then about</span> <b class="${likelyProfit(d)>=0?"ok":"bad"} num-t">${likelyProfit(d)>=0?"+":"−"}${gbp(Math.abs(likelyProfit(d)))}</b>${likelyEnd(d)>(d.maxItem!=null?d.maxItem:d.maxBid)?` <span class="warn">· may go over your safe max (${gbp(d.maxItem!=null?d.maxItem:d.maxBid)})</span>`:""}</div>`:"")+`<div class="mu" style="margin-top:8px;font-size:var(--fs-meta)">Sells for about <b class="num-t">${gbp(d.med)}</b> (estimate) · ${evShort(d)}${retPct(d)!=null?` · <b class="num-t">${retPct(d)}%</b> return`:""}</div>`}
   ${(()=>{const tg=(d.tags||[]).filter(t=>!/^\d+ bids?$|^No bids yet$/.test(t));return tagChips(tg)})()}
   <div style="display:flex;gap:8px;margin-top:10px">${!sp&&d.look?`<button class="s" style="margin:0;flex:1" onclick="event.stopPropagation();lookUp(${esc(JSON.stringify(d.look))})">Check sold prices</button>`:""}<button class="s" style="margin:0;${!sp&&d.look?"flex:none":"flex:1"}" onclick="event.stopPropagation();hideDeal(${esc(JSON.stringify(d.id))})" aria-label="Hide this deal">Hide</button></div>
   </div>`}
@@ -904,7 +906,7 @@ function moneyLines(d){
 // One panel answering "can I trust this?": plain checks, the score, and a way to confirm the price
 function trustCard(d){const p=d.parts||{},sel=d.seller||{},v=k=>p[k]!=null?+p[k]:null;
   const mark=x=>x==null?`<span class="mu" style="width:22px;flex:none">•</span>`:x>=0.7?`<span class="ok" style="width:22px;flex:none;font-weight:800">✓</span>`:x>=0.4?`<span class="warn" style="width:22px;flex:none;font-weight:800">!</span>`:`<span class="bad" style="width:22px;flex:none;font-weight:800">✕</span>`;
-  const srcTxt=d.src==="book"?`from sold prices you checked ${ago(d.bookAt||d.lastAt)}`:d.src==="sold"?`from ${d.n} sales in the last 30 days`:`a guess from ${d.n} asking prices – no sales yet`;
+  const srcTxt=d.src==="book"?(d.fill?`from ${d.bookN?d.bookN+" recent sales":"recent sales"} in your category check, ${ago(d.bookAt||d.lastAt)}`:`from sold prices you checked ${ago(d.bookAt||d.lastAt)}`):d.src==="sold"?`from ${d.n} sales in the last 30 days`:`a guess from ${d.n} asking prices – no sales yet`;
   const chance=(d.tags||[]).map(t=>/^(\d+ bids?|No bids yet)$/.test(t)?t.toLowerCase():TAGS[t]&&/overnight|Misspelt|Best Offer|New listing/.test(t)?tagOf(t)[0].toLowerCase():null).filter(Boolean);
   const lines=[
    [v("evidence"),`Sells for about <b>${gbp(d.med)}</b>`,srcTxt+(d.rangeLo!=null?` · most sell for ${gbp(d.rangeLo)}–${gbp(d.rangeHi)}`:"")],
@@ -1284,7 +1286,7 @@ function vCats(){
   return`<h2>My categories</h2><div class="mu" style="margin:-6px 4px 12px">FlipScout hunts in these for you, around the clock.</div>${starterLeft()&&h.cats.length<15?`<div class="card"><b>Popular for flipping</b><div class="mu">${STARTER.map(x=>x[1]).join(", ")}. FlipScout knows these model by model, so it finds real deals fastest.</div><button onclick="addStarter()">Add popular categories</button></div>`:""}
   ${h.cats.map((c,i)=>`<div class="card" style="display:flex;align-items:center;gap:10px"><div style="flex:1;min-width:0"><b>${esc(c.name)}</b><div class="mu">${esc(c.path||"")}</div><div class="hint ${lr[c.id]?"ok":"warn"}" style="margin-top:4px">${lr[c.id]?lr[c.id]+" sales learned":"Learning prices… (first deals usually within a day or two)"}</div></div><button class="d" style="margin:0;min-height:40px;padding:8px 12px" onclick="rmCat(${i})" aria-label="Remove ${esc(c.name)}">Remove</button></div>`).join("")||`<div class="card mu">No categories yet. Add one below.</div>`}
   <div class="card" style="border-style:dashed"><b>Add a category</b><div id="catbox_h" style="margin-top:10px"></div>
-   <button style="width:100%" onclick="addCat()" ${h.cats.length>=15?"disabled":""}>Add this category</button><div class="hint">Pick down to the most specific category you know (e.g. Graphics/Video Cards). Up to 15. More categories means each is checked a little less often.</div></div>
+   <button style="width:100%" onclick="addCat()" ${h.cats.length>=15?"disabled":""}>Add this category</button><div class="hint">Pick down to the most specific category you know (e.g. Graphics/Video Cards). Up to 15. Up to 8 are checked every scan; more than that take turns.</div></div>
   <div class="card"><b>What to hunt for</b>
    ${cb("bin","Buy It Now listings below their value")}
    ${cb("auction","Auctions ending soon you can win cheaply")}

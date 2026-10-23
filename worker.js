@@ -393,7 +393,9 @@ const bareKey = (k) => String(k || "").replace(/^t\d*:/, "t:"); // "similar titl
 const BOOK_DAYS = 30;
 // prices saved by a category fill are marked "fill"; prices the user checked themselves have no mark
 let srcReady = false;
-async function ensureSrc(env) { if (srcReady) return; try { await env.DB.prepare("ALTER TABLE prices ADD COLUMN src TEXT").run(); } catch (e) {} srcReady = true; }
+async function ensureSrc(env) { if (srcReady) return; for (const c of ["src TEXT", "n INTEGER", "lo REAL", "hi REAL"]) { try { await env.DB.prepare("ALTER TABLE prices ADD COLUMN " + c).run(); } catch (e) {} } srcReady = true; }
+// a careful "sells for": the lower-middle sale price (40th percentile), from the last 30 days when there are 5+ sales, else 90 days
+const pctl = (a, f) => { const s = [...a].sort((x, y) => x - y); if (!s.length) return null; const i = (s.length - 1) * f, lo = Math.floor(i); return s[lo] + (s[Math.min(s.length - 1, lo + 1)] - s[lo]) * (i - lo); };
 const FILL_SKIP = /\b(faulty|spares|repairs?|broken|for parts|parts only|job ?lot|joblot|bundle|empty box|box only|untested|read desc|read description|see desc|see description|please read|not working|cracked|icloud locked)\b/i;
 async function fillPrices(env, b) {
   // Every sale is kept by its eBay item number (so pages read twice, or on different days, never count twice)
@@ -412,6 +414,12 @@ async function fillPrices(env, b) {
     let x = groups.get(key); if (!x) groups.set(key, (x = { label: bookLabel(g.label, t, key), q: lookupQ(t, g.key), add: [] }));
     x.add.push([id, Math.round(p * 100) / 100, r.s != null && +r.s >= 0 && +r.s < 500 ? Math.round(+r.s * 100) / 100 : null, +r.d || null]);
   }
+  // first fill after the careful-price update: recalculate every model already collected, not just this page's
+  if (!(await kvGet(env, "fillV2", false))) {
+    const all = await env.DB.prepare("SELECT f.pkey, p.label, p.q FROM fillsales f LEFT JOIN prices p ON p.pkey = f.pkey").all();
+    for (const r of all.results || []) if (!groups.has(r.pkey) && r.label) groups.set(r.pkey, { label: r.label, q: r.q || "", add: [] });
+    await kvSet(env, "fillV2", true);
+  }
   const keys = [...groups.keys()], have = new Map();
   for (let i = 0; i < keys.length; i += 90) {
     const part = keys.slice(i, i + 90), q = await env.DB.prepare("SELECT pkey, data FROM fillsales WHERE pkey IN (" + part.map(() => "?").join(",") + ")").bind(...part).all();
@@ -428,16 +436,17 @@ async function fillPrices(env, b) {
     const m = median(list.map((r) => r[1])), keep = list.filter((r) => r[1] >= m * 0.5 && r[1] <= m * 1.5);
     if (keep.length < 5) { few++; continue; }
     if (mine.has(key)) { kept++; continue; }
-    const avg = Math.round(median(keep.map((r) => r[1])) * 100) / 100, sh = keep.map((r) => r[2]).filter((v) => v != null);
+    const recent = keep.filter((r) => r[3] && r[3] >= now - 30 * DAY), use = recent.length >= 5 ? recent : keep, ps = use.map((r) => r[1]);
+    const avg = Math.round(pctl(ps, 0.4) * 100) / 100, lo = Math.round(pctl(ps, 0.25)), hi = Math.round(pctl(ps, 0.75)), sh = use.map((r) => r[2]).filter((v) => v != null);
     const dated = keep.filter((r) => r[3]).sort((a, c) => a[3] - c[3]); let trend = "steady";
     if (dated.length >= 8) { const h = dated.length >> 1, o = median(dated.slice(0, h).map((r) => r[1])), nw = median(dated.slice(h).map((r) => r[1])); trend = nw > o * 1.05 ? "rising" : nw < o * 0.95 ? "falling" : "steady"; }
-    prices.push([key, x.label.slice(0, 120), x.q.slice(0, 400), avg, null, sh.length ? Math.round(median(sh) * 100) / 100 : null, trend, now, "fill"]);
-    saved.push({ label: x.label, n: keep.length, avg });
+    prices.push([key, x.label.slice(0, 120), x.q.slice(0, 400), avg, null, sh.length ? Math.round(median(sh) * 100) / 100 : null, trend, now, "fill", use.length, lo, hi]);
+    saved.push({ label: x.label, n: use.length, avg });
   }
   // few queries per save (free plan allows 50): many rows per statement
   const multi = (head, tail, cols, list, per) => { const st = []; for (let i = 0; i < list.length; i += per) { const part = list.slice(i, i + per); st.push(env.DB.prepare(head + part.map(() => "(" + Array(cols).fill("?").join(",") + ")").join(",") + tail).bind(...part.flat())); } return st; };
   const st = [...multi("INSERT INTO fillsales (pkey,data,at) VALUES ", " ON CONFLICT(pkey) DO UPDATE SET data=excluded.data, at=excluded.at", 3, blobs, 30),
-    ...multi("INSERT INTO prices (pkey,label,q,avg,st,post,trend,at,src) VALUES ", " ON CONFLICT(pkey) DO UPDATE SET label=excluded.label, q=excluded.q, avg=excluded.avg, post=excluded.post, trend=excluded.trend, at=excluded.at, src='fill'", 9, prices, 11)];
+    ...multi("INSERT INTO prices (pkey,label,q,avg,st,post,trend,at,src,n,lo,hi) VALUES ", " ON CONFLICT(pkey) DO UPDATE SET label=excluded.label, q=excluded.q, avg=excluded.avg, post=excluded.post, trend=excluded.trend, at=excluded.at, src='fill', n=excluded.n, lo=excluded.lo, hi=excluded.hi", 12, prices, 8)];
   if (st.length) await env.DB.batch(st);
   saved.sort((a, c) => c.n - a.n);
   return { read: rows.length, fresh, models: groups.size, saved: saved.length, few, kept, top: saved.slice(0, 40) };
@@ -450,6 +459,10 @@ function lookInfo(s, alt) {
   return { key: s.pkey, label: bookLabel(s.matchLabel, s.title, s.pkey), q, url: lookupUrl(q), expect: alt ? Math.round(alt.med) : null };
 }
 
+// versions that often sell for a different price than the standard model
+const SPECIAL = /\b(poseidon|water ?cooled|watercooled|water ?block|hybrid|aio|blower|low ?profile|lp|mini|itx|oem|kingpin|hof|wasserk\w*|refurb\w*|engineering sample)\b/i;
+// auction learning buckets: time left (day+, 2h+, 30m+, under 30m) and bids (0-2, 3+)
+const aucBucket = (mins, bids) => (mins > 1440 ? "d" : mins > 120 ? "h" : mins > 30 ? "m" : "s") + (bids > 2 ? "+" : "-");
 /* ---------------- what the hunter avoids ---------------- */
 const RISK_WORDS = /\b(box only|empty box|read desc|read description|see desc|see description|please read|photo of|picture of|image of|replica|fake|not genuine|dummy|display only|case only|cover only|manual only|cable only|stand only|bundle only|no console|card only|for parts|spares|repairs?|faulty|broken|cracked|not working|untested|bios lock|icloud|activation lock|locked|blacklisted|no power|water damage|liquid damage)\b/i;
 const SCAM_WORDS = /\b(read desc|read description|photo of|picture of|image of|empty box|box only|replica|fake|not genuine|contact me|message me before|whatsapp|bank transfer)\b/i;
@@ -578,6 +591,26 @@ async function sweep(env, manual) {
     D.prepare("UPDATE listings SET status='ended' WHERE status='live' AND end_at<? AND end_at>? AND type='AUC'").bind(now, now - 2 * DAY),
     D.prepare("DELETE FROM deals WHERE expires<?").bind(now),
   ]);
+  // learn how auctions really end: compare each auction deal's final price with where it was when FlipScout saw it
+  try {
+    const snaps = await kvGet(env, "aucSnaps", {}), ids = Object.keys(snaps);
+    if (ids.length) {
+      const fin = new Map();
+      for (let i = 0; i < ids.length; i += 90) { const part = ids.slice(i, i + 90); const q = await D.prepare(`SELECT id, price FROM sales WHERE id IN (${part.map(() => "?").join(",")})`).bind(...part).all(); for (const r of q.results || []) fin.set(r.id, r.price); }
+      const old = ids.filter((id) => now - snaps[id][6] > 3 * DAY);
+      if (fin.size || old.length) {
+        const L = await kvGet(env, "aucLearn", {});
+        for (const id of ids) {
+          const sn = snaps[id];
+          if (fin.has(id)) { const [, med, p0, bids, mins, ship] = sn, end = fin.get(id) - ship, target = 0.88 * med - ship;
+            if (target > p0 + 1) { const w = Math.max(0, Math.min(2, (end - p0) / (target - p0))), b = aucBucket(mins, bids), x = L[b] || { s: 0, n: 0 }; x.s = Math.round((x.s + w) * 1000) / 1000; x.n++; L[b] = x; }
+            delete snaps[id];
+          } else if (now - sn[6] > 3 * DAY) delete snaps[id];
+        }
+        await kvSet(env, "aucLearn", L); await kvSet(env, "aucSnaps", snaps);
+      }
+    }
+  } catch (e) {}
   // once a day: tidy old rows and refresh the "sales learned" counts
   if (now - (await kvGet(env, "lastClean", 0)) > DAY) {
     await kvSet(env, "lastClean", now);
@@ -592,7 +625,7 @@ async function sweep(env, manual) {
 
   // 2. which categories this run (rotate so every category gets its turn)
   let rot = await kvGet(env, "rot", 0);
-  const per = manual ? Math.min(cfg.cats.length, 6) : Math.min(cfg.cats.length, 4);
+  const per = manual ? Math.min(cfg.cats.length, 10) : Math.min(cfg.cats.length, 8);
   const cats = [];
   for (let i = 0; i < per; i++) cats.push(cfg.cats[(rot + i) % cfg.cats.length]);
   await kvSet(env, "rot", (rot + per) % cfg.cats.length);
@@ -710,7 +743,7 @@ async function sweep(env, manual) {
     const chunk = keys.slice(i, i + 45), q = chunk.map(() => "?").join(",");
     const bk = [...new Set([...chunk, ...chunk.map(bareKey)])];
     await ensureSrc(env);
-    const br = await D.prepare(`SELECT pkey, avg, st, post, trend, at, src FROM prices WHERE pkey IN (${bk.map(() => "?").join(",")}) AND at>?`).bind(...bk, now - BOOK_DAYS * DAY).all();
+    const br = await D.prepare(`SELECT pkey, avg, st, post, trend, at, src, n, lo, hi FROM prices WHERE pkey IN (${bk.map(() => "?").join(",")}) AND at>?`).bind(...bk, now - BOOK_DAYS * DAY).all();
     for (const row of br.results || []) bookBy[row.pkey] = row;
     const sr = await D.prepare(`SELECT pkey, price, at FROM sales WHERE pkey IN (${q}) AND at>?`).bind(...chunk, now - 30 * DAY).all();
     for (const row of sr.results || []) { (soldBy[row.pkey] = soldBy[row.pkey] || []).push(row.price); soldLast[row.pkey] = Math.max(soldLast[row.pkey] || 0, row.at || 0); }
@@ -737,7 +770,7 @@ async function sweep(env, manual) {
       let low = med * 0.85;
       if (b.trend === "falling") low = med * 0.8;
       if (b.st != null && b.st < 25) low = Math.min(low, med * 0.8); // slow sellers: plan for a lower price
-      return { med, low, n: sold.length, src: "book", fill: b.src === "fill", spread: 0.15, ev, st: b.st, post, trend: b.trend, at: b.at, lo: null, hi: null, lastAt: b.at };
+      return { med, low, n: sold.length, src: "book", fill: b.src === "fill", bookN: b.n || null, spread: 0.15, ev, st: b.st, post, trend: b.trend, at: b.at, lo: b.lo != null ? b.lo + (post || 0) : null, hi: b.hi != null ? b.hi + (post || 0) : null, lastAt: b.at };
     }
     if (sold.length >= needSold) {
       const med = median(sold), low = pct(sold, 0.25), iqr = pct(sold, 0.75) - low;
@@ -812,7 +845,7 @@ async function sweep(env, manual) {
 
     // confidence score, built from parts the user can see
     const ev = m.src === "book" ? m.ev : (m.src === "sold" ? Math.min(1, m.n / 10) : Math.min(0.5, m.n / 16)) * Math.max(0.3, 1 - Math.min(1, m.spread));
-    const match = s.matchQ || 0.5;
+    const match = (s.matchQ || 0.5) * (SPECIAL.test(s.title) ? 0.75 : 1); // special versions: less sure it's the same as the rest
     const sel = s.seller.fb >= 50 && s.seller.pct >= 99 ? 1 : s.seller.fb >= 10 && s.seller.pct >= 98 ? 0.7 : s.seller.fb >= 5 ? 0.4 : 0.15;
     const mar = lowProfit <= 0 ? 0 : Math.min(1, lowProfit / Math.max(1, r.minProfit));
     let comp;
@@ -830,6 +863,7 @@ async function sweep(env, manual) {
     let score = Math.round(25 * ev + 20 * match + 15 * sel + 20 * mar + 10 * comp + 10 * dem);
     if (m.src === "asking") { score = Math.min(score, r.alertScore - 1, 69); tags.push("Price not confirmed by sales"); }
     if (m.src === "book") tags.push(m.fill ? "Price from category check" : "Price from price book");
+    if (SPECIAL.test(s.title)) tags.push("Special version");
     if (slow) tags.push("Slow seller");
     if (m.trend === "falling") tags.push("Prices falling");
     if (score < r.minScore) continue;
@@ -841,7 +875,7 @@ async function sweep(env, manual) {
       maxItem: s.type === "AUC" ? maxBid : Math.floor((mp - s.ship - (r.bpf ? bpf(mp) : 0)) * 100) / 100,
       profitAtMax: (() => { const it = s.type === "AUC" ? maxBid : Math.floor((mp - s.ship - (r.bpf ? bpf(mp) : 0)) * 100) / 100; return Math.round((m.med - sellFee(m.med, r) - out - (it + s.ship + (r.bpf ? bpf(it) : 0))) * 100) / 100; })(),
       med: Math.round(m.med * 100) / 100, low: Math.round(m.low * 100) / 100,
-      n: m.n, src: m.src, score, parts: { evidence: ev, match, seller: sel, margin: mar, competition: comp, demand: dem }, tags,
+      n: m.n, src: m.src, fill: !!m.fill, bookN: m.bookN || null, score, parts: { evidence: ev, match, seller: sel, margin: mar, competition: comp, demand: dem }, tags,
       sellFee: Math.round(sellFee(m.med, r) * 100) / 100, out: Math.round(out * 100) / 100,
       st: m.st != null ? m.st : null, trend: m.trend || null, bookAt: m.at || null,
       // evidence shown on the deal page: typical price range and how recent the newest evidence is
@@ -893,6 +927,13 @@ async function sweep(env, manual) {
   // 7b. make sure the deals on the list are still for sale (a few per run, oldest check first)
   report.gone = await verifyDeals(env, 6);
 
+  // remember where each auction deal stood, to learn from its final price later
+  try {
+    const au = deals.filter((d) => d.type === "AUC" && d.end > now);
+    if (au.length) { const snaps = await kvGet(env, "aucSnaps", {}); let add = 0;
+      for (const d of au) if (!snaps[d.id] && Object.keys(snaps).length < 400) { snaps[d.id] = [d.cat, d.med, d.price, d.bids || 0, Math.round((d.end - now) / 60000), d.ship || 0, now]; add++; }
+      if (add) await kvSet(env, "aucSnaps", snaps); }
+  } catch (e) {}
   // 8. followed listings
   await checkFollows(env, cfg);
 
@@ -1091,7 +1132,7 @@ export default {
           const deals = (rows.results || []).map((r) => ({ ...JSON.parse(r.data), found: r.created }));
           const lc = await kvGet(env, "learnCats", { cats: [] });
           const cnt = (await kvGet(env, "learnedCounts", null)) || (await refreshLearned(env));
-          return json({ deals, report: await kvGet(env, "lastReport", null), learned: cnt.byCat, close: await kvGet(env, "close", []), learning: { cats: lc.cats.length, sales: cnt.total } });
+          return json({ deals, report: await kvGet(env, "lastReport", null), learned: cnt.byCat, close: await kvGet(env, "close", []), aucLearn: await kvGet(env, "aucLearn", {}), learning: { cats: lc.cats.length, sales: cnt.total } });
         }
         if (P("check")) {
           const id = String(P("check")).replace(/\D/g, "");

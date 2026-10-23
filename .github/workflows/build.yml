@@ -22,12 +22,8 @@ jobs:
           npm init -y
           npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6 @capacitor/app@6 @capacitor/push-notifications@6 @capacitor/app-launcher@6 cordova-plugin-inappbrowser@6.0.0
           npx cap init "FlipScout" com.reaverslegion.flipscout --web-dir www
-          # the in-app eBay pages open in eBay's desktop layout (like Chrome's "Desktop site"): every listing is in the page and page buttons keep the filters
-          rm -f capacitor.config.ts
-          node -e 'const f="capacitor.config.json",fs=require("fs");const c=fs.existsSync(f)?JSON.parse(fs.readFileSync(f)):{appId:"com.reaverslegion.flipscout",appName:"FlipScout",webDir:"www"};c.cordova={preferences:{OverrideUserAgent:"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"}};fs.writeFileSync(f,JSON.stringify(c,null,2));console.log(JSON.stringify(c))'
           npx cap add android
           npx cap sync android
-          grep -o 'OverrideUserAgent[^>]*' android/app/src/main/res/xml/config.xml
       - name: Icon and splash
         run: |
           # every icon size is made once and stored in android-res, so nothing is installed here (that install kept hanging)

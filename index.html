@@ -828,6 +828,33 @@ function dealSums(d){
     ["You get back when you sell","","h"],["Sells for (incl. buyer's postage)",d.med],["eBay fees when you sell",d.sellFee||0,"-"],["Postage + packaging out",d.out||0,"-"],["You receive",back,"="],
     ["Profit after everything",prof,"P"]],
     (pay>0?`That's a ${Math.round(prof/(pay+(+H().pack||0))*100)}% return on what you spend (total you pay + packaging). `:"")+(auc?`At today's bid of ${gbp(d.price)} it would be ${gbp(d.profit)} profit, but the price usually rises.`:""))}
+// The money under the hero numbers: three short lines, every total worked out
+function moneyLines(d){
+  const auc=d.type==="AUC",item=auc?(d.maxItem!=null?d.maxItem:d.maxBid):d.price,bf=H().bpf?Math.round(bpfA(item)*100)/100:0;
+  const pay=item+d.ship+bf,fee=d.sellFee||0,out=d.out||0,back=d.med-fee-out,prof=back-pay,ret=pay>0?Math.round(prof/(pay+(+H().pack||0))*100):0;
+  const row=(l,sub,v,cls)=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid var(--bd)"><div style="min-width:0"><div style="font-weight:700">${l}</div><div class="mu" style="font-size:13px">${sub}</div></div><div class="num-t" style="font-weight:800;font-size:17px;white-space:nowrap" ${cls?`class="${cls}"`:""}>${v}</div></div>`;
+  return`<div style="margin-top:12px">
+   ${row(auc?"You pay if you win at "+gbp(item):"You pay",`${auc?"bid":"price"} ${gbp(item)} + post ${gbp(d.ship)}${bf?` + buyer fee ${gbp(bf)} ${ti("bpf")}`:""}`,gbp(pay))}
+   ${row("You get back",`sells for ${gbp(d.med)}${fee?` − eBay fees ${gbp(fee)}`:""} − post &amp; packing ${gbp(out)}`,gbp(back))}
+   ${row("Profit",`${ret}% return on what you spend`,(prof>=0?"+":"−")+gbp(Math.abs(prof)),prof>=0?"ok":"bad")}
+   ${auc&&d.profit!=null?`<div class="hint" style="margin-top:6px">If you win at today's bid of ${gbp(d.price)}: <b class="ok">+${gbp(d.profit)}</b> profit. Bids usually rise, so plan on your max.</div>`:""}</div>`}
+// One panel answering "can I trust this?": plain checks, the score, and a way to confirm the price
+function trustCard(d){const p=d.parts||{},sel=d.seller||{},v=k=>p[k]!=null?+p[k]:null;
+  const mark=x=>x==null?`<span class="mu" style="width:22px;flex:none">•</span>`:x>=0.7?`<span class="ok" style="width:22px;flex:none;font-weight:800">✓</span>`:x>=0.4?`<span class="warn" style="width:22px;flex:none;font-weight:800">!</span>`:`<span class="bad" style="width:22px;flex:none;font-weight:800">✕</span>`;
+  const srcTxt=d.src==="book"?`from sold prices you checked ${ago(d.bookAt||d.lastAt)}`:d.src==="sold"?`from ${d.n} sales in the last 30 days`:`a guess from ${d.n} asking prices – no sales yet`;
+  const chance=(d.tags||[]).map(t=>/^(\d+ bids?|No bids yet)$/.test(t)?t.toLowerCase():TAGS[t]&&/overnight|Misspelt|Best Offer|New listing/.test(t)?tagOf(t)[0].toLowerCase():null).filter(Boolean);
+  const lines=[
+   [v("evidence"),`Sells for about <b>${gbp(d.med)}</b>`,srcTxt+(d.rangeLo!=null?` · most sell for ${gbp(d.rangeLo)}–${gbp(d.rangeHi)}`:"")],
+   [v("match"),`Compared with ${esc(d.matchLabel||"similar listings")}`,"Check the listing is the same thing"],
+   [v("margin"),`If it only sells for ${gbp(d.low)}`,d.lowProfit>0?`you'd still make +${gbp(d.lowProfit)}`:"you'd make little or nothing"],
+   [v("seller"),`Seller ${sel.pct||0}% positive`,`${sel.fb||0} feedback${sel.name?" · "+esc(sel.name):""}`],
+   chance.length?[v("competition"),"Your chances",chance.join(" · ")]:null,
+   d.st!=null||d.trend?[v("demand"),"Demand",[d.st!=null?Math.round(d.st)+"% of listings sell":"",d.trend?"prices "+({falling:"dropping",rising:"rising",steady:"steady"}[d.trend]||d.trend):""].filter(Boolean).join(" · ")]:null].filter(Boolean);
+  const pts=FACTORS.filter(f=>p[f[0]]!=null).map(([k,n,max])=>{const x=Math.max(0,Math.min(1,+p[k]));return`<div style="display:flex;align-items:center;gap:10px;margin-top:8px"><span style="flex:1;font-size:14px">${n}</span><div class="meter" style="width:40%;margin:0"><i style="width:${Math.round(x*100)}%"></i></div><span class="num-t" style="width:44px;text-align:right;font-size:14px">${Math.round(x*max)}/${max}</span></div>`}).join("");
+  return`<div class="card"><div style="display:flex;align-items:center;gap:12px">${ring(d.score,true)}<div><b style="font-size:17px">${confWord(d.score)} confidence</b><div class="mu" style="font-size:14px">${d.score>=70?"Strong deal – the checks below look good.":d.score>=50?"Worth a look – check the points marked !":"Risky – read the points marked ✕"}</div></div></div>
+   <div style="margin-top:10px">${lines.map(([x,a,b])=>`<div style="display:flex;gap:6px;padding:9px 0;border-top:1px solid var(--bd)">${mark(x)}<div style="min-width:0"><div>${a}</div><div class="mu" style="font-size:13px">${b}</div></div></div>`).join("")}</div>
+   ${d.look?`<button class="${d.src==="book"?"s":""}" style="width:100%;margin-top:6px" onclick="lookUp(DV.look)">${d.src==="book"?"Check sold prices again":"Check sold prices"}</button>`:""}
+   ${pts?`<details style="margin-top:8px"><summary class="mu" style="font-size:14px">Score details (${d.score}/100)</summary>${pts}<div class="hint">70+ is a strong deal and sends an alert.</div></details>`:""}</div>`}
 function vDeal(){
   const d=DV;if(!d)return`<div class="card">That deal has gone.</div>`;
   const sp=d.kind==="spares",p=d.parts||{},sel=d.seller||{};
@@ -837,7 +864,7 @@ function vDeal(){
     :d.live===undefined?`<div class="hint" style="margin:0 0 10px">Checking it's still for sale…</div>`:"";
   const head=banner+`<div class="card" style="padding:0;overflow:hidden">${d.img?`<img src="${esc(d.img)}" alt="" style="width:100%;height:220px;object-fit:contain;background:var(--card2);display:block">`:""}
    <div style="padding:16px"><div style="display:flex;gap:6px;flex-wrap:wrap">${dealBadge(d)}<span class="chip">${esc(d.cond||"")}</span></div>
-   <h2 style="margin:10px 0 2px">${esc(d.title)}</h2><div class="mu">${esc(d.catName||"")} · seller ${esc(sel.name||"")} (${sel.pct||0}%, ${sel.fb||0})</div></div></div>`;
+   <h2 style="margin:10px 0 2px">${esc(d.title)}</h2><div class="mu">${esc(d.catName||"")}${sp?` · seller ${esc(sel.name||"")} (${sel.pct||0}%, ${sel.fb||0} feedback)`:""}</div></div></div>`;
   if(sp)return head+`<div class="verdict info"><div class="mu">Seller says</div><div style="font-size:16px;margin-top:4px">${d.sellerSays?"“"+esc(d.sellerSays)+"”":"Read the description on eBay. Only the title is available here."}</div>
    <div class="hint">FlipScout can't check what's wrong or how hard it is to fix. You judge it.</div></div>
    <div class="card"><div class="grid"><div><div class="mu">Total you pay</div><div class="stat">${gbp(d.cost)}</div><div class="mu" style="font-size:12px">${pp(d)} + fee</div></div><div><div class="mu">Working ones sell for</div><div class="stat">${gbp(d.workMed)}</div></div></div>
@@ -845,16 +872,9 @@ function vDeal(){
    <div id="rcr" class="stat" style="margin-top:10px"></div><div class="hint">Based on ${d.n} ${d.src==="sold"?"sold":"asking"} prices for working ones. Includes eBay fees and your postage.</div></div>
    <div class="btns"><a href="${esc(ukUrl(d.url))}" target="_blank" rel="noopener"><button>Open on eBay</button></a><button class="s" onclick="followSheet()">Follow</button></div>`;
   const ev=d.src==="book"?`Saved price: sells for about ${gbp(d.med)} incl. postage. Saved ${ago(d.bookAt)}`:d.src==="sold"?`${d.n} sold prices in the last 30 days`:`${d.n} asking prices (no sales recorded yet, so it scores lower)`;
-  return head+`<div class="verdict good"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><div>
-    <div class="mu">${d.type==="AUC"?"Bid up to":"Your profit if you buy now"}</div><div class="big ok">${d.type==="AUC"?gbp(d.maxBid):"+"+gbp(d.profit)}</div>
-    ${d.type==="AUC"?`<div class="mu">Now ${gbp(d.price)} + ${gbp(d.ship)} postage · ${d.bids} bid${d.bids===1?"":"s"} · ${left(d.end)}</div>`:""}</div>
-    <div style="text-align:center">${ring(d.score,true)}<div style="font-weight:700;font-size:13px;margin-top:4px">${confWord(d.score)}</div></div></div>
-   ${priceRow(d)}</div>
-  ${evidenceCard(d)}
-  ${(d.tags||[]).filter(t=>tagOf(t)[1]).length?`<div class="card"><b>What the tags mean</b>${(d.tags||[]).filter(t=>tagOf(t)[1]).map(t=>`<div style="margin-top:8px"><b>${esc(tagOf(t)[0])}</b><div class="mu">${esc(tagOf(t)[1])}</div></div>`).join("")}</div>`:""}
-  ${scoreCard(d,ev)}
-  ${bookCard(d)}
-  ${dealSums(d)}
+  return head+`<div class="card"><b style="font-size:17px">The money</b>${d.type==="AUC"?`<div class="mu" style="font-size:14px">Auction · ${left(d.end)}</div>`:""}
+   ${priceRow(d)}${moneyLines(d)}</div>
+  ${trustCard(d)}
   <div class="btns"><a href="${esc(ukUrl(d.url))}" target="_blank" rel="noopener"><button>${d.type==="AUC"?"Bid on eBay":"Buy on eBay · "+gbp(d.price+d.ship)}</button></a><button class="s" onclick="followSheet()">Follow</button><button class="s" onclick="itemSheet(0,{name:DV.title,buy:DV.price+DV.ship,exp:DV.med,url:DV.url})">I bought it</button></div>
   <div class="hint">Always read the listing before you pay.</div>`;
 }

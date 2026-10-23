@@ -926,12 +926,12 @@ const soldUrl=L=>"https://www.ebay.co.uk/sch/i.html?_nkw="+encodeURIComponent(L.
 // runs inside the eBay page. Works with any eBay layout: finds each listing from its link, then the box around it
 // that holds only that listing; keeps it only if it shows "Sold <date>" and sits above eBay's "fewer words" results
 const SOLD_READ=`(function(){var out=[],seen={},idOf=function(h){var m=String(h).match(/itm\\/(?:[^\\/?#]*\\/)?(\\d{9,})/);return m?m[1]:null};
-var cutEl=null,all=document.querySelectorAll("li,div,h2,h3,span");for(var k=0;k<all.length;k++){var c=all[k];if((c.textContent||"").length<150&&/Results matching fewer words|results? for fewer words/i.test(c.textContent||"")){cutEl=c;break}}
+var cutEl=null;try{cutEl=document.evaluate("//*[contains(text(),'fewer words')]",document,null,9,null).singleNodeValue}catch(e){}
 var A=document.querySelectorAll("a[href*='/itm/']");
 for(var i=0;i<A.length;i++){var a=A[i],id=idOf(a.href);if(!id||seen[id])continue;
  if(cutEl&&(cutEl.compareDocumentPosition(a)&4)&&!(cutEl.compareDocumentPosition(a)&16))continue;
  var box=a,up=a.parentElement;
- while(up&&up!==document.body){var ids={},n=0,L=up.querySelectorAll("a[href*='/itm/']");for(var j=0;j<L.length;j++){var x=idOf(L[j].href);if(x&&!ids[x]){ids[x]=1;n++}}if(n>1)break;box=up;up=up.parentElement}
+ while(up&&up!==document.body){var ids={},n=0,L=up.querySelectorAll("a[href*='/itm/']");for(var j=0;j<L.length;j++){var x=idOf(L[j].href);if(x&&!ids[x]){ids[x]=1;n++;if(n>1)break}}if(n>1)break;box=up;up=up.parentElement}
  var t=(box.innerText||"").replace(/\\s+/g," ");
  if(/Shop on eBay/i.test(t)||/best offer accepted/i.test(t))continue;
  var sm=t.match(/Sold\\s+(\\d{1,2}\\s+[A-Za-z]{3}\\s+\\d{4})/);if(!sm)continue;
@@ -956,7 +956,10 @@ var u=document.getElementById("fs_use");if(u)u.onclick=function(){var m=JSON.str
 const PAGE_READ=`(function(){var u=location.href,b=!!document.getElementById("fs_bar");try{return{u:u,b:b,r:${SOLD_READ}}}catch(e){return{u:u,b:b,r:[],e:String(e)}}})()`;
 const isSignIn=u=>/signin\.ebay|\/signin|SignIn/i.test(u);
 // eBay's pages keep loading pictures as you scroll, so don't wait for "finished": check every few seconds while open
-function iabWatch(w,tick){let busy=false;const run=()=>{if(busy)return;busy=true;w.executeScript({code:PAGE_READ},r=>{busy=false;const x=(r&&r[0])||{};tick(String(x.u||""),x.r||[],!!x.b)})};
+const PAGE_PROBE=`(function(){return location.href+"|"+document.querySelectorAll("a[href*='/itm/']").length+"|"+(!!document.getElementById("fs_bar"))})()`;
+function iabWatch(w,tick){let busy=0,last="",lastRead=null;const run=()=>{if(busy&&Date.now()-busy<8000)return;busy=Date.now();
+  w.executeScript({code:PAGE_PROBE},p=>{const k=String((p&&p[0])||"");if(k&&k===last&&lastRead){busy=0;return}
+   w.executeScript({code:PAGE_READ},r=>{busy=0;const x=(r&&r[0])||{};last=k;lastRead=x;tick(String(x.u||""),x.r||[],!!x.b)})})};
   w.addEventListener("loadstop",run);const t=setInterval(run,3000);w.addEventListener("exit",()=>clearInterval(t));setTimeout(run,1500)}
 function soldCheck(L){BK.cur=L;const IAB=window.cordova&&window.cordova.InAppBrowser,url=soldUrl(L);
   if(!IAB){window.open(url,"_blank");setTimeout(()=>{BK.mode="sold";priceSheet()},300);return}

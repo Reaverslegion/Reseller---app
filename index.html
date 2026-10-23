@@ -283,6 +283,19 @@ const ti=k=>`<button class="tip" aria-label="What is this?" onclick="event.stopP
 
 /* ---------- navigation ---------- */
 const TABS=[["deals","Deals","bolt"],["follow","Following","bell"],["book","Prices","chart"],["stock","Sell","stock"],["dash","Money","money"]];
+/* ---------- ADMIN (hidden): tap the version 7 times in Settings. Remove before public release ---------- */
+let admN=0,admT=0;
+function admTap(){const t=Date.now();admN=t-admT<1500?admN+1:1;admT=t;if(admN>=7){admN=0;S.set.admin=!S.set.admin;save();render();toast(S.set.admin?"Admin tools on.":"Admin tools off.")}}
+let ADMC=[];
+function fillPicked(){if(!CAT.a||!CT||!CT[CAT.a]){toast('Pick a category first.');return}fillCat({id:CAT.a,name:CT[CAT.a].n})}
+function vAdmin(){if(!S.set.admin)return`<div class="card">Admin tools are off.</div>`;setTimeout(()=>{CAT.a=CAT.a||"";drawCat("a")},0);
+  const seen=new Set();ADMC=[...STARTER.map(([id,name])=>({id,name})),...H().cats].filter(c=>!seen.has(c.id)&&seen.add(c.id));
+  return`<h2>Admin tools</h2><div class="mu" style="margin:-6px 4px 12px">Hidden from customers. Tap the version in Settings 7 times to hide it again.</div>
+  ${connected()?`<div class="card"><b>Fill prices for a whole category</b><div class="mu">Opens eBay's sold listings for the category, sorted newest first. Tap Next page as often as you like, then Save all. FlipScout sorts them into models and saves each one with 5+ sales.</div>
+   ${ADMC.map((c,i)=>`<div class="li" style="padding:8px 0"><span style="flex:1;min-width:0">${esc(c.name)}</span><button class="s" style="margin:0;min-height:40px;padding:6px 14px" onclick="fillCat(ADMC[${i}])">Fill prices</button></div>`).join("")}
+   <div class="hint">Take it steady: a few pages, then a break.</div></div>
+  <div class="card"><b>Fill any eBay category</b><div class="mu">Pick it like on eBay, down to the most specific one you can, then tap Fill.</div><div id="catbox_a" style="margin-top:10px"></div>
+   <div class="hint">Phones, graphics cards, consoles, laptops and the other popular kinds are sorted model by model. Anything else is grouped by matching titles, which is rougher, so the most specific category gives the best prices.</div></div>`:`<div class="card">Connect your Scan service first.</div>`}`}
 function goConnect(){go("settings");setTimeout(()=>{const a=$("adv");if(a){a.open=true;a.scrollIntoView({behavior:"smooth",block:"start"})}},60)}
 function go(t){if(t===tab)return;prev.push(tab);if(prev.length>20)prev.shift();tab=t;render()}
 function onBack(){
@@ -303,11 +316,11 @@ try{matchMedia("(prefers-color-scheme: dark)").addEventListener("change",applyTh
 
 function render(){
   applyTheme();
-  const sub=["settings","deal","cats"].includes(tab);
+  const sub=["settings","deal","cats","admin"].includes(tab);
   $("gear").innerHTML=sub?I.back:I.gear;$("gear").onclick=sub?()=>{onBack()}:()=>go("settings");
   $("gear").setAttribute("aria-label",sub?"Back":"Settings");
   $("nav").innerHTML=TABS.map(t=>`<button class="${tab===t[0]?"on":""}" onclick="go('${t[0]}')" aria-label="${t[1]}"><span class="pill">${I[t[2]]}</span>${t[1]}</button>`).join("");
-  $("app").innerHTML=({calc:vCalc,deals:vHunt,follow:vFollow,cats:vCats,deal:vDeal,book:vBook,stock:vStock,dash:vDash,settings:vSettings,scan:vScan,saved:vDeals})[tab]();
+  $("app").innerHTML=({calc:vCalc,deals:vHunt,follow:vFollow,cats:vCats,deal:vDeal,book:vBook,stock:vStock,dash:vDash,settings:vSettings,admin:vAdmin,scan:vScan,saved:vDeals})[tab]();
   if(tab==="calc")recalc();
   if(tab!==render.last){window.scrollTo(0,0);render.last=tab}
 }
@@ -347,11 +360,12 @@ function catPick(key,level,val){
   drawCat(key);
 }
 function drawCat(key){
-  const box=k=>$(k==="f"?"catbox":k==="h"?"catbox_h":"catsheet"),el=box(key);if(!el)return;
+  const box=k=>$(k==="f"?"catbox":k==="h"?"catbox_h":k==="a"?"catbox_a":"catsheet"),el=box(key);if(!el)return;
   if(!S.set.url||!S.set.key){el.innerHTML=`<div class="hint">Connect your Scan service (Settings) to choose an eBay category.</div>`;return}
   if(!CT){el.innerHTML=`<div class="hint">Loading eBay's category list… (first time only, a few seconds)</div>`;
     loadCats().then(()=>drawCat(key)).catch(e=>{const x=box(key);if(x)x.innerHTML=`<div class="hint warn">Couldn't load eBay categories (${esc(e.message==="Failed to fetch"?"no connection":e.message)}).</div><button class="s" style="min-height:40px;padding:8px 14px" onclick="drawCat('${key}')">Try again</button>`});return}
-  el.innerHTML=catSelects(key)+`<div class="hint">${CAT[key]?`Scan searches only in <b>${esc(CT[CAT[key]].n)}</b> and its subcategories.`:"Pick the category, then subcategories, just like on eBay."}</div>${key==="h"?"":`<button class="link" onclick="catSuggest('${key}')">Suggest from item name</button>`}`;
+  if(key==="a"){el.innerHTML=`<div style="display:flex;gap:8px;align-items:flex-end"><div style="flex:1;min-width:0">${catSelects(key)}</div><button style="margin:0;flex:none;min-height:48px;padding:8px 18px" onclick="fillPicked()" ${CAT.a?"":"disabled"}>Fill</button></div>`;return}
+  el.innerHTML=catSelects(key)+`<div class="hint">${CAT[key]?`Scan searches only in <b>${esc(CT[CAT[key]].n)}</b> and its subcategories.`:"Pick the category, then subcategories, just like on eBay."}</div>${key==="h"||key==="a"?"":`<button class="link" onclick="catSuggest('${key}')">Suggest from item name</button>`}`;
 }
 function catBox(){CAT.f=F.cat||"";drawCat("f")}
 async function catSuggest(key){
@@ -594,7 +608,8 @@ function vSettings(){
    <label for="s_reg">Where sellers are</label><select id="s_reg" onchange="S.set.region=this.value;save();pushConfig();toast('Saved.')"><option value="uk"${s.region!=="any"?" selected":""}>UK sellers only</option><option value="any"${s.region==="any"?" selected":""}>Anywhere that posts to the UK</option></select>
    <div class="hint">Overseas sellers may add import fees and slower delivery.</div>
    ${connected()?`<button class="s" onclick="copySetup()">Copy setup code</button><div class="hint">Paste this setup code into the Service address box on a new install, and the address and key fill in together.</div>`:`<div class="hint">Tip: you can paste a setup code into the Service address box.</div>`}</details>
-  <div class="card"><button class="s" onclick="ob=0;showOnb()">Show the welcome guide again</button><div class="mu" style="margin-top:10px">FlipScout ${VER}</div></div>`;
+  <div class="card"><button class="s" onclick="ob=0;showOnb()">Show the welcome guide again</button><div class="mu" style="margin-top:10px;user-select:none" onclick="admTap()">FlipScout ${VER}</div></div>
+  ${S.set.admin?`<div class="card"><b>Admin tools</b><div class="mu">For building the price database. Not for customers.</div><button class="s" onclick="go('admin')">Open admin tools</button></div>`:""}`;
 }
 function setConn(v){v=String(v||"").trim();const i=v.indexOf("#");if(i>0){S.set.url=v.slice(0,i);S.set.key=v.slice(i+1)}else S.set.url=v;save();render();toast("Saved.");afterConn()}
 function afterConn(){if(connected()){CT=null;HD.deals=null;FL.list=null;if(H().cats.length)pushConfig();autoPush();if(!S.items.length&&!S.base.length)cloudCheck(true);else cloudSoon()}}
@@ -915,7 +930,7 @@ for(var i=0;i<L.length;i++){var li=L[i],t=(li.innerText||"").replace(/\\s+/g," "
  var pm=t.match(/£\\s?([\\d,]+\\.\\d{2})(\\s*to\\s*£)?/);if(!pm||pm[2])continue;
  var sm=t.match(/Sold\\s+(\\d{1,2}\\s+[A-Za-z]{3}\\s+\\d{4})/),po=/free (postage|delivery)/i.test(t)?0:((t.match(/£\\s?([\\d,]+\\.\\d{2})\\s*(postage|delivery|p&p)/i)||[])[1]);
  var tt=li.querySelector(".s-item__title,.s-card__title,[role=heading],h3");
- out.push({id:String(id),n:((tt&&tt.innerText)||a.innerText||"").replace(/^New listing\s*/i,"").replace(/\s+/g," ").trim().slice(0,200),p:+pm[1].replace(/,/g,""),d:sm?Date.parse(sm[1]):null,s:po==null?null:+String(po).replace(/,/g,"")})}
+ if(!sm)continue;out.push({id:String(id),n:((tt&&tt.innerText)||a.innerText||"").replace(/^New listing\s*/i,"").replace(/\s+/g," ").trim().slice(0,200),p:+pm[1].replace(/,/g,""),d:sm?Date.parse(sm[1]):null,s:po==null?null:+String(po).replace(/,/g,"")})}
 return out})()`;
 function soldSum(rows){const cut=Date.now()-90*864e5;rows=rows.filter(r=>!r.d||r.d>=cut);const p=rows.map(r=>r.p).filter(x=>x>0);if(!p.length)return null;
   const m=median(p),keep=p.length>=4?rows.filter(r=>r.p>=m*0.5&&r.p<=m*1.5):rows,ps=keep.map(r=>r.p).sort((a,b)=>a-b);
@@ -939,14 +954,19 @@ function soldCheck(L){BK.cur=L;const IAB=window.cordova&&window.cordova.InAppBro
   w.addEventListener("message",e=>{if(e&&e.data&&e.data.fs==="use")w.close()});
   w.addEventListener("exit",()=>{if(got)soldResult(L,got);else{toast("No sold prices read. You can type them in instead.");BK.mode="sold";priceSheet()}})}
 /* ---------- FILL PRICES: read eBay's sold listings for a whole category, page by page as the user taps, then save every model at once ---------- */
-const fillUrl=(c,pg)=>"https://www.ebay.co.uk/sch/i.html?_sacat="+encodeURIComponent(c.id)+"&_nkw=&LH_Sold=1&LH_Complete=1&LH_PrefLoc=1&_ipg=240&_sop=13&LH_ItemCondition=3000"+(pg>1?"&_pgn="+pg:"");
+// eBay turns a search with no words into its category shop page (items for sale), so each category gets its main model words, "(a,b,c)" means any of them
+const FILL_WORDS={"27386":"(graphics,gpu,video card,rtx,gtx,rx,radeon,arc,quadro)","139971":"(console,playstation,ps5,ps4,xbox,switch,nintendo,steam deck,rog ally)","9355":"(phone,smartphone,android,iphone,samsung,galaxy,pixel,oneplus,xiaomi,motorola,oppo,nokia)","171485":"(tablet,ipad,galaxy tab,tab,surface,kindle,fire)","177":"(laptop,macbook,thinkpad,notebook,chromebook)","164":"(cpu,processor,intel,ryzen,core,xeon,i3,i5,i7,i9)","80053":"(monitor,display,screen,lcd,led,gaming)","170083":"(ddr3,ddr4,ddr5,ram,memory)","175669":"(ssd,drive,solid state,nvme,m.2,sata)"};
+// any other category: every word of its name and its singular ("Vintage Cameras" → vintage, cameras, camera)
+const fillWords=c=>{if(FILL_WORDS[c.id])return FILL_WORDS[c.id];const w=String(c.name||"").toLowerCase().replace(/[&()]/g," ").split(/[\s,/]+/).filter(x=>x.length>2&&!/^(and|for|the|other|with|non)$/.test(x));
+  const all=[...new Set(w.flatMap(x=>/(ch|sh|x|ss)es$/.test(x)?[x,x.slice(0,-2)]:/[^s]s$/.test(x)?[x,x.slice(0,-1)]:[x]))].slice(0,10);return all.length>1?"("+all.join(",")+")":all[0]||""};
+const fillUrl=(c,pg)=>"https://www.ebay.co.uk/sch/i.html?_sacat="+encodeURIComponent(c.id)+"&_nkw="+encodeURIComponent(fillWords(c))+"&LH_Sold=1&LH_Complete=1&LH_PrefLoc=1&_ipg=240&_sop=13&LH_ItemCondition=3000"+(pg>1?"&_pgn="+pg:"");
 const fsMsg=`function(m){m=JSON.stringify(m);try{cordova_iab.postMessage(m)}catch(e){try{webkit.messageHandlers.cordova_iab.postMessage(m)}catch(e2){}}}`;
-const fillBar=(n,pages,sign)=>`(function(){document.body.style.paddingBottom="150px";var send=${fsMsg};var b=document.getElementById("fs_bar");if(!b){b=document.createElement("div");b.id="fs_bar";document.body.appendChild(b)}
+const fillBar=(n,pages,sign,bad)=>`(function(){document.body.style.paddingBottom="150px";var send=${fsMsg};var b=document.getElementById("fs_bar");if(!b){b=document.createElement("div");b.id="fs_bar";document.body.appendChild(b)}
 b.style.cssText="position:fixed;left:0;right:0;bottom:0;z-index:2147483647;background:#0D172C;color:#fff;font:15px/1.35 sans-serif;padding:12px 14px calc(12px + env(safe-area-inset-bottom));box-shadow:0 -4px 16px rgba(0,0,0,.3)";
-b.innerHTML=${JSON.stringify(sign?`<b style="color:#4ade80">FlipScout</b> eBay only shows sold prices when you're signed in. Sign in once with your email or username and keep <b>Stay signed in</b> ticked. FlipScout never sees your password.`
+b.innerHTML=${JSON.stringify(bad?`<b style="color:#fbbf24">FlipScout</b> this isn't eBay's sold listings, so nothing here is counted. Tap <b>Done</b> and try again.${n?` (${n} sold read so far are kept.)`:""}`:sign?`<b style="color:#4ade80">FlipScout</b> eBay only shows sold prices when you're signed in. Sign in once with your email or username and keep <b>Stay signed in</b> ticked. FlipScout never sees your password.`
  :`<div><b style="color:#4ade80">FlipScout</b> read <b>${n} sold</b> from ${pages} page${pages===1?"":"s"}</div><div style="opacity:.75;font-size:13px;margin-top:2px">Take it steady: a few pages, then a break.</div><div style="display:flex;gap:8px;margin-top:10px"><button id="fs_next" style="flex:1;background:#1b2a4b;color:#fff;border:1px solid #33456b;border-radius:12px;padding:10px;font-weight:700;font-size:15px">Next page ›</button><button id="fs_save" style="flex:1;background:linear-gradient(135deg,#10d98a,#a3e635);color:#0b1a14;border:0;border-radius:12px;padding:10px;font-weight:800;font-size:15px">Save all</button></div>`)};
 var x=document.getElementById("fs_next");if(x)x.onclick=function(){x.disabled=true;x.textContent="Loading…";send({fs:"next"})};var y=document.getElementById("fs_save");if(y)y.onclick=function(){send({fs:"save"})}})()`;
-function fillCat(i){const c=H().cats[i];if(!c)return;const IAB=window.cordova&&window.cordova.InAppBrowser;
+function fillCat(c){if(!c)return;const IAB=window.cordova&&window.cordova.InAppBrowser;
   if(!IAB){toast("Fill prices works in the FlipScout app on your phone.");return}
   const acc=new Map();let page=1,pages=new Set(),signing=false,save=false;
   const w=IAB.open(fillUrl(c,1),"_blank","location=yes,hideurlbar=yes,toolbarcolor=#0D172C,closebuttoncolor=#ffffff,navigationbuttoncolor=#ffffff,closebuttoncaption=Done,zoom=no");
@@ -954,7 +974,8 @@ function fillCat(i){const c=H().cats[i];if(!c)return;const IAB=window.cordova&&w
    if(/signin\.ebay|\/signin|SignIn/i.test(u)){signing=true;w.executeScript({code:fillBar(0,0,1)});return}
    if(signing&&!/\/sch\//.test(u)){signing=false;w.executeScript({code:"location.href="+JSON.stringify(fillUrl(c,page))});return}
    signing=false;const pm=u.match(/_pgn=(\d+)/);if(pm)page=+pm[1];
-   w.executeScript({code:SOLD_READ},r=>{(r&&r[0]||[]).forEach(x=>{if(x&&x.n&&!acc.has(x.id))acc.set(x.id,x)});pages.add(page);w.executeScript({code:fillBar(acc.size,pages.size)})})});
+   if(!/\/sch\//.test(u)||!/LH_Sold=1/.test(u)){w.executeScript({code:fillBar(acc.size,pages.size,0,1)});return}
+   w.executeScript({code:SOLD_READ},r=>{const got=(r&&r[0])||[];let added=0;got.forEach(x=>{if(x&&x.n&&!acc.has(x.id)){acc.set(x.id,x);added++}});if(got.length)pages.add(page);w.executeScript({code:fillBar(acc.size,pages.size,0,!got.length)})})});
   w.addEventListener("message",e=>{const m=e&&e.data&&e.data.fs;if(m==="next"){page++;w.executeScript({code:"location.href="+JSON.stringify(fillUrl(c,page))})}else if(m==="save"){save=true;w.close()}});
   w.addEventListener("exit",()=>{if(!acc.size){toast("No sold prices read.");return}
     if(save)fillSave(c,[...acc.values()]);
@@ -1063,7 +1084,6 @@ function vBook(){
    <button onclick="bookFind()" ${BK.finding?"disabled":""}>Check sold prices</button>
    <button class="s" onclick="bookFind(true)" style="margin-top:8px">Type sold prices myself</button>
    <div class="hint">Opens eBay's sold listings inside FlipScout. FlipScout reads that page, works out the typical price and leaves out parts, faulty items and bundles. Nothing is saved until you tap Save.</div></div>
-  ${H().cats.length?`<div class="card"><b>Fill prices for a whole category</b><div class="mu">FlipScout reads eBay's sold listings for the category, sorts them into models and saves each model's price. Tap a category:</div><div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">${H().cats.map((c,i)=>`<button class="s" style="margin:0;min-height:40px;padding:6px 14px;border-radius:99px" onclick="fillCat(${i})">${esc(c.name)}</button>`).join("")}</div></div>`:""}
   ${BK.err?`<div class="card bad">${esc(BK.err)}</div>`:""}
   ${stale?`<div class="hint" style="margin:10px 4px">${stale} price${stale>1?"s are":" is"} older than 30 days. Tap one, then Check again.</div>`:""}
   <h3 style="margin:14px 4px 6px">Your prices</h3><div id="bk_list">${bookList()}</div>`}
@@ -1134,7 +1154,7 @@ function vCats(){
   setTimeout(()=>{CAT.h=CAT.h||"";drawCat("h")},0);
   const cb=(k,label)=>`<label class="chkrow" style="min-height:44px;margin:4px 0"><input type="checkbox" ${h.types[k]?"checked":""} onchange="H().types.${k}=this.checked;save();pushConfig()"><span>${label}</span></label>`;
   return`<h2>My categories</h2><div class="mu" style="margin:-6px 4px 12px">FlipScout hunts in these for you, around the clock.</div>${starterLeft()&&h.cats.length<15?`<div class="card"><b>Popular for flipping</b><div class="mu">${STARTER.map(x=>x[1]).join(", ")}. FlipScout knows these model by model, so it finds real deals fastest.</div><button onclick="addStarter()">Add popular categories</button></div>`:""}
-  ${h.cats.map((c,i)=>`<div class="card" style="display:flex;align-items:center;gap:10px"><div style="flex:1;min-width:0"><b>${esc(c.name)}</b><div class="mu">${esc(c.path||"")}</div><div class="hint ${lr[c.id]?"ok":"warn"}" style="margin-top:4px">${lr[c.id]?lr[c.id]+" sales learned":"Learning prices… (first deals usually within a day or two)"}</div></div><div style="display:flex;flex-direction:column;gap:6px;flex:none"><button style="margin:0;min-height:40px;padding:8px 12px" onclick="fillCat(${i})">Fill prices</button><button class="d" style="margin:0;min-height:40px;padding:8px 12px" onclick="rmCat(${i})" aria-label="Remove ${esc(c.name)}">Remove</button></div></div>`).join("")||`<div class="card mu">No categories yet. Add one below.</div>`}
+  ${h.cats.map((c,i)=>`<div class="card" style="display:flex;align-items:center;gap:10px"><div style="flex:1;min-width:0"><b>${esc(c.name)}</b><div class="mu">${esc(c.path||"")}</div><div class="hint ${lr[c.id]?"ok":"warn"}" style="margin-top:4px">${lr[c.id]?lr[c.id]+" sales learned":"Learning prices… (first deals usually within a day or two)"}</div></div><button class="d" style="margin:0;min-height:40px;padding:8px 12px" onclick="rmCat(${i})" aria-label="Remove ${esc(c.name)}">Remove</button></div>`).join("")||`<div class="card mu">No categories yet. Add one below.</div>`}
   <div class="card" style="border-style:dashed"><b>Add a category</b><div id="catbox_h" style="margin-top:10px"></div>
    <button style="width:100%" onclick="addCat()" ${h.cats.length>=15?"disabled":""}>Add this category</button><div class="hint">Pick down to the most specific category you know (e.g. Graphics/Video Cards). Up to 15. More categories means each is checked a little less often.</div></div>
   <div class="card"><b>What to hunt for</b>

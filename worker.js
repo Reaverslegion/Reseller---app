@@ -364,7 +364,10 @@ async function fillPrices(env, b) {
     const t = String((r && r.n) || "").slice(0, 200), p = +r.p;
     if (!t || !(p > 0 && p < 100000) || FILL_SKIP.test(t)) continue;
     const g = groupOf({ title: t }, cat, catName, cond);
-    if (!g || g.match < 0.6 || !/^(gpu|lap|phone|con|tab|cpu|ram|sto|mon):/.test(g.key)) continue;
+    // known kinds are matched model by model; anything else is grouped by its key title words (needs a strong match)
+    // (a single model code like "75192" or "1000xm4" is strong enough on its own)
+    const known = /^(gpu|lap|phone|con|tab|cpu|ram|sto|mon):/.test(g && g.key), code = g && /^t\d*:([a-z0-9]{4,})\|/.exec(g.key);
+    if (!g || g.match < (known ? 0.6 : code ? 0.45 : 0.7)) continue;
     const key = bareKey(g.key);
     let x = groups.get(key); if (!x) groups.set(key, (x = { label: bookLabel(g.label, t, key), q: lookupQ(t, g.key), rows: [] }));
     x.rows.push({ p, s: r.s != null && +r.s >= 0 && +r.s < 500 ? +r.s : null, d: +r.d || null });

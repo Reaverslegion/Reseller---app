@@ -282,6 +282,42 @@ function monitorKey(t, catName) {
   return { key: `mon:${size}|${res}|${hz}`, label: `${size}" monitor${res ? " " + res : ""}${hz ? " " + hz + "Hz" : ""} (any brand)`, match: res && hz ? 0.6 : 0.45 };
 }
 
+
+/* ---------------- fashion: brand + product line (sizes and colours vary, so these get a wider range) ---------------- */
+// [brand label, brand pattern, [[line label, line pattern], ...]]
+const FASHION = [
+  ["Nike", /\bnike\b|\bjordan\b/, [["Air Max 90", /air ?max ?90\b/], ["Air Max 95", /air ?max ?95\b/], ["Air Max 97", /air ?max ?97\b/], ["Air Max 1", /air ?max ?1\b(?!\d)/], ["Air Max Plus TN", /air ?max ?plus|\btn\b/], ["Air Force 1", /air ?force ?1|\baf1\b/], ["Dunk Low", /dunk ?low/], ["Dunk High", /dunk ?high/], ["Jordan 1 High", /jordan ?1\b.*\bhigh\b|\baj1\b.*\bhigh\b/], ["Jordan 1 Mid", /jordan ?1\b.*\bmid\b/], ["Jordan 1 Low", /jordan ?1\b.*\blow\b/], ["Jordan 4", /jordan ?4\b|\baj4\b/], ["Jordan 3", /jordan ?3\b/], ["Jordan 11", /jordan ?11\b/], ["Blazer Mid", /blazer ?mid/], ["VaporMax", /vapou?r ?max/], ["P-6000", /p ?-? ?6000/], ["Cortez", /\bcortez\b/], ["Tech Fleece", /tech ?fleece/]]],
+  ["Adidas", /\badidas\b|\byeezy\b/, [["Samba", /\bsamba\b/], ["Gazelle", /\bgazelle\b/], ["Handball Spezial", /\bspezial\b/], ["Campus", /\bcampus\b/], ["Superstar", /\bsuperstar\b/], ["Stan Smith", /stan ?smith/], ["Forum", /\bforum\b/], ["Ultraboost", /ultra ?boost/], ["Yeezy 350", /yeezy.*\b350\b|\b350\b.*yeezy/], ["Yeezy 700", /yeezy.*\b700\b/], ["Yeezy Slide", /yeezy.*slide/]]],
+  ["New Balance", /new ?balance|\bnb\b/, [["550", /\b550\b/], ["530", /\b530\b/], ["574", /\b574\b/], ["327", /\b327\b/], ["990", /\b990\b/], ["991", /\b991\b/], ["992", /\b992\b/], ["993", /\b993\b/], ["2002R", /\b2002 ?r\b/], ["9060", /\b9060\b/], ["1906R", /\b1906 ?r\b/]]],
+  ["ASICS", /\basics\b/, [["Gel-Kayano 14", /kayano ?14/], ["Gel-1130", /\b1130\b/], ["Gel-NYC", /gel ?-? ?nyc/], ["Gel-Lyte III", /lyte ?(iii|3)\b/]]],
+  ["Salomon", /\bsalomon\b/, [["XT-6", /xt ?-? ?6\b/], ["XT-4", /xt ?-? ?4\b/], ["Speedcross", /speedcross/]]],
+  ["Converse", /\bconverse\b/, [["Chuck 70", /chuck ?(taylor)? ?70|\bct ?70\b/], ["Chuck Taylor", /chuck ?taylor|all ?star/]]],
+  ["Vans", /\bvans\b/, [["Old Skool", /old ?skool/], ["Sk8-Hi", /sk8 ?-? ?hi/], ["Knu Skool", /knu ?skool/]]],
+  ["Dr. Martens", /dr\.? ?martens?|doc ?martens?|\bdms\b/, [["1460", /\b1460\b/], ["1461", /\b1461\b/], ["2976", /\b2976\b/], ["Jadon", /\bjadon\b/], ["Adrian", /\badrian\b/]]],
+  ["UGG", /\bugg\b/, [["Tasman", /\btasman\b/], ["Ultra Mini", /ultra ?mini/], ["Classic Mini", /classic ?mini/], ["Classic Short", /classic ?short/]]],
+  ["The North Face", /north ?face|\btnf\b/, [["Nuptse", /\bnuptse\b/], ["1996 Retro", /\b1996\b/], ["Himalayan", /\bhimalayan\b/], ["Denali", /\bdenali\b/], ["McMurdo", /mcmurdo/]]],
+  ["Barbour", /\bbarbour\b/, [["Bedale", /\bbedale\b/], ["Beaufort", /\bbeaufort\b/], ["Ashby", /\bashby\b/], ["International", /\binternational\b/], ["Liddesdale", /liddesdale/]]],
+  ["Stone Island", /stone ?island/, [["Overshirt", /\bovershirt\b/], ["Jumper", /\bjumper\b|\bknit\b/], ["Sweatshirt", /\bsweatshirt\b|\bsweater\b|crew ?neck/], ["Hoodie", /\bhoodie\b|\bhooded\b/], ["Jacket", /\bjacket\b|\bcoat\b/]]],
+  ["Canada Goose", /canada ?goose/, [["Expedition", /\bexpedition\b/], ["Chilliwack", /chilliwack/], ["Langford", /langford/], ["Wyndham", /wyndham/], ["Chateau", /chateau/], ["Crofton", /crofton/]]],
+  ["Arc'teryx", /arc'?\s?teryx/, [["Beta LT", /beta ?lt/], ["Beta AR", /beta ?ar/], ["Alpha SV", /alpha ?sv/], ["Atom LT", /atom ?lt/], ["Atom Hoody", /atom ?ho/]]],
+  ["Patagonia", /\bpatagonia\b/, [["Retro-X", /retro ?-? ?x/], ["Nano Puff", /nano ?puff/], ["Better Sweater", /better ?sweater/], ["Synchilla", /synchilla/]]],
+  ["Levi's", /\blevi'?s?\b/, [["501", /\b501\b/], ["505", /\b505\b/], ["511", /\b511\b/], ["550", /\b550\b/], ["Trucker Jacket", /trucker/]]],
+  ["Carhartt", /\bcarhartt\b/, [["Detroit Jacket", /\bdetroit\b/], ["Active Jacket", /active ?jacket/], ["Double Knee", /double ?knee/], ["Michigan", /\bmichigan\b/]]],
+  ["Ralph Lauren", /ralph ?lauren|\bpolo\b.*\blauren\b/, [["Cable Knit Jumper", /cable ?knit/], ["Harrington", /harrington/]]],
+];
+const KIDS = /\b(kids?|junior|jnr|infants?|toddler|baby|youth|gs|child(ren)?|boys|girls|td|ps)\b/;
+function fashionKey(title) {
+  const t = String(title || "").toLowerCase();
+  for (const [brand, bre, lines] of FASHION) {
+    if (!bre.test(t)) continue;
+    for (const [line, lre] of lines) if (lre.test(t)) {
+      const kid = KIDS.test(t);
+      return { key: "fas:" + brand.toLowerCase().replace(/[^a-z]/g, "") + " " + line.toLowerCase() + (kid ? " kids" : ""), label: brand + " " + line + (kid ? " (kids)" : ""), match: 0.75 };
+    }
+    return null; // brand without a known line: too vague to price
+  }
+  return null;
+}
 function groupOf(it, cat, catName, bucket) {
   const title = it.title || "";
   const lapCat = /laptop|netbook|notebook/i.test(catName || "") || cat === "177" || cat === "111422";
@@ -293,7 +329,8 @@ function groupOf(it, cat, catName, bucket) {
     || (fits(/phone|mobile/i) && phoneKey(title))
     || (fits(/console|video game|gaming|handheld/i) && consoleKey(title))
     || (fits(/tablet|ipad|e-?book/i) && tabletKey(title))
-    || cpuKey(title, catName) || ramKey(title, catName) || storageKey(title, catName) || monitorKey(title, catName) || null;
+    || cpuKey(title, catName) || ramKey(title, catName) || storageKey(title, catName) || monitorKey(title, catName)
+    || (fits(/cloth|shoe|trainer|sneaker|boot|footwear|coat|jacket|jumper|hoodie|jean|shirt|fashion|men|women|unisex|bag/i) && fashionKey(title)) || null;
   if (g) return { key: g.key + "|" + bucket, label: g.label, match: g.match };
   if (it.epid) return { key: "e" + it.epid + "|" + bucket, label: "Same eBay product", match: 1 };
   const s = sig(title);
@@ -366,7 +403,7 @@ async function fillPrices(env, b) {
     const g = groupOf({ title: t }, cat, catName, cond);
     // known kinds are matched model by model; anything else is grouped by its key title words (needs a strong match)
     // (a single model code like "75192" or "1000xm4" is strong enough on its own)
-    const known = /^(gpu|lap|phone|con|tab|cpu|ram|sto|mon):/.test(g && g.key), code = g && /^t\d*:([a-z0-9]{4,})\|/.exec(g.key);
+    const known = /^(gpu|lap|phone|con|tab|cpu|ram|sto|mon|fas):/.test(g && g.key), code = g && /^t\d*:([a-z0-9]{4,})\|/.exec(g.key);
     if (!g || g.match < (known ? 0.6 : code ? 0.45 : 0.7)) continue;
     const key = bareKey(g.key);
     let x = groups.get(key); if (!x) groups.set(key, (x = { label: bookLabel(g.label, t, key), q: lookupQ(t, g.key), rows: [] }));

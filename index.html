@@ -942,15 +942,21 @@ const soldBar=(x,sign)=>`(function(){document.body.style.paddingBottom="120px";v
 b.style.cssText="position:fixed;left:0;right:0;bottom:0;z-index:2147483647;background:#0D172C;color:#fff;font:15px/1.35 sans-serif;padding:12px 14px calc(12px + env(safe-area-inset-bottom));display:flex;gap:10px;align-items:center;box-shadow:0 -4px 16px rgba(0,0,0,.3)";
 b.innerHTML=${JSON.stringify(`<div style="flex:1"><b style="color:#4ade80">FlipScout</b> ${sign?"eBay only shows sold prices when you're signed in. Sign in once with your email or username and keep <b>Stay signed in</b> ticked. Google, Apple and Facebook buttons may not work here. FlipScout never sees your password.":x?`read <b>${x.n} sold</b> · typical <b>${gbp(x.typical)}</b>`:"found no sold prices on this page yet"}</div>`+(x?`<button id="fs_use" style="background:linear-gradient(135deg,#10d98a,#a3e635);color:#0b1a14;border:0;border-radius:12px;padding:10px 14px;font-weight:800;font-size:15px">Use these</button>`:""))};
 var u=document.getElementById("fs_use");if(u)u.onclick=function(){var m=JSON.stringify({fs:"use"});try{cordova_iab.postMessage(m)}catch(e){try{webkit.messageHandlers.cordova_iab.postMessage(m)}catch(e2){}}}})()`;
+// read the page and its address together; never throws, so the bar always appears
+const PAGE_READ=`(function(){var u=location.href,b=!!document.getElementById("fs_bar");try{return{u:u,b:b,r:${SOLD_READ}}}catch(e){return{u:u,b:b,r:[],e:String(e)}}})()`;
+const isSignIn=u=>/signin\.ebay|\/signin|SignIn/i.test(u);
+// eBay's pages keep loading pictures as you scroll, so don't wait for "finished": check every few seconds while open
+function iabWatch(w,tick){let busy=false;const run=()=>{if(busy)return;busy=true;w.executeScript({code:PAGE_READ},r=>{busy=false;const x=(r&&r[0])||{};tick(String(x.u||""),x.r||[],!!x.b)})};
+  w.addEventListener("loadstop",run);const t=setInterval(run,3000);w.addEventListener("exit",()=>clearInterval(t));setTimeout(run,1500)}
 function soldCheck(L){BK.cur=L;const IAB=window.cordova&&window.cordova.InAppBrowser,url=soldUrl(L);
   if(!IAB){window.open(url,"_blank");setTimeout(()=>{BK.mode="sold";priceSheet()},300);return}
   let got=null;const w=IAB.open(url,"_blank","location=yes,hideurlbar=yes,toolbarcolor=#0D172C,closebuttoncolor=#ffffff,navigationbuttoncolor=#ffffff,closebuttoncaption=Done,zoom=no");
-  let signing=false;
-  w.addEventListener("loadstop",e=>{const u=String(e&&e.url||"");
-   if(/signin\.ebay|\/signin|\/ws\/eBayISAPI\.dll\?SignIn/i.test(u)){signing=true;w.executeScript({code:soldBar(null,1)});return}
+  let signing=false,lastN=-1;
+  iabWatch(w,(u,rows,hasBar)=>{
+   if(isSignIn(u)){if(!signing||!hasBar)w.executeScript({code:soldBar(null,1)});signing=true;return}
    if(signing&&!/\/sch\//.test(u)){signing=false;w.executeScript({code:"location.href="+JSON.stringify(url)});return}
-   signing=false;
-   w.executeScript({code:SOLD_READ},r=>{const rows=(r&&r[0])||[],x=soldSum(rows);if(x)got=x;w.executeScript({code:soldBar(x)})})});
+   signing=false;const x=soldSum(rows);if(x)got=x;
+   if(rows.length!==lastN||!hasBar){lastN=rows.length;w.executeScript({code:soldBar(x)})}});
   w.addEventListener("message",e=>{if(e&&e.data&&e.data.fs==="use")w.close()});
   w.addEventListener("exit",()=>{if(got)soldResult(L,got);else{toast("No sold prices read. You can type them in instead.");BK.mode="sold";priceSheet()}})}
 /* ---------- FILL PRICES: read eBay's sold listings for a whole category, page by page as the user taps, then save every model at once ---------- */
@@ -970,12 +976,13 @@ function fillCat(c){if(!c)return;const IAB=window.cordova&&window.cordova.InAppB
   if(!IAB){toast("Fill prices works in the FlipScout app on your phone.");return}
   const acc=new Map();let page=1,pages=new Set(),signing=false,save=false;
   const w=IAB.open(fillUrl(c,1),"_blank","location=yes,hideurlbar=yes,toolbarcolor=#0D172C,closebuttoncolor=#ffffff,navigationbuttoncolor=#ffffff,closebuttoncaption=Done,zoom=no");
-  w.addEventListener("loadstop",e=>{const u=String(e&&e.url||"");
-   if(/signin\.ebay|\/signin|SignIn/i.test(u)){signing=true;w.executeScript({code:fillBar(0,0,1)});return}
+  let shown="";
+  iabWatch(w,(u,got,hasBar)=>{
+   if(isSignIn(u)){if(!signing||!hasBar)w.executeScript({code:fillBar(0,0,1)});signing=true;return}
    if(signing&&!/\/sch\//.test(u)){signing=false;w.executeScript({code:"location.href="+JSON.stringify(fillUrl(c,page))});return}
    signing=false;const pm=u.match(/_pgn=(\d+)/);if(pm)page=+pm[1];
-   if(!/\/sch\//.test(u)||!/LH_Sold=1/.test(u)){w.executeScript({code:fillBar(acc.size,pages.size,0,1)});return}
-   w.executeScript({code:SOLD_READ},r=>{const got=(r&&r[0])||[];let added=0;got.forEach(x=>{if(x&&x.n&&!acc.has(x.id)){acc.set(x.id,x);added++}});if(got.length)pages.add(page);w.executeScript({code:fillBar(acc.size,pages.size,0,!got.length)})})});
+   got.forEach(x=>{if(x&&x.n&&!acc.has(x.id))acc.set(x.id,x)});if(got.length)pages.add(page);
+   const st=acc.size+"|"+pages.size+"|"+(got.length?1:0);if(st!==shown||!hasBar){shown=st;w.executeScript({code:fillBar(acc.size,pages.size,0,!got.length)})}});
   w.addEventListener("message",e=>{const m=e&&e.data&&e.data.fs;if(m==="next"){page++;w.executeScript({code:"location.href="+JSON.stringify(fillUrl(c,page))})}else if(m==="save"){save=true;w.close()}});
   w.addEventListener("exit",()=>{if(!acc.size){toast("No sold prices read.");return}
     if(save)fillSave(c,[...acc.values()]);

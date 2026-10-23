@@ -47,6 +47,9 @@ jobs:
           # stop the build if the icon or splash is missing, instead of shipping a plain app
           test -s $R/mipmap-xxxhdpi/ic_launcher.png && test -s $R/mipmap-xxxhdpi/fs_foreground.png && test -s $R/drawable-nodpi/splash_logo.png
           echo "Icon and splash OK"
+          # FlipScout has its own light and dark themes: stop the phone forcing dark mode onto the app
+          sed -i 's#</style>#<item name="android:forceDarkAllowed">false</item></style>#g' $R/values/styles.xml
+          grep -c forceDarkAllowed $R/values/styles.xml
       - name: Notifications
         run: |
           R=android/app/src/main/res

@@ -8,9 +8,9 @@
 <title>FlipScout</title>
 <script>try{var t=(JSON.parse(localStorage.getItem("resell_helper_v1")||"{}").set||{}).theme;if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
 <style>
-:root{--bg:#e6ecf4;--card:#ffffff;--card2:#e2e9f3;--tx:#08122a;--mu:#3a475f;--bd:#c3cfe1;--ac:#11703a;--acbg:#cdf5db;--ok:#11703a;--okbg:#cdf5db;--bad:#b42318;--badbg:#fcdcdc;--warn:#8a4b00;--warnbg:#ffecc7;--grad:linear-gradient(135deg,#10d98a,#a3e635);--ontx:#0b1a14;--shadow:0 1px 2px rgba(8,18,42,.10),0 6px 18px rgba(8,18,42,.09);--nav:#ffffff}
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0D172C;--card:#15223f;--card2:#1b2a4b;--tx:#eef2fb;--mu:#a3b2cf;--bd:#26395f;--ac:#4ade80;--acbg:#123a2a;--ok:#4ade80;--okbg:#123a2a;--bad:#f87171;--badbg:#3d1d27;--warn:#fbbf24;--warnbg:#3a2f14;--shadow:0 2px 12px rgba(0,0,0,.3);--nav:#111d37}}
-:root[data-theme=dark]{--bg:#0D172C;--card:#15223f;--card2:#1b2a4b;--tx:#eef2fb;--mu:#a3b2cf;--bd:#26395f;--ac:#4ade80;--acbg:#123a2a;--ok:#4ade80;--okbg:#123a2a;--bad:#f87171;--badbg:#3d1d27;--warn:#fbbf24;--warnbg:#3a2f14;--shadow:0 2px 12px rgba(0,0,0,.3);--nav:#111d37}
+:root{--bg:#e6ecf4;--card:#ffffff;--card2:#e2e9f3;--tx:#08122a;--mu:#3a475f;--bd:#c3cfe1;--ac:#11703a;--acbg:#cdf5db;--ok:#11703a;--okbg:#cdf5db;--bad:#b42318;--badbg:#fcdcdc;--warn:#8a4b00;--warnbg:#ffecc7;--grad:linear-gradient(135deg,#10d98a,#a3e635);--ontx:#0b1a14;--shadow:0 1px 2px rgba(8,18,42,.10),0 6px 18px rgba(8,18,42,.09);--nav:#0D172C;--navmu:#a3b2cf;--navac:#4ade80;--navacbg:#123a2a;--navbd:#0D172C}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0D172C;--card:#15223f;--card2:#1b2a4b;--tx:#eef2fb;--mu:#a3b2cf;--bd:#26395f;--ac:#4ade80;--acbg:#123a2a;--ok:#4ade80;--okbg:#123a2a;--bad:#f87171;--badbg:#3d1d27;--warn:#fbbf24;--warnbg:#3a2f14;--shadow:0 2px 12px rgba(0,0,0,.3);--nav:#111d37;--navmu:var(--mu);--navac:var(--ac);--navacbg:var(--acbg);--navbd:var(--bd)}}
+:root[data-theme=dark]{--bg:#0D172C;--card:#15223f;--card2:#1b2a4b;--tx:#eef2fb;--mu:#a3b2cf;--bd:#26395f;--ac:#4ade80;--acbg:#123a2a;--ok:#4ade80;--okbg:#123a2a;--bad:#f87171;--badbg:#3d1d27;--warn:#fbbf24;--warnbg:#3a2f14;--shadow:0 2px 12px rgba(0,0,0,.3);--nav:#111d37;--navmu:var(--mu);--navac:var(--ac);--navacbg:var(--acbg);--navbd:var(--bd)}
 :root{color-scheme:light dark}:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
 /* Design tokens shared by both themes (colours above are the semantic colour tokens) */
 :root{--r-sm:10px;--r-md:14px;--r-lg:18px;--sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;--fs-label:12px;--fs-meta:13px;--fs-body:16px;--fs-num:19px;--fs-h:20px;--ease:150ms ease;--focus:0 0 0 3px var(--ac)}
@@ -69,11 +69,11 @@ button:disabled{opacity:.55}
 .tip{display:inline-grid;place-items:center;width:22px;height:22px;min-height:0;padding:0;margin:0 0 0 4px;border-radius:50%;background:var(--card2);color:var(--mu);border:1px solid var(--bd);font-size:13px;font-weight:800;vertical-align:middle}
 details summary{cursor:pointer;color:var(--ac);font-weight:700;padding:10px 0;min-height:44px;list-style:none}
 details summary::-webkit-details-marker{display:none}
-nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--nav);border-top:1px solid var(--bd);padding-bottom:env(safe-area-inset-bottom);z-index:5}
-nav button{flex:1;margin:0;border-radius:0;background:none;color:var(--mu);padding:8px 0 10px;min-height:64px;font-size:12px;font-weight:600;display:flex;flex-direction:column;align-items:center;gap:3px}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--nav);border-top:1px solid var(--navbd);padding-bottom:env(safe-area-inset-bottom);z-index:5}
+nav button{flex:1;margin:0;border-radius:0;background:none;color:var(--navmu);padding:8px 0 10px;min-height:64px;font-size:12px;font-weight:600;display:flex;flex-direction:column;align-items:center;gap:3px}
 nav button svg{width:24px;height:24px}
-nav button.on{color:var(--ac)}
-nav button.on .pill{background:var(--acbg)}
+nav button.on{color:var(--navac)}
+nav button.on .pill{background:var(--navacbg)}
 .pill{padding:3px 18px;border-radius:99px;display:grid;place-items:center}
 .empty{text-align:center;padding:28px 18px}
 .empty svg{width:48px;height:48px;color:var(--ac);margin-bottom:6px}

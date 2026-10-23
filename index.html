@@ -855,13 +855,52 @@ function askProfit(p,ask){const m=priceMaths(p),extra=H().bpf?bpfA(ask):0,profit
   return{profit,roi:inv>0?profit/inv*100:0,ok:profit>=S.rules.minProfit&&inv>0&&profit/inv*100>=S.rules.minRoi}}
 function bookCard(d){const L=d.look;if(!L)return"";
   if(d.src==="book")return`<div class="card"><b>Price checked by you</b><div class="mu">You checked this price ${ago(d.bookAt)}. FlipScout uses it for 30 days.</div><button class="s" onclick="lookUp(DV.look)">Check it again</button></div>`;
-  return`<div class="card"><b>Confirm the price</b><div class="mu">${d.src==="asking"?"This value is only a guess from asking prices. ":""}See what it really sells for. The eBay app opens with the search done. Come back and type in what it shows.</div><button onclick="lookUp(DV.look)">Look up sold prices</button></div>`}
+  return`<div class="card"><b>Confirm the price</b><div class="mu">${d.src==="asking"?"This value is only a guess from asking prices. ":""}See what it really sells for. The eBay app opens with the search done. Come back and type in what it shows.</div><button onclick="lookUp(DV.look)">Check sold prices</button></div>`}
 // eBay's Research page only shows averages in the eBay app, so hand the link to the eBay app.
 // When the user comes back to FlipScout, the entry screen opens by itself.
 let lookWait=false,lookHooked=false;
 function lookHook(){if(lookHooked)return;lookHooked=true;
   try{const A=window.Capacitor.Plugins.App;A.addListener("appStateChange",s=>{if(s.isActive&&lookWait){lookWait=false;setTimeout(priceSheet,250)}})}catch(e){}}
+/* ---------- CHECK SOLD PRICES: the user opens eBay's public sold listings inside FlipScout; the app reads only that page, on the phone, and nothing is saved until the user taps Save ---------- */
+const soldUrl=L=>"https://www.ebay.co.uk/sch/i.html?_nkw="+encodeURIComponent(L.q||L.label||"")+"&LH_Sold=1&LH_Complete=1&LH_PrefLoc=1&_ipg=120&LH_ItemCondition="+(/\|new$/.test(L.key||"")?"1000":"3000");
+// runs inside the eBay page: reads the sold results above eBay's "fewer words" line
+const SOLD_READ=`(function(){var out=[],seen={},L=document.querySelectorAll(".srp-results > li, ul.srp-results li, li.s-item, li.s-card");
+for(var i=0;i<L.length;i++){var li=L[i],t=(li.innerText||"").replace(/\\s+/g," ");
+ if(/REWRITE_START/.test(li.className)||/Results matching fewer words/i.test(t))break;
+ var a=li.querySelector("a[href*='/itm/']");if(!a)continue;var id=(a.href.match(/itm\\/(?:[^\\/?]*\\/)?(\\d{9,})/)||[])[1]||a.href;if(seen[id])continue;seen[id]=1;
+ if(/Shop on eBay/i.test(t)||/best offer accepted/i.test(t))continue;
+ var pm=t.match(/£\\s?([\\d,]+\\.\\d{2})(\\s*to\\s*£)?/);if(!pm||pm[2])continue;
+ var sm=t.match(/Sold\\s+(\\d{1,2}\\s+[A-Za-z]{3}\\s+\\d{4})/),po=/free (postage|delivery)/i.test(t)?0:((t.match(/£\\s?([\\d,]+\\.\\d{2})\\s*(postage|delivery|p&p)/i)||[])[1]);
+ out.push({p:+pm[1].replace(/,/g,""),d:sm?Date.parse(sm[1]):null,s:po==null?null:+String(po).replace(/,/g,"")})}
+return out})()`;
+function soldSum(rows){const p=rows.map(r=>r.p).filter(x=>x>0);if(!p.length)return null;
+  const m=median(p),keep=p.length>=4?rows.filter(r=>r.p>=m*0.5&&r.p<=m*1.5):rows,ps=keep.map(r=>r.p).sort((a,b)=>a-b);
+  const q=f=>ps[Math.min(ps.length-1,Math.floor(f*(ps.length-1)+0.5))],sh=keep.map(r=>r.s).filter(x=>x!=null),ds=keep.map(r=>r.d).filter(Boolean).sort((a,b)=>a-b);
+  let trend="steady";const dated=keep.filter(r=>r.d).sort((a,b)=>a.d-b.d);
+  if(dated.length>=8){const h=dated.length>>1,o=median(dated.slice(0,h).map(r=>r.p)),n=median(dated.slice(h).map(r=>r.p));if(n>o*1.05)trend="rising";else if(n<o*0.95)trend="falling"}
+  return{n:keep.length,dropped:rows.length-keep.length,typical:Math.round(median(ps)*100)/100,lo:q(.25),hi:q(.75),post:sh.length?Math.round(median(sh)*100)/100:null,from:ds[0]||null,to:ds[ds.length-1]||null,trend}}
+const soldBar=x=>`(function(){var b=document.getElementById("fs_bar");if(!b){b=document.createElement("div");b.id="fs_bar";document.body.appendChild(b)}
+b.style.cssText="position:fixed;left:0;right:0;bottom:0;z-index:2147483647;background:#0D172C;color:#fff;font:15px/1.35 sans-serif;padding:12px 14px calc(12px + env(safe-area-inset-bottom));display:flex;gap:10px;align-items:center;box-shadow:0 -4px 16px rgba(0,0,0,.3)";
+b.innerHTML=${JSON.stringify(`<div style="flex:1"><b style="color:#4ade80">FlipScout</b> ${x?`read <b>${x.n} sold</b> · typical <b>${gbp(x.typical)}</b>`:"found no sold prices on this page yet"}</div>`+(x?`<button id="fs_use" style="background:linear-gradient(135deg,#10d98a,#a3e635);color:#0b1a14;border:0;border-radius:12px;padding:10px 14px;font-weight:800;font-size:15px">Use these</button>`:""))};
+var u=document.getElementById("fs_use");if(u)u.onclick=function(){var m=JSON.stringify({fs:"use"});try{cordova_iab.postMessage(m)}catch(e){try{webkit.messageHandlers.cordova_iab.postMessage(m)}catch(e2){}}}})()`;
+function soldCheck(L){BK.cur=L;const IAB=window.cordova&&window.cordova.InAppBrowser,url=soldUrl(L);
+  if(!IAB){window.open(url,"_blank");setTimeout(()=>{BK.mode="sold";priceSheet()},300);return}
+  let got=null;const w=IAB.open(url,"_blank","location=yes,hideurlbar=yes,toolbarcolor=#0D172C,closebuttoncolor=#ffffff,navigationbuttoncolor=#ffffff,closebuttoncaption=Done,zoom=no");
+  w.addEventListener("loadstop",()=>w.executeScript({code:SOLD_READ},r=>{const rows=(r&&r[0])||[],x=soldSum(rows);if(x)got=x;w.executeScript({code:soldBar(x)})}));
+  w.addEventListener("message",e=>{if(e&&e.data&&e.data.fs==="use")w.close()});
+  w.addEventListener("exit",()=>{if(got)soldResult(L,got);else{toast("No sold prices read. You can type them in instead.");BK.mode="sold";priceSheet()}})}
+function soldResult(L,x){BK.cur=L;BK.sold=x;const dt=t=>new Date(t).toLocaleDateString("en-GB",{day:"numeric",month:"short"});
+  const ln=(l,v)=>`<div class="li" style="padding:6px 0"><span style="flex:1">${l}</span><span>${v}</span></div>`;
+  openSheet(`<h2 style="margin-top:0">Sold prices on eBay</h2><div class="mu">${esc(L.label)}</div>
+  <div class="card" style="margin:12px 0 0;text-align:center"><div class="mu" style="font-size:13px">Sells for about</div><div class="big ok">${gbp(x.typical)}</div>
+   <div class="mu">${x.n} sold${x.from?` · ${dt(x.from)} to ${dt(x.to)}`:""}</div></div>
+  <div style="margin-top:8px;font-size:15px">${ln("Most sold between",`${gbp(x.lo)} – ${gbp(x.hi)}`)}${ln("Typical postage",x.post!=null?gbp(x.post):"not shown")}${ln("Prices lately",{rising:"▲ going up",falling:"▼ going down",steady:"about the same"}[x.trend])}</div>
+  ${x.dropped?`<div class="hint">${x.dropped} odd price${x.dropped>1?"s":""} left out (far too high or low).</div>`:""}
+  ${x.n<5?`<div class="hint warn">Only ${x.n} sold. Treat this price with care.</div>`:""}
+  <div class="btns"><button onclick="submitPrice({avg:BK.sold.typical,st:null,post:BK.sold.post,trend:BK.sold.trend})">Save to price book</button><button class="s" onclick="closeSheet();soldCheck(BK.cur)">Check again</button></div>
+  <button class="s" style="margin-top:8px" onclick="closeSheet()">Don't save</button>`)}
 async function lookUp(L){if(!L)return;BK.cur=L;BK.trend="steady";BK.mode="avg";
+  if(window.cordova&&window.cordova.InAppBrowser){soldCheck(L);return}
   const P=window.Capacitor&&window.Capacitor.Plugins,AL=PUSH.native&&P&&P.AppLauncher;
   if(AL){try{lookHook();lookWait=true;await AL.openUrl({url:L.url});return}catch(e){lookWait=false}}
   window.open(L.url,"_blank");setTimeout(priceSheet,300)}
@@ -921,8 +960,8 @@ function bkAsk(i,v){const p=BK.list[i],el=$("bk_r"+i);if(!el||!p)return;const a=
    <div class="mu">${r.roi.toFixed(0)}% return${r.ok?"":` · you want at least ${gbp(S.rules.minProfit)} and ${S.rules.minRoi}%`}</div></div></div>`}
 function bookList(){const t=BK.q.toLowerCase().split(/\s+/).filter(Boolean),L=(BK.list||[]).map((p,i)=>[p,i]).filter(([p])=>t.every(w=>String(p.label||p.pkey).toLowerCase().includes(w)));
   if(BK.list===null)return`<div class="card mu">Loading…</div>`;
-  if(!BK.list.length)return`<div class="card empty">${I.chart}<b>No prices yet</b><div class="mu">Search for something above. FlipScout opens eBay's sold prices in the eBay app, then you type in what it shows.</div></div>`;
-  if(!L.length)return`<div class="hint" style="margin:0 4px">Nothing saved matches. Tap <b>Look up sold prices</b> to check it.</div>`;
+  if(!BK.list.length)return`<div class="card empty">${I.chart}<b>No prices yet</b><div class="mu">Search for something above and tap Look up sold prices.</div></div>`;
+  if(!L.length)return`<div class="hint" style="margin:0 4px">Nothing saved matches. Tap <b>Check sold prices</b> to check it.</div>`;
   return L.map(([p,i])=>{const m=priceMaths(p),open=BK.open===i;
     return`<div class="card" style="cursor:pointer" onclick="if(!event.target.closest('button,input,a')){BK.open=${open?-1:i};$('bk_list').innerHTML=bookList()}">
     <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div style="min-width:0"><div style="font-weight:700">${esc(p.label||p.pkey)}</div>
@@ -942,7 +981,7 @@ function vBook(){
    <div class="seg" style="margin-top:10px">${[["used","Used"],["new","New"]].map(c=>`<button class="${BK.cond===c[0]?"on":""}" onclick="BK.cond='${c[0]}';BK.q=$('bk_q').value;render()">${c[1]}</button>`).join("")}</div>
    <button onclick="bookFind()" ${BK.finding?"disabled":""}>Look up sold prices</button>
    <button class="s" onclick="bookFind(true)" style="margin-top:8px">Type sold prices myself</button>
-   <div class="hint">Opens eBay Research in the eBay app with the search done. FlipScout leaves out parts, faulty items and bundles.</div></div>
+   <div class="hint">Opens eBay's sold listings inside FlipScout. FlipScout reads that page, works out the typical price and leaves out parts, faulty items and bundles. Nothing is saved until you tap Save.</div></div>
   ${BK.err?`<div class="card bad">${esc(BK.err)}</div>`:""}
   ${stale?`<div class="hint" style="margin:10px 4px">${stale} price${stale>1?"s are":" is"} older than 30 days. Tap one, then Check again.</div>`:""}
   <h3 style="margin:14px 4px 6px">Your prices</h3><div id="bk_list">${bookList()}</div>`}

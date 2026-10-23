@@ -20,7 +20,7 @@ jobs:
           mkdir www
           cp index.html www/index.html
           npm init -y
-          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6 @capacitor/app@6 @capacitor/push-notifications@6 @capacitor/app-launcher@6
+          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6 @capacitor/app@6 @capacitor/push-notifications@6 @capacitor/app-launcher@6 cordova-plugin-inappbrowser@6.0.0
           npx cap init "FlipScout" com.reaverslegion.flipscout --web-dir www
           npx cap add android
           npx cap sync android

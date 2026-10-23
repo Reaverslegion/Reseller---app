@@ -307,7 +307,8 @@ const LOOK_ALL = ["faulty", "spares", "repair", "repairs", "broken", "parts", "j
 const LOOK_EX = {
   gpu: ["pc", "build", "computer", "desktop", "laptop", "bridge", "nvlink", "sli", "i5", "i7", "i9", "ryzen", "heatsink", "backplate", "waterblock", "bracket", "riser", "shroud"],
   phone: ["case", "cover", "protector", "charger", "cable", "lcd", "housing", "cracked", "locked", "icloud"],
-  con: ["skin", "faceplate", "shell", "headset"],
+  // accessory listings say "for Switch", "AC adapter", "replacement"...; complete bundles mention dock/case, so those stay in
+  con: ["skin", "faceplate", "shell", "headset", "for", "adapter", "ac", "psu", "supply", "replacement", "compatible", "protector", "grip", "joystick", "thumbstick", "sticker"],
   tab: ["case", "cover", "protector", "charger", "lcd", "cracked", "locked", "icloud"],
   lap: ["motherboard", "hinge", "lcd", "palmrest", "sleeve", "bag"],
   cpu: ["laptop", "desktop", "pc", "computer", "motherboard", "combo"],
@@ -326,7 +327,11 @@ function lookupQ(title, pkey) {
   let words = [];
   if (kind === "gpu") words = body.split(" ");
   else if (kind === "phone") { words = body.split(" "); const st = words[words.length - 1]; if (/^\d+$/.test(st)) words[words.length - 1] = st >= 1024 ? st / 1024 + "tb" : st + "gb"; }
-  else if (kind === "con") words = body.split(" ").filter((w) => w !== "disc"); // most disc consoles don't say "disc"
+  else if (kind === "con") { // most disc consoles don't say "disc"; "console" keeps chargers and spare parts out
+    words = body.split(" ").filter((w) => w !== "disc" && w !== "bare");
+    if (words[0] === "switch") words.unshift("nintendo");
+    words.push(/ bare$/.test(body) ? "only" : "console"); // "console only" / "tablet only" listings
+  }
   else if (kind === "tab") { const [t, gen, size, st] = body.split("|"); words = ["ipad", t === "ipad" ? "" : t, gen ? (/^m/i.test(gen) ? gen.toLowerCase() : gen + "th") : "", size, st && st !== "?" ? (st >= 1024 ? st / 1024 + "tb" : st + "gb") : ""]; }
   else if (kind === "cpu") words = [body.replace(/^(i\d)-/, "$1 ").replace(/^r(\d)-/, "ryzen $1 ")];
   else if (kind === "ram") { const [t, cap, sp] = body.split("|"); words = [t, cap + "gb", /sodimm/.test(sp || "") ? "sodimm" : ""]; }
@@ -610,14 +615,14 @@ async function sweep(env, manual) {
 
   // 4. market price for each product group: sold history first, asking prices as a fallback
   const keys = [...new Set(cands.flatMap((s) => [s.pkey, s.workKey]).filter(Boolean))];
-  const soldBy = {}, askBy = {}, bookBy = {};
+  const soldBy = {}, askBy = {}, bookBy = {}, soldLast = {};
   for (let i = 0; i < keys.length; i += 45) { // D1 allows 100 values per query (keys + bare keys + date)
     const chunk = keys.slice(i, i + 45), q = chunk.map(() => "?").join(",");
     const bk = [...new Set([...chunk, ...chunk.map(bareKey)])];
     const br = await D.prepare(`SELECT pkey, avg, st, post, trend, at FROM prices WHERE pkey IN (${bk.map(() => "?").join(",")}) AND at>?`).bind(...bk, now - BOOK_DAYS * DAY).all();
     for (const row of br.results || []) bookBy[row.pkey] = row;
-    const sr = await D.prepare(`SELECT pkey, price FROM sales WHERE pkey IN (${q}) AND at>?`).bind(...chunk, now - 30 * DAY).all();
-    for (const row of sr.results || []) (soldBy[row.pkey] = soldBy[row.pkey] || []).push(row.price);
+    const sr = await D.prepare(`SELECT pkey, price, at FROM sales WHERE pkey IN (${q}) AND at>?`).bind(...chunk, now - 30 * DAY).all();
+    for (const row of sr.results || []) { (soldBy[row.pkey] = soldBy[row.pkey] || []).push(row.price); soldLast[row.pkey] = Math.max(soldLast[row.pkey] || 0, row.at || 0); }
     const ar = await D.prepare(`SELECT pkey, id, price+ship AS t FROM listings WHERE pkey IN (${q}) AND first_seen>? AND last_seen>? AND type='BIN' AND status='live'`).bind(...chunk, now - 7 * DAY, now - 2 * DAY).all();
     for (const row of ar.results || []) (askBy[row.pkey] = askBy[row.pkey] || []).push([row.id, row.t]);
   }
@@ -641,18 +646,18 @@ async function sweep(env, manual) {
       let low = med * 0.85;
       if (b.trend === "falling") low = med * 0.8;
       if (b.st != null && b.st < 25) low = Math.min(low, med * 0.8); // slow sellers: plan for a lower price
-      return { med, low, n: sold.length, src: "book", spread: 0.15, ev, st: b.st, post, trend: b.trend, at: b.at };
+      return { med, low, n: sold.length, src: "book", spread: 0.15, ev, st: b.st, post, trend: b.trend, at: b.at, lo: null, hi: null, lastAt: b.at };
     }
     if (sold.length >= needSold) {
       const med = median(sold), low = pct(sold, 0.25), iqr = pct(sold, 0.75) - low;
-      return { med, low, n: sold.length, src: "sold", spread: med ? iqr / med : 1 };
+      return { med, low, n: sold.length, src: "sold", spread: med ? iqr / med : 1, lo: low, hi: pct(sold, 0.75), lastAt: soldLast[key] || null };
     }
     if (q < 0.65) return null; // asking prices are too noisy for loose matches
     const ask = trim((askBy[key] || []).filter(([id]) => id !== selfId).map(([, t]) => t).filter((x) => x > 0));
     if (ask.length >= (q >= 0.8 ? 8 : 12)) {
       // asking prices run high (sellers hope), so take the cheaper end and knock more off
       const med = pct(ask, 0.25) * 0.9, low = pct(ask, 0.1) * 0.85;
-      return { med, low, n: ask.length, src: "asking", spread: med ? (pct(ask, 0.75) - pct(ask, 0.25)) / med : 1 };
+      return { med, low, n: ask.length, src: "asking", spread: med ? (pct(ask, 0.75) - pct(ask, 0.25)) / med : 1, lo: pct(ask, 0.25), hi: pct(ask, 0.75), lastAt: now };
     }
     return null;
   }
@@ -748,6 +753,8 @@ async function sweep(env, manual) {
       n: m.n, src: m.src, score, parts: { evidence: ev, match, seller: sel, margin: mar, competition: comp, demand: dem }, tags,
       sellFee: Math.round(sellFee(m.med, r) * 100) / 100, out: Math.round(out * 100) / 100,
       st: m.st != null ? m.st : null, trend: m.trend || null, bookAt: m.at || null,
+      // evidence shown on the deal page: typical price range and how recent the newest evidence is
+      rangeLo: m.lo != null ? Math.round(m.lo) : null, rangeHi: m.hi != null ? Math.round(m.hi) : null, lastAt: m.lastAt || null,
       look: lookInfo(s, market(s.pkey, s.id, s.matchQ || 0.5, true)),
     });
   }

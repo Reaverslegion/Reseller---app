@@ -507,7 +507,7 @@ async function closing(env) {
 }
 
 /* ---------------- the hunt ---------------- */
-const DEFAULT_RULES = { minProfit: 15, minRoi: 30, seller: "business", feePct: 12.8, feeFixed: 0.4, post: 5, pack: 1, bpf: true, alertScore: 70, minScore: 40 };
+const DEFAULT_RULES = { minProfit: 20, minRoi: 0, seller: "business", feePct: 12.8, feeFixed: 0.4, post: 5, pack: 1, bpf: true, alertScore: 70, minScore: 40 };
 function cleanConfig(c) {
   c = c || {};
   return {
@@ -709,7 +709,8 @@ async function sweep(env, manual) {
   for (let i = 0; i < keys.length; i += 45) { // D1 allows 100 values per query (keys + bare keys + date)
     const chunk = keys.slice(i, i + 45), q = chunk.map(() => "?").join(",");
     const bk = [...new Set([...chunk, ...chunk.map(bareKey)])];
-    const br = await D.prepare(`SELECT pkey, avg, st, post, trend, at FROM prices WHERE pkey IN (${bk.map(() => "?").join(",")}) AND at>?`).bind(...bk, now - BOOK_DAYS * DAY).all();
+    await ensureSrc(env);
+    const br = await D.prepare(`SELECT pkey, avg, st, post, trend, at, src FROM prices WHERE pkey IN (${bk.map(() => "?").join(",")}) AND at>?`).bind(...bk, now - BOOK_DAYS * DAY).all();
     for (const row of br.results || []) bookBy[row.pkey] = row;
     const sr = await D.prepare(`SELECT pkey, price, at FROM sales WHERE pkey IN (${q}) AND at>?`).bind(...chunk, now - 30 * DAY).all();
     for (const row of sr.results || []) { (soldBy[row.pkey] = soldBy[row.pkey] || []).push(row.price); soldLast[row.pkey] = Math.max(soldLast[row.pkey] || 0, row.at || 0); }
@@ -736,7 +737,7 @@ async function sweep(env, manual) {
       let low = med * 0.85;
       if (b.trend === "falling") low = med * 0.8;
       if (b.st != null && b.st < 25) low = Math.min(low, med * 0.8); // slow sellers: plan for a lower price
-      return { med, low, n: sold.length, src: "book", spread: 0.15, ev, st: b.st, post, trend: b.trend, at: b.at, lo: null, hi: null, lastAt: b.at };
+      return { med, low, n: sold.length, src: "book", fill: b.src === "fill", spread: 0.15, ev, st: b.st, post, trend: b.trend, at: b.at, lo: null, hi: null, lastAt: b.at };
     }
     if (sold.length >= needSold) {
       const med = median(sold), low = pct(sold, 0.25), iqr = pct(sold, 0.75) - low;
@@ -785,7 +786,7 @@ async function sweep(env, manual) {
     const slow = m.st != null && m.st < 25; // few listings sell: need a bigger cushion
     if (s.type === "BIN") {
       if (!(cfg.types.bin || (cfg.types.misspelt && misspelt))) continue;
-      ok = profit >= r.minProfit * (slow ? 1.5 : 1) && roi >= r.minRoi;
+      ok = profit >= r.minProfit * (slow ? 1.5 : 1) && (!(r.minRoi > 0) || roi >= r.minRoi);
       const age = now - (s.created || firstSeen[s.id] || now);
       if (age < 60 * 60000) tags.push("New listing");
     } else {
@@ -828,7 +829,7 @@ async function sweep(env, manual) {
     const dem = m.st == null ? 0.6 : m.st >= 60 ? 1 : m.st >= 40 ? 0.8 : m.st >= 25 ? 0.55 : 0.25;
     let score = Math.round(25 * ev + 20 * match + 15 * sel + 20 * mar + 10 * comp + 10 * dem);
     if (m.src === "asking") { score = Math.min(score, r.alertScore - 1, 69); tags.push("Price not confirmed by sales"); }
-    if (m.src === "book") tags.push("Price from price book");
+    if (m.src === "book") tags.push(m.fill ? "Price from category check" : "Price from price book");
     if (slow) tags.push("Slow seller");
     if (m.trend === "falling") tags.push("Prices falling");
     if (score < r.minScore) continue;

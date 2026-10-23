@@ -123,7 +123,7 @@ a{color:inherit;text-decoration:none}
 <div id="onb"></div>
 <script>
 const KEY="resell_helper_v1",DKEY="flipscout_draft",OKEY="flipscout_seen_v2",VER="2.0";
-const DEF={rules:{maxPrice:0,minProfit:15,minRoi:30,budget:200,maxStock:150,minSales:5,feePct:12.8,feeFixed:0.40,staleDays:30,minPct:35,seller:"business"},gate:[],items:[],base:[],hunt:null,set:{url:"",key:"",region:"uk",theme:"auto"}};
+const DEF={rules:{maxPrice:0,minProfit:20,minRoi:0,budget:200,maxStock:150,minSales:5,feePct:12.8,feeFixed:0.40,staleDays:30,minPct:35,seller:"business"},gate:[],items:[],base:[],hunt:null,set:{url:"",key:"",region:"uk",theme:"auto"}};
 const PRE=["Considered"],HOLD=["Bought","Listed","Returned"],DONE=["Sold","Done"],STOCK=["Bought","Listed","Sold","Done","Returned"];
 const OLDMAP={Identified:"Considered",Considered:"Considered",Purchased:"Bought",Received:"Bought",Tested:"Bought",Listed:"Listed",Sold:"Sold",Dispatched:"Sold",Completed:"Done",Returned:"Returned"};
 const BLANK={n:"",b:"",p:"",k:"",a:"",c:"Used",sp:"",q:"",x:"",cat:"",catName:"",catPath:""};
@@ -148,6 +148,7 @@ function load(){
   try{const x=JSON.parse(localStorage.getItem(KEY));if(x&&x.rules){
     const old=x.rules.seller==null,rules={...DEF.rules,...x.rules};
     if(old&&Math.abs(rules.feeFixed-0.3)<1e-9)rules.feeFixed=0.40;
+    if(!rules.v2){if(rules.minProfit===15)rules.minProfit=20;if(rules.minRoi===30)rules.minRoi=0;rules.v2=1;window._rulesNew=1}
     const items=(x.items||[]).map(i=>({...i,status:OLDMAP[i.status]||i.status}));
     return{rules,gate:x.gate||[],items,base:x.base||[],hunt:x.hunt||null,set:{...DEF.set,...x.set}}}}catch(e){}
   return JSON.parse(JSON.stringify(DEF))}
@@ -254,7 +255,7 @@ function evaluate(f){
   const data=[[prices.length>=r.minSales,`${prices.length} sold prices (you want at least ${r.minSales})`],[conf!=="Low",conf==="Low"?"Sold prices vary a lot or there are too few":"Sold prices are consistent enough to trust"]];
   const buyC=hasBuy?[
     [p>=r.minProfit,`Profit ${gbp(p)} (you want at least ${gbp(r.minProfit)})`],
-    [roi>=r.minRoi,`Return ${roi.toFixed(0)}% on your money (you want at least ${r.minRoi}%)`],
+    [!(r.minRoi>0)||roi>=r.minRoi,r.minRoi>0?`Return ${roi.toFixed(0)}% on your money (you want at least ${r.minRoi}%)`:`Return ${roi.toFixed(0)}% on your money`],
     [pc>0,`Still profitable if it sells at the low end (${gbp(pc)})`],
     ...(r.maxPrice>0?[[buy<=r.maxPrice,`Price ${gbp(buy)} is under your overall limit of ${gbp(r.maxPrice)}`]]:[]),
     [m.cash>=buy,`You have ${gbp(m.cash)} available to spend`],
@@ -594,7 +595,7 @@ function vDash(){
 }
 
 /* ---------- SETTINGS ---------- */
-const FIELDS=[["minProfit","Minimum profit per item £","Skip anything that makes less than this."],["minRoi","Minimum return %","Profit as a % of what you spend. 30 means £30 back for every £100."],["budget","Total buying budget £","The money you're willing to have in reselling."],["maxStock","Max money in unsold stock £","Stops you tying up too much cash in stock."],["maxPrice","Overall max price per item £","Never pay more than this for one item. 0 means no limit."],["staleDays","Days before stock counts as slow",""]];
+const FIELDS=[["minProfit","Minimum profit per item £","Skip anything that makes less than this."],["minRoi","Minimum return % (0 = off)","Optional. Profit as a % of what you spend: 30 means £30 back for every £100. Leave at 0 to judge on profit alone."],["budget","Total buying budget £","The money you're willing to have in reselling."],["maxStock","Max money in unsold stock £","Stops you tying up too much cash in stock."],["maxPrice","Overall max price per item £","Never pay more than this for one item. 0 means no limit."],["staleDays","Days before stock counts as slow",""]];
 function vSettings(){
   const r=S.rules,s=S.set;
   return`<h2>Settings</h2>
@@ -711,7 +712,7 @@ function vScan(){
 
 /* ---------- HUNTING (Today's Deals, Following, My categories, alerts) ---------- */
 const HDEF={cats:[],types:{bin:true,auction:true,misspelt:true,spares:false},alerts:false,interval:10,alertScore:70,minScore:40,post:5,pack:1,bpf:true,paused:false};
-let HD={cat:(()=>{try{const v=localStorage.getItem("flipscout_dcat")||"";return/^\d+$/.test(v)?v:""}catch(e){return""}})(),deals:null,report:null,learned:[],busy:false,err:"",filter:"all",at:0,q:"",sort:(()=>{try{return localStorage.getItem("flipscout_sort")||"score"}catch(e){return"score"}})()},FL={list:null,busy:false,err:""},DV=null;
+let HD={cat:(()=>{try{const v=localStorage.getItem("flipscout_dcat")||"";return/^\d+$/.test(v)?v:""}catch(e){return""}})(),deals:null,report:null,learned:[],busy:false,err:"",filter:"all",at:0,q:"",sort:(()=>{try{const v=localStorage.getItem("flipscout_sort");return!v||(v==="score"&&!localStorage.getItem("flipscout_sort2"))?"now":v}catch(e){return"now"}})()},FL={list:null,busy:false,err:""},DV=null;
 const H=()=>{S.hunt={...HDEF,...(S.hunt||{}),types:{...HDEF.types,...((S.hunt||{}).types||{})}};return S.hunt};
 const api=(q,body)=>fetch(`${S.set.url}?key=${encodeURIComponent(S.set.key)}&${q}`,body!==undefined?{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(body)}:{}).then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok||d.error)throw new Error(d.error||("error "+r.status));return d});
 const errText=e=>e.message==="Failed to fetch"?"no connection":e.message;
@@ -751,13 +752,24 @@ function shownProfit(d){return d.type==="AUC"&&d.profitAtMax!=null?d.profitAtMax
 function retPct(d){const auc=d.type==="AUC",item=auc?(d.maxItem!=null?d.maxItem:d.maxBid):d.price,pay=(item||0)+(d.ship||0)+(H().bpf?bpfA(item||0):0)+(+H().pack||0);return pay>0?Math.round(shownProfit(d)/pay*100):null}
 // Where the "sells for" figure comes from, in a few words
 function evShort(d){return d.src==="book"?"from your saved prices":d.src==="sold"?`${d.n} sale${d.n===1?"":"s"} in 30 days`:`${d.n} asking prices, no sales yet`}
-const SORTS=[["score","Best score"],["profit","Most profit"],["roi","Highest return"],["ending","Ending soonest"],["newest","Newest"]];
+// Likely final price of an auction: bids usually climb towards what these sell for, less so when it ends soon with few bids.
+// A simple estimate for now; it gets better as FlipScout records more finished auctions.
+function likelyEnd(d){if(d.type!=="AUC")return null;const mins=Math.max(0,((d.end||0)-Date.now())/60000),target=Math.max(d.price,(d.med||0)*0.88-(d.ship||0));
+  const w=mins>1440?0.9:mins>120?0.8:mins>30?(d.bids>2?0.7:0.55):(d.bids>2?0.5:0.3);return Math.round((d.price+(target-d.price)*w)*100)/100}
+function likelyProfit(d){if(d.type!=="AUC")return shownProfit(d);const it=likelyEnd(d),bf=H().bpf?bpfA(it):0;return Math.round((d.med-(d.sellFee||0)-(d.out||0)-(it+(d.ship||0)+bf))*100)/100}
+// how soon you need to act: auctions ending soon, Buy It Now listings that just appeared
+function urgency(d){const now=Date.now();if(d.type==="AUC"&&d.end){const m=(d.end-now)/60000;return m<30?1.6:m<120?1.35:m<720?1.1:1}
+  const age=(now-(d.created||d.found||now))/60000;return age<30?1.5:age<120?1.25:1}
+function rightNow(d){const p=likelyProfit(d),mx=d.maxItem!=null?d.maxItem:d.maxBid,win=d.type==="AUC"&&mx!=null&&likelyEnd(d)>mx?0.35:1;return Math.max(0,p)*(0.4+0.6*(d.score||50)/100)*urgency(d)*win}
+const actNow=d=>{const now=Date.now();return d.type==="AUC"?(d.end&&d.end-now>0&&d.end-now<2*36e5):(now-(d.created||d.found||0))<30*60000};
+const SORTS=[["now","Best right now"],["score","Best score"],["profit","Most profit"],["roi","Highest return"],["ending","Ending soonest"],["newest","Newest"]];
 function sortDeals(L){const k=HD.sort,v=(x,f)=>{const n=f(x);return n==null||isNaN(n)?-1e9:n};
-  const by={score:d=>d.score,profit:d=>shownProfit(d),roi:d=>retPct(d),newest:d=>d.created||d.found||0};
+  const by={now:rightNow,score:d=>d.score,profit:d=>shownProfit(d),roi:d=>retPct(d),newest:d=>d.created||d.found||0};
   if(k==="ending")return[...L].sort((a,b)=>(a.type==="AUC"&&a.end?a.end:9e15)-(b.type==="AUC"&&b.end?b.end:9e15)||v(b,by.score)-v(a,by.score));
-  const f=by[k]||by.score;return[...L].sort((a,b)=>v(b,f)-v(a,f))}
+  const f=by[k]||by.now;return[...L].sort((a,b)=>v(b,f)-v(a,f))}
+setInterval(()=>{document.querySelectorAll("[data-end]").forEach(e=>{const t=+e.getAttribute("data-end");if(t)e.textContent="⏱ "+left(t)})},20000);
 function setDcat(v){HD.cat=v;try{localStorage.setItem("flipscout_dcat",v)}catch(e){}render()}
-function setSort(k){HD.sort=k;try{localStorage.setItem("flipscout_sort",k)}catch(e){}render()}
+function setSort(k){HD.sort=k;try{localStorage.setItem("flipscout_sort",k);localStorage.setItem("flipscout_sort2","1")}catch(e){}render()}
 // Every deal tag in plain words, with what it means (tap a tag to see it)
 const TAGS={"New listing":["Just listed","Listed in the last hour, so few people have seen it yet."],
  "Ends overnight":["Ends overnight","This auction ends between midnight and 6am, when fewer people are bidding."],
@@ -765,11 +777,12 @@ const TAGS={"New listing":["Just listed","Listed in the last hour, so few people
  "Best Offer":["Best Offer","The seller accepts offers, so you may get it for less."],
  "Price not confirmed by sales":["Guess – no sales yet","FlipScout hasn't seen enough of these sell, so this price is a guess based on what sellers are asking. Tap Check sold prices to be sure."],
  "Price from price book":["✓ You checked this price","The sells-for price comes from eBay sold prices you checked and saved."],
+ "Price from category check":["✓ From your category check","The sells-for price comes from recent eBay sales collected when you filled prices for this category."],
  "Slow seller":["Slow to sell","These don't sell often, so it may take a while to resell."],
  "Prices falling":["Prices dropping","Sold prices for this have been going down lately."]};
 const tagOf=t=>TAGS[t]||(/^Ships from /.test(t)?[t,"The item is posted from outside the UK, so delivery may be slow and you may pay import charges."]:[t,""]);
 function tagSheet(t){const[l,m]=tagOf(t);openSheet(`<h2 style="margin-top:0">${esc(l)}</h2><div style="font-size:16px">${esc(m)}</div><div class="btns"><button onclick="closeSheet()">Got it</button></div>`)}
-const tagChips=tg=>tg.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${tg.map(t=>`<button class="chip${t==="Price from price book"?" ok":/^Price not|^Prices falling|^Slow|^Ships/.test(t)?" warn":""}" style="margin:0;min-height:32px;cursor:pointer" onclick="event.stopPropagation();tagSheet(${esc(JSON.stringify(t))})">${esc(tagOf(t)[0])} ⓘ</button>`).join("")}</div>`:"";
+const tagChips=tg=>tg.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${tg.map(t=>`<button class="chip${/^Price from (price book|category check)$/.test(t)?" ok":/^Price not|^Prices falling|^Slow|^Ships/.test(t)?" warn":""}" style="margin:0;min-height:32px;cursor:pointer" onclick="event.stopPropagation();tagSheet(${esc(JSON.stringify(t))})">${esc(tagOf(t)[0])} ⓘ</button>`).join("")}</div>`:"";
 function dealCard(d,i){
   const sp=d.kind==="spares";
   return`<div class="card" style="cursor:pointer" onclick="openDeal(${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openDeal(${i})}" role="button" tabindex="0" aria-label="${esc(d.title)}">
@@ -777,7 +790,7 @@ function dealCard(d,i){
   <div style="display:flex;gap:12px;margin-top:10px">${d.img?`<img src="${esc(d.img)}" alt="" style="width:72px;height:72px;object-fit:cover;border-radius:12px;flex:none;background:var(--card2)" loading="lazy">`:""}
    <div style="min-width:0"><div style="font-weight:700;line-height:1.3">${esc(d.title)}</div><div class="mu">${[d.cond,d.catName].filter(Boolean).map(esc).join(" · ")}</div>${d.matchLabel?`<div class="mu" style="margin-top:2px">vs ${esc(d.matchLabel)}</div>`:""}</div></div>
   ${sp?`<div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:8px"><div class="stat">${pp(d)}</div><div class="mu">working ones sell for ${gbp(d.workMed)}</div></div>`
-   :priceRow(d)+`<div class="mu" style="margin-top:8px;font-size:var(--fs-meta)">Sells for about <b class="num-t">${gbp(d.med)}</b> (estimate) · ${evShort(d)}${retPct(d)!=null?` · <b class="num-t">${retPct(d)}%</b> return`:""}</div>`}
+   :priceRow(d)+(d.type==="AUC"?`<div style="margin-top:8px;font-size:var(--fs-meta)"><span class="mu">Likely to end around</span> <b class="num-t">${gbp(likelyEnd(d))}</b> <span class="mu">· profit then about</span> <b class="${likelyProfit(d)>=0?"ok":"bad"} num-t">${likelyProfit(d)>=0?"+":"−"}${gbp(Math.abs(likelyProfit(d)))}</b>${likelyEnd(d)>(d.maxItem!=null?d.maxItem:d.maxBid)?' <span class="warn">· may go over your max</span>':""}</div>`:"")+`<div class="mu" style="margin-top:8px;font-size:var(--fs-meta)">Sells for about <b class="num-t">${gbp(d.med)}</b> (estimate) · ${evShort(d)}${retPct(d)!=null?` · <b class="num-t">${retPct(d)}%</b> return`:""}</div>`}
   ${(()=>{const tg=(d.tags||[]).filter(t=>!/^\d+ bids?$|^No bids yet$/.test(t));return tagChips(tg)})()}
   <div style="display:flex;gap:8px;margin-top:10px">${!sp&&d.look?`<button class="s" style="margin:0;flex:1" onclick="event.stopPropagation();lookUp(${esc(JSON.stringify(d.look))})">Check sold prices</button>`:""}<button class="s" style="margin:0;${!sp&&d.look?"flex:none":"flex:1"}" onclick="event.stopPropagation();hideDeal(${esc(JSON.stringify(d.id))})" aria-label="Hide this deal">Hide</button></div>
   </div>`}
@@ -809,10 +822,16 @@ function vHunt(){
    ${qq?`<div class="hint" style="margin:0 4px 10px" role="status">Showing ${list.length} of ${base.length} for “${esc(HD.q)}” · <button class="link" style="margin:0;min-height:0;padding:0" onclick="HD.q='';render()">Clear</button></div>`:""}`:""}
   ${HD.filter==="guess"?`<div class="hint" style="margin:0 4px 10px">Guesses are priced from what sellers are <b>asking</b>, not what things actually sold for. Check sold prices before buying. No alerts for these.</div>`:""}
   ${rep.hidden?`<div class="hint" style="margin:0 4px 10px">🛡 Scam shield hid ${rep.hidden} risky listing${rep.hidden>1?"s":""} last check.</div>`:""}
+  ${(()=>{const A=list.filter(actNow).sort((a,b)=>rightNow(b)-rightNow(a)).slice(0,8);if(!A.length)return"";
+    return`<div style="margin:2px 0 12px"><div style="display:flex;align-items:center;gap:6px;margin:0 4px 6px;font-weight:800">⚡ Act now <span class="mu" style="font-weight:600;font-size:13px">ending soon or just listed</span></div>
+    <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px">${A.map(d=>{const i=(HD.deals||[]).indexOf(d),p=likelyProfit(d);return`<button class="s" style="margin:0;flex:none;width:200px;text-align:left;padding:10px 12px;border-radius:16px;display:block" onclick="openDeal(${i})">
+      <div class="${d.type==="AUC"?"warn":"ok"}" style="font-size:13px;font-weight:800" ${d.type==="AUC"?`data-end="${d.end}"`:""}>${d.type==="AUC"?"⏱ "+left(d.end):"🆕 listed "+ago(d.created||d.found)}</div>
+      <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px">${esc(d.title)}</div>
+      <div class="ok num-t" style="font-weight:800;margin-top:2px">${p>=0?"+":"−"}${gbp(Math.abs(p))}${d.type==="AUC"?' <span class="mu" style="font-weight:600;font-size:12px">likely</span>':""}</div></button>`}).join("")}</div></div>`})()}
   ${HD.deals===null?`<div class="card mu">Loading deals…</div>`:list.length?list.map(d=>dealCard(d,(HD.deals||[]).indexOf(d))).join("")
    :qq&&base.length?`<div class="card empty"><b>No deals match “${esc(HD.q)}”</b><div class="mu">Try another word, or clear the search.</div><button class="s" onclick="HD.q='';render()">Clear search</button></div>`
    :`<div class="card empty">${I.bolt}<b>No deals right now</b><div class="mu">Real bargains are rare, so FlipScout only shows ones backed by real sold prices. It keeps checking and alerts you when one turns up.</div>${whyLine(rep)}<button class="s" onclick="go('cats')">My categories</button></div>`}
-  ${HD.filter==="all"?closeCalls():""}`;
+`;
 }
 // A worked sum, so nobody has to add anything up. rows: [label, amount, sign] ; "=" rows are totals
 function sumBox(title,rows,foot){return`<div class="card"><b>${title}</b>${rows.map(([l,v,k])=>k==="="?`<div class="li" style="border-top:2px solid var(--bd);font-weight:800"><span style="flex:1">${l}</span><span>${gbp(v)}</span></div>`:k==="P"?`<div class="li" style="border-top:2px solid var(--bd);font-weight:800;font-size:18px"><span style="flex:1">${l}</span><span class="${v>=0?"ok":"bad"}">${v>=0?"+":"−"}${gbp(Math.abs(v))}</span></div>`:k==="h"?`<div class="mu" style="margin-top:12px;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.03em">${l}</div>`:`<div class="li"><span style="flex:1">${l}</span><span>${k==="-"?"− ":""}${gbp(v)}</span></div>`).join("")}${foot?`<div class="hint" style="margin-top:8px">${foot}</div>`:""}</div>`}
@@ -823,7 +842,7 @@ function whyLine(rep){const w=rep&&rep.why,L=HD.learning;let t="";
   if(L&&L.sales)t+=`<div class="hint" style="text-align:left">Learned from <b>${L.sales}</b> sold prices so far${L.cats?`, including ${L.cats} popular categories in the background`:""}.</div>`;
   return t}
 function closeCalls(){const c=HD.close||[];if(!c.length)return"";
-  return`<h3 style="margin:18px 4px 4px">Close calls</h3><div class="hint" style="margin:0 4px 10px">Cheaper than they usually sell for, but under your profit rules (${gbp(S.rules.minProfit)} and ${S.rules.minRoi}%). No alerts for these.</div>`+
+  return`<h3 style="margin:18px 4px 4px">Nearly deals</h3><div class="hint" style="margin:0 4px 10px">Cheaper than usual, but less profit than your ${gbp(S.rules.minProfit)}${S.rules.minRoi>0?` and ${S.rules.minRoi}%`:""} rule. No alerts for these.</div>`+
   c.map(x=>`<div class="card"><div style="display:flex;gap:12px">${x.img?`<img src="${esc(x.img)}" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:12px;flex:none">`:""}<div style="min-width:0"><div style="font-weight:700;line-height:1.3">${esc(x.title)}</div><div class="mu">${esc(x.cond||"")}${x.matchLabel?" · vs "+esc(x.matchLabel):""}</div></div></div>
    <div class="mu" style="margin-top:8px">${x.price!=null?pp(x):gbp(x.cost)+" all-in"} · usually sells for ${gbp(x.med)} (${x.n} sold) · about <b class="ok">+${gbp(x.profit)}</b> (${x.roi}%)</div>
    <a href="${esc(ukUrl(x.url))}" target="_blank" rel="noopener"><button class="s" style="margin-top:8px">Open on eBay</button></a></div>`).join("")}
@@ -1168,7 +1187,7 @@ function bkAsk(i,v){const p=BK.list[i],el=$("bk_r"+i);if(!el||!p)return;const a=
    <div style="margin-top:6px;font-size:15px">${ln("Price incl. postage",a)}${ln("Buyer protection fee (estimate)",bf)}<div class="li" style="padding:6px 0;font-weight:800"><span style="flex:1">Total you pay</span><span>${gbp(pay)}</span></div>
    ${ln("Sells for about",m.med)}${ln("eBay fees when you sell",fee(m.med),1)}${ln("Postage + packaging out",m.post+m.pack,1)}<div class="li" style="padding:6px 0;font-weight:800"><span style="flex:1">You receive</span><span>${gbp(back)}</span></div>
    <div class="li" style="padding:6px 0;font-weight:800;font-size:18px;border-top:2px solid var(--bd)"><span style="flex:1">Profit</span><span class="${r.profit>=0?"ok":"bad"}">${r.profit>=0?"+":"−"}${gbp(Math.abs(r.profit))}</span></div>
-   <div class="mu">${r.roi.toFixed(0)}% return${r.ok?"":` · you want at least ${gbp(S.rules.minProfit)} and ${S.rules.minRoi}%`}</div></div></div>`}
+   <div class="mu">${r.roi.toFixed(0)}% return${r.ok?"":` · you want at least ${gbp(S.rules.minProfit)}${S.rules.minRoi>0?` and ${S.rules.minRoi}%`:""}`}</div></div></div>`}
 function bookList(){const t=BK.q.toLowerCase().split(/\s+/).filter(Boolean),L=(BK.list||[]).map((p,i)=>[p,i]).filter(([p])=>t.every(w=>String(p.label||p.pkey).toLowerCase().includes(w)));
   if(BK.list===null)return`<div class="card mu">Loading…</div>`;
   if(!BK.list.length)return`<div class="card empty">${I.chart}<b>No prices yet</b><div class="mu">Search for something above and tap Look up sold prices.</div></div>`;
@@ -1273,7 +1292,7 @@ function vCats(){
    ${cb("spares","Spares or repairs (shows what the seller says, you judge it)")}
    <div class="row"><div><label for="hm">Minimum score</label><select id="hm" onchange="H().minScore=+this.value;save();pushConfig()">${[[30,"Any (30+)"],[50,"Medium (50+)"],[70,"High only (70+)"]].map(o=>`<option value="${o[0]}"${h.minScore===o[0]?" selected":""}>${o[1]}</option>`).join("")}</select></div>
    <div><label for="hi">Check every</label><select id="hi" onchange="H().interval=+this.value;save();pushConfig()">${[5,10,15,30,60].map(m=>`<option value="${m}"${h.interval===m?" selected":""}>${m} minutes</option>`).join("")}</select></div></div>
-   <div class="hint">Minimum profit and return come from Settings › Your buying rules (now ${gbp(S.rules.minProfit)} and ${S.rules.minRoi}%).</div>
+   <div class="hint">Minimum profit and return come from Settings › Your buying rules (now ${gbp(S.rules.minProfit)}${S.rules.minRoi>0?` and ${S.rules.minRoi}%`:""}).</div>
    <label class="chkrow" style="min-height:44px"><input type="checkbox" ${h.paused?"checked":""} onchange="H().paused=this.checked;save();pushConfig()"><span>Pause hunting</span></label></div>`;
 }
 // Popular flip categories FlipScout already knows how to match model-by-model (UK category numbers)
@@ -1338,6 +1357,7 @@ try{if(!localStorage.getItem(OKEY))showOnb()}catch(e){}
 // offer to restore a cloud backup once, on a fresh install, never on every open
 (()=>{let asked=false;try{asked=!!localStorage.getItem("flipscout_restore_asked")}catch(e){}
   if(!asked&&connected()&&!S.items.length&&!S.base.length){try{localStorage.setItem("flipscout_restore_asked","1")}catch(e){}cloudCheck(true)}})();
+setTimeout(()=>{try{if(window._rulesNew&&connected()){save();pushConfig()}}catch(e){}},2500);
 </script>
 </body>
 </html>

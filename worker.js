@@ -666,6 +666,8 @@ async function sweep(env, manual) {
           const price = pr ? parseFloat(pr.value) : 0;
           const so = (it.shippingOptions || [])[0];
           const ship = so && so.shippingCost ? parseFloat(so.shippingCost.value) || 0 : 0;
+          // collection only: eBay sends no postage option (or only local pickup). Not "free post"
+          const collect = !(it.shippingOptions || []).some((o) => o && o.shippingCost) && ((it.pickupOptions || []).length > 0 || !(it.shippingOptions || []).length);
           const bucket = condBucket(it.conditionId);
           seen.push({
             id, cat: c.id, catName: c.name, title: it.title || "", cond: it.condition || "", condId: it.conditionId || "", bucket,
@@ -674,6 +676,7 @@ async function sweep(env, manual) {
             seller: it.seller ? { name: it.seller.username || "", fb: +it.seller.feedbackScore || 0, pct: parseFloat(it.seller.feedbackPercentage) || 0 } : { name: "", fb: 0, pct: 0 },
             loc: (it.itemLocation && it.itemLocation.country) || "", img: it.image ? it.image.imageUrl : "",
             url: "https://www.ebay.co.uk/itm/" + id, bestOffer: (it.buyingOptions || []).includes("BEST_OFFER"),
+            collect, where: collect ? String((it.itemLocation && (it.itemLocation.postalCode || it.itemLocation.city)) || "").replace(/\*+/g, "").trim().slice(0, 20) : "",
             ...(() => { const g = groupOf(it, c.id, c.name, bucket), w = groupOf(it, c.id, c.name, "used"); return { pkey: g ? g.key : null, matchLabel: g ? g.label : "", matchQ: g ? g.match : 0, workKey: w ? w.key : null, workQ: w ? w.match : 0 }; })(),
           });
         }
@@ -913,7 +916,7 @@ async function sweep(env, manual) {
   report.why = { ...why, judged: cands.length };
   // ending later: cheap high-start auctions with days left. Shown with a Follow button, never alerted
   try {
-    const keep = new Set(cands.map((s) => s.id)), mk = (d) => ({ id: d.id, title: d.title, img: d.img, url: d.url, cond: d.cond, cat: d.cat, catName: d.catName, type: "AUC",
+    const keep = new Set(cands.map((s) => s.id)), mk = (d) => ({ id: d.id, collect: d.collect, where: d.where, title: d.title, img: d.img, url: d.url, cond: d.cond, cat: d.cat, catName: d.catName, type: "AUC",
       price: d.price, ship: d.ship, bids: d.bids, end: d.end, med: d.med, maxBid: d.maxBid, maxItem: d.maxItem, maxPay: d.maxPay, profitAtMax: d.profitAtMax, sellFee: d.sellFee, out: d.out,
       score: d.score, n: d.n, src: d.src, fill: d.fill, rangeLo: d.rangeLo, rangeHi: d.rangeHi, seen: now });
     const old = (await kvGet(env, "later", [])).filter((x) => !keep.has(x.id) && x.end - now > 12 * 3600e3 && now - x.seen < 3 * DAY);

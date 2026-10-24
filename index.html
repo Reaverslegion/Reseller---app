@@ -761,6 +761,8 @@ function dealBadge(d){if(d.kind==="spares")return`<span class="chip warn">Spares
 // auction profit range: at your max bid (worst) to at the current bid (best). Buy It Now has one number
 const sgn=v=>(v>=0?"+":"−")+gbp(Math.abs(v));
 function profRange(d){const lo=d.profitAtMax!=null?d.profitAtMax:d.profit,hi=d.profit;return d.type==="AUC"&&hi!=null&&lo!=null&&hi-lo>=0.5?[lo,hi]:null}
+// postage under a price: collection-only listings say so (eBay sends no postage for them)
+const postNote=d=>d.collect?`<span class="warn" style="font-weight:700">collection only${d.where?" · "+esc(d.where):""}</span>`:d.ship?"+ "+gbp(d.ship)+" post":"free post";
 // The three numbers a reseller judges by: eBay's price, the most to pay, and profit after fees
 function priceRow(d,noProfit){
   const auc=d.type==="AUC",bo=!auc&&d.bestOffer,mx=d.maxItem!=null?d.maxItem:auc?d.maxBid:null;
@@ -770,7 +772,7 @@ function priceRow(d,noProfit){
   const cell=(label,val,note,cls)=>`<div style="min-width:0"><div class="mu" style="font-size:12px;letter-spacing:.02em">${label}</div><div class="stat num-t ${cls||""}" style="font-size:22px;line-height:1.2">${val}</div>${note?`<div class="mu" style="font-size:12px">${note}</div>`:""}</div>`;
   return`<div style="margin-top:10px;border-radius:16px;background:var(--card2);overflow:hidden">
    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px 14px">
-    ${cell(auc?"Current bid":"Buy it now",gbp(d.price),d.ship?"+ "+gbp(d.ship)+" post":"free post")}
+    ${cell(auc?"Current bid":"Buy it now",gbp(d.price),postNote(d))}
     ${auc||(!under&&mx!=null)?cell(midLabel,mx!=null?gbp(mx):"—",auc?(d.bids?d.bids+" bid"+(d.bids>1?"s":"")+" so far":"no bids yet"):bo?"offer this or less":"",'ok')
       :cell("Sells for",gbp(d.med),"typical, incl. post",'ok')}</div>
    ${noProfit?"":`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;background:${good?"var(--okbg)":"var(--badbg,rgba(248,113,113,.16))"};border-top:1px solid var(--bd)">
@@ -825,12 +827,12 @@ function dealCard(d,i){
   ${(()=>{const tg=(d.tags||[]).filter(t=>!/^\d+ bids?$|^No bids yet$/.test(t));return tagChips(tg)})()}
   <div style="display:flex;gap:8px;margin-top:10px">${!sp&&d.look?`<button class="s" style="margin:0;flex:1" onclick="event.stopPropagation();lookUp(${esc(JSON.stringify(d.look))})">Check sold prices</button>`:""}<button class="s" style="margin:0;${!sp&&d.look?"flex:none":"flex:1"}" onclick="event.stopPropagation();hideDeal(${esc(JSON.stringify(d.id))})" aria-label="Hide this deal">Hide</button></div>
   </div>`}
-const FILTERS=[["all","All"],["bin","Buy It Now"],["auc","Auctions"],["mis","Misspelt"],["spares","Spares"],["guess","Guesses"]];
+const FILTERS=[["all","All"],["bin","Buy It Now"],["auc","Auctions"],["mis","Misspelt"],["spares","Spares"],["col","Collection"],["guess","Guesses"]];
 // Deals priced only from asking prices (what sellers want, not what things sold for) are kept apart as "Guesses"
 let HIDE=(()=>{try{return JSON.parse(localStorage.getItem("flipscout_hidden")||"[]")}catch(e){return[]}})();
 function hideDeal(id){HIDE=[id,...HIDE.filter(x=>x!==id)].slice(0,500);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}render();toast("Hidden.","Undo",()=>{HIDE=HIDE.filter(x=>x!==id);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}render()})}
 const isGuess=d=>d.kind!=="spares"&&d.src==="asking";
-function fDeals(){const A=(HD.deals||[]).filter(d=>!HIDE.includes(d.id)&&(!HD.cat||String(d.cat)===HD.cat)),L=A.filter(d=>!isGuess(d));return{all:L.filter(d=>d.kind!=="spares"),bin:L.filter(d=>d.kind!=="spares"&&d.type==="BIN"),auc:L.filter(d=>d.kind!=="spares"&&d.type==="AUC"),mis:L.filter(d=>(d.tags||[]).includes("Misspelt title")),spares:L.filter(d=>d.kind==="spares"),guess:A.filter(isGuess)}}
+function fDeals(){const A=(HD.deals||[]).filter(d=>!HIDE.includes(d.id)&&(!HD.cat||String(d.cat)===HD.cat)),L0=A.filter(d=>!isGuess(d)),L=L0.filter(d=>!d.collect);return{col:L0.filter(d=>d.collect),all:L.filter(d=>d.kind!=="spares"),bin:L.filter(d=>d.kind!=="spares"&&d.type==="BIN"),auc:L.filter(d=>d.kind!=="spares"&&d.type==="AUC"),mis:L.filter(d=>(d.tags||[]).includes("Misspelt title")),spares:L.filter(d=>d.kind==="spares"),guess:A.filter(isGuess)}}
 function vHunt(){
   const h=H();
   if(!connected())return`<h2>Today's deals</h2><div class="card empty">${I.bolt}<b>Connect your Scan service</b><div class="mu">FlipScout hunts eBay for you around the clock. Paste your setup code to start.</div><button onclick="goConnect()">Connect now</button></div>`;
@@ -867,10 +869,10 @@ function vHunt(){
 // A worked sum, so nobody has to add anything up. rows: [label, amount, sign] ; "=" rows are totals
 function sumBox(title,rows,foot){return`<div class="card"><b>${title}</b>${rows.map(([l,v,k])=>k==="="?`<div class="li" style="border-top:2px solid var(--bd);font-weight:800"><span style="flex:1">${l}</span><span>${gbp(v)}</span></div>`:k==="P"?`<div class="li" style="border-top:2px solid var(--bd);font-weight:800;font-size:18px"><span style="flex:1">${l}</span><span class="${v>=0?"ok":"bad"}">${v>=0?"+":"−"}${gbp(Math.abs(v))}</span></div>`:k==="h"?`<div class="mu" style="margin-top:12px;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.03em">${l}</div>`:`<div class="li"><span style="flex:1">${l}</span><span>${k==="-"?"− ":""}${gbp(v)}</span></div>`).join("")}${foot?`<div class="hint" style="margin-top:8px">${foot}</div>`:""}</div>`}
 // price shown the way eBay shows it: item price + postage (the all-in cost with fees is on the deal page)
-const pp=d=>gbp(d.price)+(d.ship?` + ${gbp(d.ship)} post`:" + free post");
+const pp=d=>gbp(d.price)+(d.collect?` · collection only${d.where?" ("+esc(d.where)+")":""}`:d.ship?` + ${gbp(d.ship)} post`:" + free post");
 /* ending later: cheap high-start auctions with more than 12 hours left. Follow them; FlipScout alerts near the end */
-function laterBox(qq){if(!["all","auction"].includes(HD.filter))return"";
-  const L=(HD.later||[]).filter(d=>d.end>Date.now()+12*3600e3&&(!HD.cat||String(d.cat)===HD.cat)&&(!qq||String(d.title).toLowerCase().includes(qq))&&!(FL.list||[]).some(f=>f.id===d.id));
+function laterBox(qq){if(!["all","auc","col"].includes(HD.filter))return"";
+  const L=(HD.later||[]).filter(d=>!d.collect===(HD.filter!=="col")&&d.end>Date.now()+12*3600e3&&(!HD.cat||String(d.cat)===HD.cat)&&(!qq||String(d.title).toLowerCase().includes(qq))&&!(FL.list||[]).some(f=>f.id===d.id));
   if(!L.length)return"";
   return`<h3 style="margin:18px 4px 4px">Ending later</h3><div class="hint" style="margin:0 4px 10px">Auctions with more than 12 hours left that are under your max bid right now. The price will probably rise. Follow one and FlipScout alerts you if it's still under your max near the end.</div>`+
   L.map(d=>{const i=HD.later.indexOf(d);return`<div class="card" style="padding:14px">
@@ -1296,7 +1298,7 @@ function followRow(f,s){
   const at=auc?f.max:(f.price||0),pay=at+(f.ship||0)+(h.bpf?bpfA(at):0),prof=f.med?f.med-fee(f.med)-out-pay:null;
   const cell=(l,v,n,c)=>`<div style="min-width:0"><div class="mu" style="font-size:12px">${l}</div><div class="stat ${c||""}" style="font-size:19px;line-height:1.25">${v}</div>${n?`<div class="mu" style="font-size:12px">${n}</div>`:""}</div>`;
   return`<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px;padding:10px 12px;border-radius:14px;background:var(--card2)">
-   ${cell(auc?"Current bid":"Buy it now",gbp(f.price||0),f.ship?"+ "+gbp(f.ship)+" post":"free post")}
+   ${cell(auc?"Current bid":"Buy it now",gbp(f.price||0),postNote(f))}
    ${cell(auc?"Your max bid":"Your max",gbp(f.max),auc?"":"incl. postage","ok")}
    ${cell("Profit",prof==null?"—":(prof>=0?"+":"−")+gbp(Math.abs(prof)),prof==null?"price not known":auc?"after fees, if you win at max":"after fees, at this price",prof==null?"":prof>0?"ok":"bad")}</div>`}
 function vFollow(){

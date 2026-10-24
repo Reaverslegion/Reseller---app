@@ -518,7 +518,9 @@ async function closing(env) {
   const D = env.DB, now = Date.now();
   const used = await quota(env);
   if (used > EBAY_DAILY * 0.85) return 0; // keep the rest of today's eBay calls for hunting
-  const rows = await D.prepare("SELECT id FROM listings WHERE status='live' AND type='AUC' AND pkey IS NOT NULL AND bids>0 AND end_at>? AND end_at<=? ORDER BY bids DESC LIMIT 3").bind(now, now + 150000).all();
+  // your deals and followed auctions first; other auctions with bids only while plenty of today's calls are left
+  const mine = "(id IN (SELECT id FROM deals) OR id IN (SELECT id FROM follows))";
+  const rows = await D.prepare(`SELECT id FROM listings WHERE status='live' AND type='AUC' AND pkey IS NOT NULL AND end_at>? AND end_at<=? AND (${mine}${used < EBAY_DAILY * 0.5 ? " OR bids>0" : ""}) ORDER BY ${mine} DESC, bids DESC LIMIT 3`).bind(now, now + 150000).all();
   if (!(rows.results || []).length) return 0;
   const up = [];
   for (const row of rows.results || []) {
@@ -547,7 +549,14 @@ function cleanConfig(c) {
     alerts: c.alerts !== false,
     interval: [5, 10, 15, 30, 60].includes(+c.interval) ? +c.interval : 10,
     paused: !!c.paused,
+    // quiet hours: no phone alerts between these UK hours (e.g. 23 to 7). Hunting carries on
+    quiet: c.quiet && c.quiet.on ? { on: true, from: Math.max(0, Math.min(23, +c.quiet.from || 0)), to: Math.max(0, Math.min(23, +c.quiet.to || 0)) } : { on: false, from: 23, to: 7 },
   };
+}
+function isQuiet(cfg, ts) {
+  const q = cfg.quiet; if (!q || !q.on || q.from === q.to) return false;
+  const h = ukHour(ts || Date.now());
+  return q.from < q.to ? h >= q.from && h < q.to : h >= q.from || h < q.to;
 }
 
 // "sales learned" counts read every sales row, so they're worked out once a day and kept
@@ -962,6 +971,10 @@ async function sweep(env, manual) {
     }
   }
   // 7b. make sure the deals on the list are still for sale (a few per run, oldest check first)
+  {
+    const fresh = deals.filter((d) => !d.old).map((d) => d.id);
+    for (let i = 0; i < fresh.length; i += 90) { const part = fresh.slice(i, i + 90); await D.prepare(`UPDATE deals SET checked=? WHERE id IN (${part.map(() => "?").join(",")})`).bind(now, ...part).run(); }
+  }
   report.gone = await verifyDeals(env, 6);
 
   // remember where each auction deal stood, to learn from its final price later
@@ -975,7 +988,7 @@ async function sweep(env, manual) {
   await checkFollows(env, cfg);
 
   // 9. phone alerts for strong new deals
-  if (cfg.alerts && env.FCM_SA) {
+  if (cfg.alerts && env.FCM_SA && !isQuiet(cfg, now)) {
     const rows = await D.prepare("SELECT id, data FROM deals WHERE notified=0 AND score>=? ORDER BY score DESC LIMIT 5").bind(r.alertScore).all();
     for (const row of rows.results || []) {
       const d = JSON.parse(row.data);
@@ -989,6 +1002,7 @@ async function sweep(env, manual) {
     }
     await D.prepare("UPDATE deals SET notified=1 WHERE notified=0").run();
   }
+  else if (isQuiet(cfg, now)) await D.prepare("UPDATE deals SET notified=1 WHERE notified=0").run(); // quiet hours: no catch-up flood in the morning
   await saveQuota(env);
   report.ebayToday = await quota(env);
   await kvSet(env, "lastReport", { at: now, ...report, cats: cats.map((c) => c.name) });
@@ -1048,11 +1062,33 @@ async function push(env, title, body, data) {
   return { sent };
 }
 
+/* ---------------- several listings in one call (eBay's getItems is limited to selected partners: try once a day, else one by one) ---------------- */
+async function getMany(env, ids) {
+  const out = new Map();
+  if (!ids.length) return out;
+  const ok = await kvGet(env, "multi", null);
+  if (!ok || ok.ok || Date.now() - ok.at > DAY) {
+    try {
+      for (let i = 0; i < ids.length; i += 20) {
+        const part = ids.slice(i, i + 20);
+        const d = await ebay(env, "/buy/browse/v1/item/?item_ids=" + encodeURIComponent(part.map((id) => `v1|${id}|0`).join(",")));
+        for (const it of d.items || []) { const lid = it.legacyItemId || String(it.itemId || "").split("|")[1]; if (lid) out.set(String(lid), it); }
+      }
+      if (!ok || !ok.ok) await kvSet(env, "multi", { ok: true, at: Date.now() });
+      // listings missing from the answer may have ended: check a couple one by one
+      for (const id of ids.filter((x) => !out.has(String(x))).slice(0, 2)) { try { out.set(String(id), await ebay(env, `/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id=${id}`)); } catch (e) {} }
+      return out;
+    } catch (e) { await kvSet(env, "multi", { ok: false, at: Date.now() }); out.clear(); }
+  }
+  for (const id of ids.slice(0, 6)) { try { out.set(String(id), await ebay(env, `/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id=${id}`)); } catch (e) {} }
+  return out;
+}
+
 /* ---------------- is a listing still for sale? ---------------- */
-async function checkLive(env, id) {
+async function checkLive(env, id, pre) {
   const D = env.DB, now = Date.now();
-  let d;
-  try { d = await ebay(env, `/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id=${id}`); }
+  let d = pre;
+  if (!d) try { d = await ebay(env, `/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id=${id}`); }
   catch (e) { return { live: true, unknown: true }; } // eBay hiccup: don't hide it
   const avail = ((d.estimatedAvailabilities || [])[0] || {}).estimatedAvailabilityStatus;
   const end = d.itemEndDate ? Date.parse(d.itemEndDate) : null;
@@ -1081,10 +1117,14 @@ async function checkLive(env, id) {
   return out;
 }
 async function verifyDeals(env, n) {
-  const rows = await env.DB.prepare("SELECT id FROM deals WHERE expires>? ORDER BY checked ASC, score DESC LIMIT ?").bind(Date.now(), n).all();
+  // checks the deals checked longest ago (deals in this scan's results already count as checked)
+  const multi = await kvGet(env, "multi", null), lim = multi && multi.ok ? 20 : n;
+  const rows = await env.DB.prepare("SELECT id FROM deals WHERE expires>? ORDER BY checked ASC, score DESC LIMIT ?").bind(Date.now(), lim).all();
+  const ids = (rows.results || []).map((r) => r.id), got = await getMany(env, ids);
   let gone = 0;
-  for (const row of rows.results || []) {
-    const v = await checkLive(env, row.id);
+  for (const id of ids) {
+    if (!got.has(String(id))) continue; // not answered this time
+    const v = await checkLive(env, id, got.get(String(id)));
     if (!v.live || v.tooDear) gone++;
   }
   return gone;
@@ -1118,6 +1158,7 @@ async function checkFollows(env, cfg) {
         const total = (f.price || 0) + (f.ship || 0);
         if (f.type === "BIN" && total <= row.max && row.alerted !== "under") alert = "under";
         if (f.type === "AUC" && f.end - now < 60 * 60000 && f.price < row.max && row.alerted !== "ending") alert = "ending";
+        if (isQuiet(cfg, now)) alert = ""; // quiet hours: not marked as alerted, so it still alerts afterwards if it's still true
       }
       await D.prepare("UPDATE follows SET data=?, alerted=COALESCE(?, alerted) WHERE id=?").bind(JSON.stringify(f), alert || null, row.id).run();
       if (alert && cfg.alerts) {

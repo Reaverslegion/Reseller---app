@@ -300,7 +300,11 @@ function vAdmin(){if(!S.set.admin)return`<div class="card">Admin tools are off.<
   if(ADMS===null&&connected()){ADMS={};loadFillStats()}
   const seen=new Set();ADMC=[...STARTER.map(([id,name])=>({id,name})),...H().cats].filter(c=>!seen.has(c.id)&&seen.add(c.id));
   return`<h2>Admin tools</h2><div class="mu" style="margin:-6px 4px 12px">Hidden from customers. Tap the version in Settings 7 times to hide it again.</div>
-  ${connected()?`<div class="card"><b>Price list</b><div class="mu">Every model FlipScout has a price for: how many sold and what it sells for.</div><button onclick="go('plist')">Open price list ›</button></div>
+  ${connected()?`<div class="card"><b>Scan service</b><div class="mu">How often FlipScout searches eBay. Every search uses some of eBay's 5,000 daily calls.</div>
+   <label for="hi">Check every</label><select id="hi" onchange="H().interval=+this.value;save();pushConfig()">${[5,10,15,30,60].map(m=>`<option value="${m}"${H().interval===m?" selected":""}>${m} minutes</option>`).join("")}</select>
+   <label class="chkrow" style="min-height:44px"><input type="checkbox" ${H().paused?"checked":""} onchange="H().paused=this.checked;save();pushConfig();render()"><span>Pause hunting (stops all searches and followed-listing checks)</span></label>
+   <button onclick="huntNow()" ${HD.busy?"disabled":""}>${HD.busy?"Checking…":"Scan now"}</button></div>
+  <div class="card"><b>Price list</b><div class="mu">Every model FlipScout has a price for: how many sold and what it sells for.</div><button onclick="go('plist')">Open price list ›</button></div>
   <div class="card"><b>Fill prices for a whole category</b><div class="mu">Opens eBay's sold listings for the category, sorted newest first. Tap Next page as often as you like, then Save all. FlipScout sorts them into models and saves each one with 5+ sales.</div>
    ${ADMC.map((c,i)=>{const f=fillPg(c.id);return`<div class="li" style="padding:8px 0;flex-wrap:wrap;gap:6px"><span style="flex:1;min-width:0">${esc(c.name)}${(()=>{const t=ADMS&&ADMS[c.id];return t&&t.sales?`<div style="font-size:14px;font-weight:700">${fmtN(t.sales)} sales saved · ${fmtN(t.models)} model${t.models===1?"":"s"} priced</div>`:""})()}${f?`<div class="mu" style="font-size:13px">Read up to page ${f.pg}, ${ago(f.at)}</div>`:""}</span>
     ${f?`<button style="margin:0;min-height:40px;padding:6px 12px" onclick="fillCat(ADMC[${i}],${f.pg+1})">Continue p${f.pg+1}</button><button class="s" style="margin:0;min-height:40px;padding:6px 12px" onclick="fillCat(ADMC[${i}])">Start</button>`:`<button class="s" style="margin:0;min-height:40px;padding:6px 14px" onclick="fillCat(ADMC[${i}])">Fill prices</button>`}</div>`}).join("")}
@@ -628,9 +632,11 @@ function vSettings(){
    :!(h.alerts&&PUSH.registered)?`<div class="mu">Get a FlipScout notification the moment a strong deal appears or a followed listing hits your price, even with the app closed.</div><button onclick="enableAlerts()">Turn on alerts</button>${PUSH.err?`<div class="hint warn">${esc(PUSH.err)}</div>`:""}`
    :`<div class="li ok">✓ <span>Alerts are on for this phone.</span></div>
     <div class="btns"><button onclick="testAlert()">Send test alert</button><button class="s" onclick="H().alerts=false;save();pushConfig();render()">Turn off</button></div>
+    <label class="chkrow" style="min-height:44px;margin-top:6px"><input type="checkbox" ${h.quiet&&h.quiet.on?"checked":""} onchange="H().quiet={...(H().quiet||{from:23,to:7}),on:this.checked};save();pushConfig();render()"><span>Quiet hours (no alerts between set times)</span></label>
+    ${h.quiet&&h.quiet.on?`<div class="row"><div><label for="qf">From</label><select id="qf" onchange="H().quiet.from=+this.value;save();pushConfig()">${hourOpts(h.quiet.from)}</select></div><div><label for="qt">Until</label><select id="qt" onchange="H().quiet.to=+this.value;save();pushConfig()">${hourOpts(h.quiet.to)}</select></div></div><div class="hint">FlipScout keeps hunting. Deals found in quiet hours still show in the app; followed listings alert you afterwards if still under your max.</div>`:""}
     <label for="as">Alert me for deals scoring</label><select id="as" onchange="H().alertScore=+this.value;save();pushConfig()">${[[60,"60+ (more alerts)"],[70,"70+ (recommended)"],[85,"85+ (only the best)"]].map(o=>`<option value="${o[0]}"${h.alertScore===o[0]?" selected":""}>${o[1]}</option>`).join("")}</select>
     <details><summary>Not getting alerts?</summary><div class="mu">Some phones stop apps in the background to save battery. On Xiaomi, Redmi or POCO: open phone <b>Settings › Apps › FlipScout</b>, turn on <b>Autostart</b>, and set <b>Battery saver</b> to <b>No restrictions</b>. On Samsung: <b>Settings › Apps › FlipScout › Battery › Unrestricted</b>.<br><br>No sound? Open phone <b>Settings › Apps › FlipScout › Notifications › Deal alerts</b> and turn on <b>Sound</b> (Xiaomi also has <b>Allow sound</b> there).</div></details>`}</div>
-  <div class="card"><b>Hunting</b><div class="mu">${h.cats.length?`Hunting in ${h.cats.map(c=>esc(c.name)).join(", ")}.`:"No categories picked yet."}</div><button class="s" onclick="go('cats')">My categories</button>
+  <div class="card"><b>Hunting in</b>${h.cats.length?`<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">${h.cats.map(c=>`<span class="chip" style="font-size:14px;padding:6px 12px;color:var(--tx);background:var(--card2)">${esc(c.name)}</span>`).join("")}</div>`:`<div class="mu">No categories picked yet.</div>`}<button class="s" onclick="go('cats')">Change categories</button>
    <div class="row"><div><label for="hp">Your postage out £</label><input id="hp" inputmode="decimal" value="${h.post}" onchange="setHunt('post',this.value)"></div><div><label for="hk">Packaging £</label><input id="hk" inputmode="decimal" value="${h.pack}" onchange="setHunt('pack',this.value)"></div></div>
    <div class="hint">Used for deal profit. Typical medium parcel: about £5 to £7.</div>
    <label class="chkrow" style="min-height:44px"><input type="checkbox" ${h.bpf?"checked":""} onchange="H().bpf=this.checked;save();pushConfig()"><span>Add eBay's buyer protection fee to costs (estimate) ${ti("bpf")}</span></label></div>`})()}
@@ -643,17 +649,18 @@ function vSettings(){
    ${connected()?`<div class="li ${cloudErr?"warn":"ok"}">${cloudErr?"⚠":"✓"} <span>Automatic cloud backup is on. ${cloudErr?`Last try failed (${esc(cloudErr)}).`:cloudAt()?`Last saved ${new Date(cloudAt()).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}.`:"Saves a few seconds after each change."}</span></div>
    <div class="btns"><button onclick="cloudPush(true)">Back up now</button><button class="s" onclick="cloudCheck()">Restore from cloud</button></div>`
    :`<div class="mu">Connect your Scan service (below) and your data backs up automatically.</div>`}
-   <details><summary>Manual backup (copy and paste)</summary><div class="btns" style="margin-top:-6px"><button class="s" onclick="backup()">Copy backup text</button><button class="s" onclick="restoreSheet()">Paste backup</button></div></details></div>
-  <details class="card" id="adv" ${connected()?"":"open"}><summary>${connected()?"Advanced: Scan connection":"Connect your Scan service"}</summary>
+   ${S.set.admin?`<details><summary>Manual backup (copy and paste)</summary><div class="btns" style="margin-top:-6px"><button class="s" onclick="backup()">Copy backup text</button><button class="s" onclick="restoreSheet()">Paste backup</button></div></details>`:""}</div>
+  ${connected()&&!S.set.admin?"":`<details class="card" id="adv" ${connected()?"":"open"}><summary>${connected()?"Advanced: Scan connection":"Connect your Scan service"}</summary>
    <div class="mu">The address and key of your Scan service.</div>
    <label for="s_url">Service address</label><input id="s_url" value="${esc(s.url)}" placeholder="https://something.workers.dev" onchange="setConn(this.value)">
    <label for="s_key">Key</label><input id="s_key" value="${esc(s.key)}" onchange="S.set.key=this.value.trim();save();toast('Saved.');afterConn()">
    <label for="s_reg">Where sellers are</label><select id="s_reg" onchange="S.set.region=this.value;save();pushConfig();toast('Saved.')"><option value="uk"${s.region!=="any"?" selected":""}>UK sellers only</option><option value="any"${s.region==="any"?" selected":""}>Anywhere that posts to the UK</option></select>
    <div class="hint">Overseas sellers may add import fees and slower delivery.</div>
-   ${connected()?`<button class="s" onclick="copySetup()">Copy setup code</button><div class="hint">Paste this setup code into the Service address box on a new install, and the address and key fill in together.</div>`:`<div class="hint">Tip: you can paste a setup code into the Service address box.</div>`}</details>
+   ${connected()?`<button class="s" onclick="copySetup()">Copy setup code</button><div class="hint">Paste this setup code into the Service address box on a new install, and the address and key fill in together.</div>`:`<div class="hint">Tip: you can paste a setup code into the Service address box.</div>`}</details>`}
   <div class="card"><button class="s" onclick="ob=0;showOnb()">Show the welcome guide again</button><div class="mu" style="margin-top:10px;user-select:none" onclick="admTap()">FlipScout ${VER}</div></div>
   ${S.set.admin?`<div class="card"><b>Admin tools</b><div class="mu">For building the price database. Not for customers.</div><button class="s" onclick="go('admin')">Open admin tools</button></div>`:""}`;
 }
+const hourOpts=v=>Array.from({length:24},(_,i)=>`<option value="${i}"${+v===i?" selected":""}>${String(i).padStart(2,"0")}:00</option>`).join("");
 function setConn(v){v=String(v||"").trim();const i=v.indexOf("#");if(i>0){S.set.url=v.slice(0,i);S.set.key=v.slice(i+1)}else S.set.url=v;save();render();toast("Saved.");afterConn()}
 function afterConn(){if(connected()){CT=null;HD.deals=null;FL.list=null;if(H().cats.length)pushConfig();autoPush();if(!S.items.length&&!S.base.length)cloudCheck(true);else cloudSoon()}}
 async function copySetup(){const t=S.set.url+"#"+S.set.key;try{await navigator.clipboard.writeText(t);toast("Setup code copied. Keep it somewhere private.")}catch(e){openSheet(`<h2 style="margin-top:0">Setup code</h2><div class="mu">Long-press and copy. Keep it private.</div><textarea readonly>${esc(t)}</textarea><button onclick="closeSheet()">Done</button>`)}}
@@ -733,20 +740,20 @@ function vScan(){
 }
 
 /* ---------- HUNTING (Today's Deals, Following, My categories, alerts) ---------- */
-const HDEF={cats:[],types:{bin:true,auction:true,misspelt:true,spares:false},alerts:false,interval:10,alertScore:70,minScore:40,post:5,pack:1,bpf:true,paused:false};
+const HDEF={cats:[],types:{bin:true,auction:true,misspelt:true,spares:false},alerts:false,interval:10,alertScore:70,minScore:40,post:5,pack:1,bpf:true,paused:false,quiet:{on:false,from:23,to:7}};
 let HD={cat:(()=>{try{const v=localStorage.getItem("flipscout_dcat")||"";return/^\d+$/.test(v)?v:""}catch(e){return""}})(),deals:null,report:null,learned:[],busy:false,err:"",filter:"all",at:0,q:"",sort:(()=>{try{const v=localStorage.getItem("flipscout_sort");return!v||(v==="score"&&!localStorage.getItem("flipscout_sort2"))?"now":v}catch(e){return"now"}})()},FL={list:null,busy:false,err:""},DV=null;
 const H=()=>{S.hunt={...HDEF,...(S.hunt||{}),types:{...HDEF.types,...((S.hunt||{}).types||{})}};return S.hunt};
 const api=(q,body)=>fetch(`${S.set.url}?key=${encodeURIComponent(S.set.key)}&${q}`,body!==undefined?{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(body)}:{}).then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok||d.error)throw new Error(d.error||("error "+r.status));return d});
 const errText=e=>e.message==="Failed to fetch"?"no connection":e.message;
 let pcT=null;
 function pushConfig(now){clearTimeout(pcT);const go_=async()=>{if(!connected())return;const h=H(),r=S.rules;
-  try{await api("config=1",{cats:h.cats,types:h.types,alerts:!!h.alerts,interval:h.interval,paused:h.paused,region:S.set.region,
+  try{await api("config=1",{cats:h.cats,types:h.types,alerts:!!h.alerts,interval:h.interval,paused:h.paused,quiet:h.quiet,region:S.set.region,
    rules:{cheap:r.cheap!==false,minProfit:r.minProfit,minRoi:r.minRoi,seller:r.seller,feePct:r.feePct,feeFixed:r.feeFixed,post:h.post,pack:h.pack,bpf:h.bpf,alertScore:h.alertScore,minScore:h.minScore}})}
   catch(e){toast("Couldn't save hunting settings: "+errText(e))}};
   if(now)return go_();pcT=setTimeout(go_,800)}
 async function loadDeals(){if(!connected()||HD.busy)return;HD.busy=true;HD.err="";
   try{const d=await api("deals=1");HD.deals=d.deals||[];HD.report=d.report;HD.learned=d.learned||[];HD.close=d.close||[];HD.later=d.later||[];HD.aucLearn=d.aucLearn||{};HD.learning=d.learning||null;HD.at=Date.now()}catch(e){HD.err=errText(e)}
-  HD.busy=false;if(tab==="deals"||tab==="cats")render()}
+  HD.busy=false;if(FL.list==null)loadFollows();if(tab==="deals"||tab==="cats")render()}
 async function huntNow(){if(HD.busy)return;if(!H().cats.length){go("cats");toast("Pick some categories first.");return}
   HD.busy=true;render();
   try{await pushConfig(true);const r=await api("run=1");HD.busy=false;await loadDeals();toast(r.errors&&r.errors.length?"Check had problems: "+r.errors[0]:r.newDeals?`${r.newDeals} new deal${r.newDeals>1?"s":""} found.`:"Checked. No new deals this time.")}
@@ -761,6 +768,7 @@ function dealBadge(d){if(d.kind==="spares")return`<span class="chip warn">Spares
 // auction profit range: at your max bid (worst) to at the current bid (best). Buy It Now has one number
 const sgn=v=>(v>=0?"+":"−")+gbp(Math.abs(v));
 function profRange(d){const lo=d.profitAtMax!=null?d.profitAtMax:d.profit,hi=d.profit;return d.type==="AUC"&&hi!=null&&lo!=null&&hi-lo>=0.5?[lo,hi]:null}
+function actDots(){const r=$("actrow"),d=$("actdots");if(!r||!d)return;const w=r.firstElementChild?r.firstElementChild.offsetWidth+10:1,k=Math.round(r.scrollLeft/w);[...d.children].forEach((e,i)=>{e.style.width=i===k?"16px":"6px";e.style.background=i===k?"var(--warn)":"var(--bd)"})}
 // postage under a price: collection-only listings say so (eBay sends no postage for them)
 const postNote=d=>d.collect?`<span class="warn" style="font-weight:700">collection only${d.where?" · "+esc(d.where):""}</span>`:d.ship?"+ "+gbp(d.ship)+" post":"free post";
 // The three numbers a reseller judges by: eBay's price, the most to pay, and profit after fees
@@ -799,7 +807,7 @@ function sortDeals(L){const k=HD.sort,v=(x,f)=>{const n=f(x);return n==null||isN
   const by={now:rightNow,score:d=>d.score,profit:d=>shownProfit(d),roi:d=>retPct(d),newest:d=>d.created||d.found||0};
   if(k==="ending")return[...L].sort((a,b)=>(a.type==="AUC"&&a.end?a.end:9e15)-(b.type==="AUC"&&b.end?b.end:9e15)||v(b,by.score)-v(a,by.score));
   const f=by[k]||by.now;return[...L].sort((a,b)=>v(b,f)-v(a,f))}
-setInterval(()=>{document.querySelectorAll("[data-end]").forEach(e=>{const t=+e.getAttribute("data-end");if(t)e.textContent="⏱ "+left(t)})},20000);
+setInterval(()=>{document.querySelectorAll("[data-end]").forEach(e=>{const t=+e.getAttribute("data-end");if(t)e.textContent="Ends in "+left(t).replace(" left","")})},20000);
 function setDcat(v){HD.cat=v;try{localStorage.setItem("flipscout_dcat",v)}catch(e){}render()}
 function setSort(k){HD.sort=k;try{localStorage.setItem("flipscout_sort",k);localStorage.setItem("flipscout_sort2","1")}catch(e){}render()}
 // Every deal tag in plain words, with what it means (tap a tag to see it)
@@ -825,7 +833,7 @@ function dealCard(d,i){
   ${sp?`<div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:8px"><div class="stat">${pp(d)}</div><div class="mu">working ones sell for ${gbp(d.workMed)}</div></div>`
    :priceRow(d)+`<div class="mu" style="margin-top:8px;font-size:var(--fs-meta)">${d.type!=="AUC"&&(d.maxItem==null||d.price<=d.maxItem)?"Sells-for price "+evShort(d):`Sells for about <b class="num-t">${gbp(d.med)}</b> (estimate) · ${evShort(d)}`}${retPct(d)!=null?` · <b class="num-t">${retPct(d)}%</b> return`:""}</div>`}
   ${(()=>{const tg=(d.tags||[]).filter(t=>!/^\d+ bids?$|^No bids yet$/.test(t));return tagChips(tg)})()}
-  <div style="display:flex;gap:8px;margin-top:10px">${!sp&&d.look?`<button class="s" style="margin:0;flex:1" onclick="event.stopPropagation();lookUp(${esc(JSON.stringify(d.look))})">Check sold prices</button>`:""}<button class="s" style="margin:0;${!sp&&d.look?"flex:none":"flex:1"}" onclick="event.stopPropagation();hideDeal(${esc(JSON.stringify(d.id))})" aria-label="Hide this deal">Hide</button></div>
+  <div style="display:flex;gap:8px;margin-top:10px">${!sp&&d.look?`<button class="s" style="margin:0;flex:1;white-space:nowrap;padding:12px 10px" onclick="event.stopPropagation();lookUp(${esc(JSON.stringify(d.look))})" aria-label="Check sold prices">Sold prices</button>`:""}${sp?"":isFollowed(d.id)?`<button class="s" style="margin:0;flex:none;color:var(--ok)" onclick="event.stopPropagation();go('follow')" aria-label="Following this deal">✓ Following</button>`:`<button style="margin:0;flex:none;padding:12px 16px" onclick="event.stopPropagation();quickFollow(${i})" aria-label="Follow this deal">Follow</button>`}<button class="s" style="margin:0;${!sp&&d.look?"flex:none":"flex:1"}" onclick="event.stopPropagation();hideDeal(${esc(JSON.stringify(d.id))})" aria-label="Hide this deal">Hide</button></div>
   </div>`}
 const FILTERS=[["all","All"],["bin","Buy It Now"],["auc","Auctions"],["mis","Misspelt"],["spares","Spares"],["col","Collection"],["guess","Guesses"]];
 // Deals priced only from asking prices (what sellers want, not what things sold for) are kept apart as "Guesses"
@@ -839,8 +847,8 @@ function vHunt(){
   if(!h.cats.length)return`<h2>Today's deals</h2><div class="card empty">${I.bolt}<b>Pick what to hunt</b><div class="mu">Choose a few eBay categories you know, like Graphics Cards or Consoles. FlipScout checks them every few minutes and shows listings priced below what they sell for.</div><button onclick="addStarter()">Start with popular categories</button><button class="s" style="margin-top:8px" onclick="go('cats')">Choose my own</button></div>`;
   if(HD.deals===null&&!HD.busy&&!HD.err)setTimeout(loadDeals,0);
   const F2=fDeals(),base=F2[HD.filter]||F2.all,qq=HD.q.trim().toLowerCase(),list=sortDeals(qq?base.filter(d=>String(d.title).toLowerCase().includes(qq)):base),rep=HD.report||{},high=F2.all.filter(d=>d.score>=70).length,top=F2.all.reduce((t,d)=>Math.max(t,shownProfit(d)||0),0);
-  return`<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin:6px 4px 12px"><div><h2 style="margin:0">Today's deals</h2><div class="mu"><button class="link" style="margin:0;min-height:0;padding:0;font-weight:700" onclick="go('cats')">${h.cats.length} categor${h.cats.length>1?"ies":"y"} ›</button> · ${rep.at?"checked "+ago(rep.at):"not checked yet"}${h.paused?" · <span class='warn'>paused</span>":` · every ${h.interval} min`}</div></div>
-   <button style="margin:0;white-space:nowrap" onclick="huntNow()" ${HD.busy?"disabled":""}>${HD.busy?"Checking…":"Scan now"}</button></div>
+  return`<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin:6px 4px 12px"><div><h2 style="margin:0">Today's deals</h2><div class="mu"><button class="link" style="margin:0;min-height:0;padding:0;font-weight:700" onclick="go('cats')">${h.cats.length} categor${h.cats.length>1?"ies":"y"} ›</button> · ${rep.at?"checked "+ago(rep.at):"not checked yet"}${S.set.admin?(h.paused?" · <span class='warn'>paused</span>":` · every ${h.interval} min`):""}</div></div>
+   ${S.set.admin?`<button style="margin:0;white-space:nowrap" onclick="huntNow()" ${HD.busy?"disabled":""}>${HD.busy?"Checking…":"Scan now"}</button>`:""}</div>
   ${HD.err?`<div class="card bad" style="font-size:15px">${esc(HD.err)}</div>`:""}
   <div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px">
    <div class="card" style="margin:0;padding:10px 12px"><div class="mu">Deals</div><div class="stat">${F2.all.length}</div></div>
@@ -856,11 +864,13 @@ function vHunt(){
   ${HD.filter==="guess"?`<div class="hint" style="margin:0 4px 10px">Guesses are priced from what sellers are <b>asking</b>, not what things actually sold for. Check sold prices before buying. No alerts for these.</div>`:""}
   ${rep.hidden?`<div class="hint" style="margin:0 4px 10px">🛡 Scam shield hid ${rep.hidden} risky listing${rep.hidden>1?"s":""} last check.</div>`:""}
   ${(()=>{const A=list.filter(actNow).sort((a,b)=>rightNow(b)-rightNow(a)).slice(0,8);if(!A.length)return"";
-    return`<div style="margin:2px 0 12px"><div style="display:flex;align-items:center;gap:6px;margin:0 4px 6px;font-weight:800">⚡ Act now <span class="mu" style="font-weight:600;font-size:13px">ending soon or just listed</span></div>
-    <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px">${A.map(d=>{const i=(HD.deals||[]).indexOf(d),p=likelyProfit(d);return`<button class="s" style="margin:0;flex:none;width:200px;text-align:left;padding:10px 12px;border-radius:16px;display:block" onclick="openDeal(${i})">
-      <div class="${d.type==="AUC"?"warn":"ok"}" style="font-size:13px;font-weight:800" ${d.type==="AUC"?`data-end="${d.end}"`:""}>${d.type==="AUC"?"⏱ "+left(d.end):"🆕 listed "+ago(d.created||d.found)}</div>
-      <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px">${esc(d.title)}</div>
-      <div class="ok num-t" style="font-weight:800;margin-top:2px">${(()=>{const rg=profRange(d);return rg?`${sgn(rg[0])} to ${sgn(rg[1])}`:sgn(d.profit)})()}</div></button>`}).join("")}</div></div>`})()}
+    return`<section aria-label="Act now" style="margin:2px 0 14px;padding:14px 0 12px;border-radius:20px;background:var(--warnbg);border:1.5px solid color-mix(in srgb,var(--warn) 45%,transparent)">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:0 16px 10px"><div style="font-weight:800;font-size:17px">⚡ Act now</div><div class="mu" style="font-size:13px;font-weight:600">${A.length} ending soon or just listed${A.length>1?" · swipe ›":""}</div></div>
+    <div id="actrow" onscroll="actDots()" style="display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding:0 16px;padding:0 16px 4px;scrollbar-width:none">${A.map(d=>{const i=(HD.deals||[]).indexOf(d),rg=profRange(d),auc=d.type==="AUC";return`<button class="s" style="margin:0;flex:none;width:${A.length>1?"78%":"100%"};scroll-snap-align:start;text-align:left;padding:14px;border-radius:16px;display:block;background:var(--card);border:1px solid var(--bd);box-shadow:var(--shadow)" onclick="openDeal(${i})">
+      <span class="chip" style="background:${auc?"var(--warnbg)":"var(--okbg)"};color:${auc?"var(--warn)":"var(--ok)"};border:0" ${auc?`data-end="${d.end}"`:""}>${auc?"Ends in "+left(d.end).replace(" left",""):"Listed "+ago(d.created||d.found)}</span>
+      <div style="font-weight:700;margin-top:8px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.6em">${esc(d.title)}</div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-top:8px"><span class="mu" style="font-size:13px">${auc?"Bid":"Buy"} ${gbp(d.price)}</span><span class="ok num-t" style="font-weight:800;font-size:17px;white-space:nowrap">${rg?`${sgn(rg[0])} – ${sgn(rg[1])}`:sgn(d.profit)}</span></div></button>`}).join("")}</div>
+    ${A.length>1?`<div id="actdots" aria-hidden="true" style="display:flex;justify-content:center;gap:6px;margin-top:8px">${A.map((_,k)=>`<span style="width:${k?6:16}px;height:6px;border-radius:3px;background:${k?"var(--bd)":"var(--warn)"};transition:width .2s"></span>`).join("")}</div>`:""}</section>`})()}
   ${HD.deals===null?`<div class="card mu">Loading deals…</div>`:list.length?list.map(d=>dealCard(d,(HD.deals||[]).indexOf(d))).join("")+laterBox(qq)+whyLine(rep)
    :qq&&base.length?`<div class="card empty"><b>No deals match “${esc(HD.q)}”</b><div class="mu">Try another word, or clear the search.</div><button class="s" onclick="HD.q='';render()">Clear search</button></div>`
    :`<div class="card empty">${I.bolt}<b>No deals right now</b><div class="mu">Real bargains are rare, so FlipScout only shows ones backed by real sold prices. It keeps checking and alerts you when one turns up.</div>${whyLine(rep)}<button class="s" onclick="go('cats')">My categories</button></div>${laterBox(qq)}`}
@@ -882,7 +892,7 @@ function laterBox(qq){if(!["all","auc","col"].includes(HD.filter))return"";
    <div class="mu" style="font-size:14px;margin-top:4px">Sells for about ${gbp(d.med)}${d.profitAtMax!=null?` · profit at your max bid <b class="ok">${sgn(d.profitAtMax)}</b>`:""}</div>
    <div class="btns" style="margin-top:10px"><button onclick="followLater(${i})">Follow · max ${gbp(d.maxBid)}</button><a href="${esc(ukUrl(d.url))}" target="_blank" rel="noopener"><button class="s">View on eBay</button></a></div></div>`}).join("")}
 function followLater(i){const d=(HD.later||[])[i];if(!d)return;DV={...d,kind:"deal"};followSheet()}
-function whyLine(rep){const w=rep&&rep.why,L=HD.learning;let t="";
+function whyLine(rep){if(!S.set.admin)return"";const w=rep&&rep.why,L=HD.learning;let t="";
   if(w&&w.judged)t+=`<div class="hint" style="text-align:left;margin-top:10px">Last check looked at <span style="font-weight:800">${w.judged}</span> listings: ${w.fair} not cheap enough, ${w.noData} with no price yet, ${w.risky} risky.${S.set.admin&&w.noData>w.judged/2?" Fill more categories in Admin tools to price more of them.":""}</div>`;
   if(rep&&rep.at&&!(w&&w.judged))t+=`<div class="hint warn" style="text-align:left;margin-top:10px">The last check (${ago(rep.at)}) didn't read any listings${rep.errors&&rep.errors.length?":":"."}</div>`;
   if(rep&&rep.errors&&rep.errors.length)t+=`<div class="hint warn" style="text-align:left">Problems on the last check: ${esc([...new Set(rep.errors)].slice(0,3).join(" · "))}</div>`;
@@ -1282,14 +1292,22 @@ function spProfit(v){const d=DV,r=S.rules,h=H();if(!String(v).trim())return"";co
   const rc=num(v),out=h.post+h.pack,p=d.workMed-fee-out-d.cost-rc;
   return`<div style="font-size:15px;font-weight:400">${[["Working ones sell for",d.workMed,""],["eBay fees when you sell",fee,"-"],["Postage + packaging out",out,"-"],["Total you pay for it",d.cost,"-"],["Your repair cost",rc,"-"]].map(([l,x,k])=>`<div class="li"><span style="flex:1">${l}</span><span>${k?"− ":""}${gbp(x)}</span></div>`).join("")}
    <div class="li" style="border-top:2px solid var(--bd);font-weight:800;font-size:18px"><span style="flex:1">Profit if repaired</span><span class="${p>=0?"ok":"bad"}">${p>=0?"+":"−"}${gbp(Math.abs(p))}</span></div></div>`}
-function followSheet(){const d=DV;if(!d)return;const def=d.kind==="spares"?Math.round(d.price+d.ship):d.type==="AUC"?d.maxBid:(d.maxItem!=null?d.maxItem+(d.ship||0):d.maxPay);
+const followMax=d=>d.kind==="spares"?Math.round(d.price+d.ship):d.type==="AUC"?d.maxBid:(d.maxItem!=null?d.maxItem+(d.ship||0):d.maxPay);
+const FOLLOWED=new Set();const isFollowed=id=>FOLLOWED.has(id)||(FL.list||[]).some(f=>f.id===id);
+// one tap on a deal card: follow at the max FlipScout worked out; Change opens the full sheet
+async function quickFollow(i){const d=(HD.deals||[])[i];if(!d)return;const m=followMax(d);if(!(m>0)){DV=d;followSheet();return}
+  FOLLOWED.add(d.id);render();
+  try{await api("follow=1",{id:d.id,max:m,title:d.title,type:d.type,price:d.price,ship:d.ship,end:d.end,img:d.img,cond:d.cond,med:d.med});FL.list=null;
+    toast(`Following, max ${gbp(m)}.`,"Change",()=>{DV=d;followSheet()})}
+  catch(e){FOLLOWED.delete(d.id);render();toast("Couldn't follow: "+errText(e))}}
+function followSheet(){const d=DV;if(!d)return;const def=followMax(d);
   openSheet(`<h2 style="margin-top:0">Follow this listing</h2><div class="mu">${esc(d.title)}</div>
   <label for="fm">${d.type==="AUC"?"Your maximum bid £":"Most you'd pay, including postage £"}</label><input id="fm" inputmode="decimal" value="${def?def.toFixed(2):""}">
   <div class="hint">${d.type==="AUC"?"You'll get an alert when it's ending and still under your max.":"You'll get an alert if the price drops to your max or below."}</div>
   <div class="btns"><button onclick="doFollow()">Follow</button><button class="s" onclick="closeSheet()">Cancel</button></div>`)}
 async function doFollow(){const d=DV,m=num($("fm").value);if(!(m>0)){toast("Enter a price.");return}
-  try{await api("follow=1",{id:d.id,max:m,title:d.title,type:d.type,price:d.price,ship:d.ship,end:d.end,img:d.img,cond:d.cond,med:d.med});closeSheet();FL.list=null;toast("Following. You'll get an alert.","View",()=>go("follow"))}catch(e){toast("Couldn't follow: "+errText(e))}}
-async function loadFollows(){if(!connected()||FL.busy)return;FL.busy=true;FL.err="";try{const d=await api("follows=1");FL.list=d.follows||[]}catch(e){FL.err=errText(e)}FL.busy=false;if(tab==="follow")render()}
+  try{await api("follow=1",{id:d.id,max:m,title:d.title,type:d.type,price:d.price,ship:d.ship,end:d.end,img:d.img,cond:d.cond,med:d.med});closeSheet();FOLLOWED.add(d.id);FL.list=null;if(tab==="deals")render();toast("Following. You'll get an alert.","View",()=>go("follow"))}catch(e){toast("Couldn't follow: "+errText(e))}}
+async function loadFollows(){if(!connected()||FL.busy)return;FL.busy=true;FL.err="";try{const d=await api("follows=1");FL.list=d.follows||[]}catch(e){FL.err=errText(e)}FL.busy=false;if(tab==="follow"||tab==="deals")render()}
 async function unfollow(id){try{await api("unfollow="+id);FL.list=(FL.list||[]).filter(f=>f.id!==id);render();toast("Stopped following.")}catch(e){toast("Couldn't remove: "+errText(e))}}
 function changeMax(id){const f=(FL.list||[]).find(x=>x.id===id);if(!f)return;DV={id:f.id,title:f.title,type:f.type,price:f.price,ship:f.ship,end:f.end,maxPay:f.max,maxBid:f.max,url:f.url};followSheet()}
 // Following: the same three numbers as a deal card; profit uses the price you'd actually pay
@@ -1339,10 +1357,9 @@ function vCats(){
    ${cb("auction","Auctions ending soon you can win cheaply")}
    ${cb("misspelt","Misspelt titles (fewer people find them)")}
    ${cb("spares","Spares or repairs (shows what the seller says, you judge it)")}
-   <div class="row"><div><label for="hm">Minimum score</label><select id="hm" onchange="H().minScore=+this.value;save();pushConfig()">${[[30,"Any (30+)"],[50,"Medium (50+)"],[70,"High only (70+)"]].map(o=>`<option value="${o[0]}"${h.minScore===o[0]?" selected":""}>${o[1]}</option>`).join("")}</select></div>
-   <div><label for="hi">Check every</label><select id="hi" onchange="H().interval=+this.value;save();pushConfig()">${[5,10,15,30,60].map(m=>`<option value="${m}"${h.interval===m?" selected":""}>${m} minutes</option>`).join("")}</select></div></div>
+   <label for="hm">Minimum score</label><select id="hm" onchange="H().minScore=+this.value;save();pushConfig()">${[[30,"Any (30+)"],[50,"Medium (50+)"],[70,"High only (70+)"]].map(o=>`<option value="${o[0]}"${h.minScore===o[0]?" selected":""}>${o[1]}</option>`).join("")}</select>
    <div class="hint">Minimum profit and return come from Settings › Your buying rules (now ${gbp(S.rules.minProfit)}${S.rules.minRoi>0?` and ${S.rules.minRoi}%`:""}).</div>
-   <label class="chkrow" style="min-height:44px"><input type="checkbox" ${h.paused?"checked":""} onchange="H().paused=this.checked;save();pushConfig()"><span>Pause hunting</span></label></div>`;
+</div>`;
 }
 // Popular flip categories FlipScout already knows how to match model-by-model (UK category numbers)
 const STARTER=[["27386","Graphics Cards"],["139971","Video Game Consoles"],["9355","Mobile & Smart Phones"],["171485","Tablets & eBook Readers"],["177","PC Laptops & Netbooks"],["164","CPUs/Processors"],["80053","Monitors"],["170083","Memory (RAM)"],["175669","Solid State Drives"]];

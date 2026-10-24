@@ -653,6 +653,8 @@ async function sweep(env, manual) {
     const calls = [];
     if (cfg.types.bin || cfg.types.misspelt || cfg.types.spares) calls.push(["BIN", "buyingOptions:{FIXED_PRICE}", "newlyListed", 100]);
     if (cfg.types.auction || cfg.types.spares) calls.push(["AUC", "buyingOptions:{AUCTION}", "endingSoonest", 50]);
+    // every other scan: newly listed auctions too, for "Ending later" (high-start auctions days away)
+    if (cfg.types.auction && (manual || Math.floor(now / 600000) % 2 === 0)) calls.push(["AUC", "buyingOptions:{AUCTION}", "newlyListed", 50]);
     for (const [type, f, sort, lim] of calls) {
       try {
         const d = await ebay(env, `/buy/browse/v1/item_summary/search?category_ids=${c.id}&limit=${lim}&sort=${sort}&filter=${encodeURIComponent([...base, f].join(","))}`);
@@ -809,7 +811,7 @@ async function sweep(env, manual) {
   }
 
   // 5. judge each listing
-  const deals = [], spares = [];
+  const deals = [], spares = [], later = [];
   let hidden = 0;
   for (const s of cands) {
     const extra = r.bpf ? bpf(s.price) : 0;
@@ -846,7 +848,9 @@ async function sweep(env, manual) {
       if (age < 60 * 60000) tags.push("New listing");
     } else {
       if (!cfg.types.auction) continue;
-      if (!s.end || s.end - now > 12 * 3600e3) continue;
+      if (!s.end) continue;
+      // more than 12 hours left: only "serious" auctions whose price is already well up (not 99p starts), for "Ending later"
+      if (s.end - now > 12 * 3600e3 && !(s.price >= m.med * 0.6)) continue;
       maxBid = Math.floor(((slow ? mp - r.minProfit * 0.5 : mp) - s.ship - (r.bpf ? bpf(mp) : 0)) * 100) / 100;
       ok = maxBid > s.price;
       const h = ukHour(s.end);
@@ -889,7 +893,7 @@ async function sweep(env, manual) {
     if (slow) tags.push("Slow seller");
     if (m.trend === "falling") tags.push("Prices falling");
     if (score < r.minScore) continue;
-    deals.push({
+    (s.type === "AUC" && s.end - now > 12 * 3600e3 ? later : deals).push({
       ...s, kind: "deal", cost: Math.round(cost * 100) / 100, extra: Math.round(extra * 100) / 100,
       profit: Math.round(profit * 100) / 100, lowProfit: Math.round(lowProfit * 100) / 100, roi: Math.round(roi),
       maxPay: Math.floor(mp * 100) / 100, maxBid,
@@ -907,6 +911,14 @@ async function sweep(env, manual) {
   }
   report.hidden = hidden;
   report.why = { ...why, judged: cands.length };
+  // ending later: cheap high-start auctions with days left. Shown with a Follow button, never alerted
+  try {
+    const keep = new Set(cands.map((s) => s.id)), mk = (d) => ({ id: d.id, title: d.title, img: d.img, url: d.url, cond: d.cond, cat: d.cat, catName: d.catName, type: "AUC",
+      price: d.price, ship: d.ship, bids: d.bids, end: d.end, med: d.med, maxBid: d.maxBid, maxItem: d.maxItem, maxPay: d.maxPay, profitAtMax: d.profitAtMax, sellFee: d.sellFee, out: d.out,
+      score: d.score, n: d.n, src: d.src, fill: d.fill, rangeLo: d.rangeLo, rangeHi: d.rangeHi, seen: now });
+    const old = (await kvGet(env, "later", [])).filter((x) => !keep.has(x.id) && x.end - now > 12 * 3600e3 && now - x.seen < 3 * DAY);
+    await kvSet(env, "later", [...later.map(mk), ...old].sort((a, b) => b.maxBid - b.price - (a.maxBid - a.price)).slice(0, 25));
+  } catch (e) {}
   // close calls: below the usual sold price, but not enough profit for your rules. Shown, never alerted.
   try {
     const old = (await kvGet(env, "close", [])).filter((c) => now - c.at < 6 * 3600e3 && !cands.some((s) => s.id === c.id));
@@ -1154,7 +1166,7 @@ export default {
           const deals = (rows.results || []).map((r) => ({ ...JSON.parse(r.data), found: r.created }));
           const lc = await kvGet(env, "learnCats", { cats: [] });
           const cnt = (await kvGet(env, "learnedCounts", null)) || (await refreshLearned(env));
-          return json({ deals, report: await kvGet(env, "lastReport", null), learned: cnt.byCat, close: await kvGet(env, "close", []), aucLearn: await kvGet(env, "aucLearn", {}), learning: { cats: lc.cats.length, sales: cnt.total } });
+          return json({ deals, report: await kvGet(env, "lastReport", null), learned: cnt.byCat, close: await kvGet(env, "close", []), later: await kvGet(env, "later", []), aucLearn: await kvGet(env, "aucLearn", {}), learning: { cats: lc.cats.length, sales: cnt.total } });
         }
         if (P("check")) {
           const id = String(P("check")).replace(/\D/g, "");

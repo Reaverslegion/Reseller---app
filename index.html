@@ -749,7 +749,7 @@ async function loadDeals(){if(!connected()||HD.busy)return;HD.busy=true;HD.err="
   HD.busy=false;if(tab==="deals"||tab==="cats")render()}
 async function huntNow(){if(HD.busy)return;if(!H().cats.length){go("cats");toast("Pick some categories first.");return}
   HD.busy=true;render();
-  try{await pushConfig(true);const r=await api("run=1");HD.busy=false;await loadDeals();toast(r.newDeals?`${r.newDeals} new deal${r.newDeals>1?"s":""} found.`:"Checked. No new deals this time.")}
+  try{await pushConfig(true);const r=await api("run=1");HD.busy=false;await loadDeals();toast(r.errors&&r.errors.length?"Check had problems: "+r.errors[0]:r.newDeals?`${r.newDeals} new deal${r.newDeals>1?"s":""} found.`:"Checked. No new deals this time.")}
   catch(e){HD.busy=false;HD.err=errText(e);render()}}
 const ago=ts=>{if(!ts)return"";const m=Math.round((Date.now()-ts)/60000);return m<1?"just now":m<60?m+" min ago":m<1440?Math.round(m/60)+"h ago":Math.round(m/1440)+"d ago"};
 const left=ts=>{if(!ts)return"";const m=Math.round((ts-Date.now())/60000);if(m<=0)return"ended";if(m<60)return m+" min left";const h=Math.floor(m/60);return h<48?`${h}h ${m%60}m left`:Math.round(h/24)+" days left"};
@@ -863,6 +863,8 @@ function sumBox(title,rows,foot){return`<div class="card"><b>${title}</b>${rows.
 const pp=d=>gbp(d.price)+(d.ship?` + ${gbp(d.ship)} post`:" + free post");
 function whyLine(rep){const w=rep&&rep.why,L=HD.learning;let t="";
   if(w&&w.judged)t+=`<div class="hint" style="text-align:left;margin-top:10px">Last check looked at <span style="font-weight:800">${w.judged}</span> listings: ${w.fair} not cheap enough, ${w.noData} with no price yet, ${w.risky} risky.${S.set.admin&&w.noData>w.judged/2?" Fill more categories in Admin tools to price more of them.":""}</div>`;
+  if(rep&&rep.at&&!(w&&w.judged))t+=`<div class="hint warn" style="text-align:left;margin-top:10px">The last check (${ago(rep.at)}) didn't read any listings${rep.errors&&rep.errors.length?":":"."}</div>`;
+  if(rep&&rep.errors&&rep.errors.length)t+=`<div class="hint warn" style="text-align:left">Problems on the last check: ${esc([...new Set(rep.errors)].slice(0,3).join(" · "))}</div>`;
   if(L&&L.sales)t+=`<div class="hint" style="text-align:left">Learned from <span style="font-weight:800">${L.sales}</span> sold prices so far${L.cats?`, including ${L.cats} popular categories in the background`:""}.</div>`;
   return t}
 function closeCalls(){const c=HD.close||[];if(!c.length)return"";
@@ -1368,7 +1370,7 @@ function renderOnb(){
   const s=OB[ob],last=ob===OB.length-1,logo=document.querySelector(".brand img").src;
   $("onb").innerHTML=`<div style="text-align:right">${last?"":`<button class="link" onclick="finishOnb()">Skip</button>`}</div>
   <div class="art">${s[0]==="logo"?`<img src="${logo}" alt="">`:s[0]==="seller"?"":I[s[0]]}<h1>${s[1]}</h1><p>${s[2]}</p>
-  ${last?`<div style="width:100%;margin-top:14px"><button class="choice ${S.rules.seller==="private"?"on":""}" onclick="S.rules.seller='private';save();renderOnb()">Private seller<small>Selling my own things now and then</small></button><button class="choice ${S.rules.seller!=="private"?"on":""}" onclick="S.rules.seller='business';save();renderOnb()">Business seller<small>Buying to resell regularly</small></button></div>`:""}</div>
+  ${last?`<div style="width:100%;margin-top:14px"><button class="choice ${S.rules.seller==="private"?"on":""}" onclick="S.rules.seller='private';save();pushConfig();renderOnb()">Private seller<small>Selling my own things now and then</small></button><button class="choice ${S.rules.seller!=="private"?"on":""}" onclick="S.rules.seller='business';save();pushConfig();renderOnb()">Business seller<small>Buying to resell regularly</small></button></div>`:""}</div>
   <div class="dots">${OB.map((_,i)=>`<i class="${i===ob?"on":""}"></i>`).join("")}</div>
   ${last?`<button style="width:100%;margin:0" onclick="finishOnb()">Start using FlipScout</button>`
   :`<button style="width:100%;margin:0" onclick="ob++;renderOnb()">Next</button>`}`;

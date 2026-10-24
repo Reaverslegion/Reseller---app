@@ -739,6 +739,11 @@ async function sweep(env, manual) {
       const rr = await D.prepare("SELECT id, data, status, end_at, last_seen FROM listings WHERE cat=? AND first_seen>? ORDER BY first_seen DESC LIMIT 150").bind(c.id, now - DAY).all();
       for (const x of rr.results || []) if (x.status === "live" && x.data && x.last_seen > now - DAY && (!x.end_at || x.end_at > now + 5 * 60000)) rowsAll.push(x);
     }
+    // every deal already on the list is judged again too, so new rules and new prices reach it straight away
+    // (an auction listed days ago and ending tonight isn't in the newest or ending-soonest results yet)
+    const dl = await D.prepare("SELECT l.id, l.data, l.status, l.end_at, l.last_seen FROM deals d JOIN listings l ON l.id = d.id WHERE d.expires > ? LIMIT 200").bind(now).all();
+    const inRun = new Set(rowsAll.map((x) => x.id));
+    for (const x of dl.results || []) if (!inRun.has(x.id) && x.status === "live" && x.data && (!x.end_at || x.end_at > now + 5 * 60000)) { rowsAll.push(x); inRun.add(x.id); }
     for (const row of rowsAll) {
       if (seenIds.has(row.id)) continue;
       try {

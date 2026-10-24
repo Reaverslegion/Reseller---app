@@ -123,7 +123,7 @@ a{color:inherit;text-decoration:none}
 <div id="onb"></div>
 <script>
 const KEY="resell_helper_v1",DKEY="flipscout_draft",OKEY="flipscout_seen_v2",VER="2.0";
-const DEF={rules:{maxPrice:0,minProfit:20,minRoi:0,budget:200,maxStock:150,minSales:5,feePct:12.8,feeFixed:0.40,staleDays:30,minPct:35,seller:"business"},gate:[],items:[],base:[],hunt:null,set:{url:"",key:"",region:"uk",theme:"auto"}};
+const DEF={rules:{cheap:true,maxPrice:0,minProfit:20,minRoi:0,budget:200,maxStock:150,minSales:5,feePct:12.8,feeFixed:0.40,staleDays:30,minPct:35,seller:"business"},gate:[],items:[],base:[],hunt:null,set:{url:"",key:"",region:"uk",theme:"auto"}};
 const PRE=["Considered"],HOLD=["Bought","Listed","Returned"],DONE=["Sold","Done"],STOCK=["Bought","Listed","Sold","Done","Returned"];
 const OLDMAP={Identified:"Considered",Considered:"Considered",Purchased:"Bought",Received:"Bought",Tested:"Bought",Listed:"Listed",Sold:"Sold",Dispatched:"Sold",Completed:"Done",Returned:"Returned"};
 const BLANK={n:"",b:"",p:"",k:"",a:"",c:"Used",sp:"",q:"",x:"",cat:"",catName:"",catPath:""};
@@ -233,7 +233,7 @@ function money(){
 /* most you can pay and still pass every rule */
 function maxPay(med,cons,post,pack,withMoney){
   const r=S.rules,N=med-fee(med)-post-pack,k=r.minRoi/100;
-  let m=Math.min(N-r.minProfit,(N-k*pack)/(1+k),cons-fee(cons)-post-pack-0.01);
+  let m=Math.min(N-r.minProfit,(N-k*pack)/(1+k),r.cheap===false?Infinity:cons-fee(cons)-post-pack-0.01);
   if(r.maxPrice>0)m=Math.min(m,r.maxPrice);
   if(withMoney){const mo=money();m=Math.min(m,mo.cash,r.maxStock-mo.committed-pack)}
   return Math.floor(m*100)/100;
@@ -292,13 +292,17 @@ const TABS=[["deals","Deals","bolt"],["follow","Following","bell"],["book","Pric
 /* ---------- ADMIN (hidden): tap the version 7 times in Settings. Remove before public release ---------- */
 let admN=0,admT=0;
 function admTap(){const t=Date.now();admN=t-admT<1500?admN+1:1;admT=t;if(admN>=7){admN=0;S.set.admin=!S.set.admin;save();render();toast(S.set.admin?"Admin tools on.":"Admin tools off.")}}
-let ADMC=[];
+let ADMC=[],ADMS=null;
+async function loadFillStats(){try{const a=await api("fillstats=1");ADMS=a.stats||{}}catch(e){ADMS=ADMS||{}}if(tab==="admin")render()}
+const fmtN=n=>Number(n||0).toLocaleString("en-GB");
 function fillPicked(){if(!CAT.a||!CT||!CT[CAT.a]){toast('Pick a category first.');return}fillCat({id:CAT.a,name:CT[CAT.a].n})}
 function vAdmin(){if(!S.set.admin)return`<div class="card">Admin tools are off.</div>`;setTimeout(()=>{CAT.a=CAT.a||"";drawCat("a")},0);
+  if(ADMS===null&&connected()){ADMS={};loadFillStats()}
   const seen=new Set();ADMC=[...STARTER.map(([id,name])=>({id,name})),...H().cats].filter(c=>!seen.has(c.id)&&seen.add(c.id));
   return`<h2>Admin tools</h2><div class="mu" style="margin:-6px 4px 12px">Hidden from customers. Tap the version in Settings 7 times to hide it again.</div>
-  ${connected()?`<div class="card"><b>Fill prices for a whole category</b><div class="mu">Opens eBay's sold listings for the category, sorted newest first. Tap Next page as often as you like, then Save all. FlipScout sorts them into models and saves each one with 5+ sales.</div>
-   ${ADMC.map((c,i)=>{const f=fillPg(c.id);return`<div class="li" style="padding:8px 0;flex-wrap:wrap;gap:6px"><span style="flex:1;min-width:0">${esc(c.name)}${f?`<div class="mu" style="font-size:13px">Last time: up to page ${f.pg}, ${ago(f.at)}</div>`:""}</span>
+  ${connected()?`<div class="card"><b>Price list</b><div class="mu">Every model FlipScout has a price for: how many sold and what it sells for.</div><button onclick="go('plist')">Open price list ›</button></div>
+  <div class="card"><b>Fill prices for a whole category</b><div class="mu">Opens eBay's sold listings for the category, sorted newest first. Tap Next page as often as you like, then Save all. FlipScout sorts them into models and saves each one with 5+ sales.</div>
+   ${ADMC.map((c,i)=>{const f=fillPg(c.id);return`<div class="li" style="padding:8px 0;flex-wrap:wrap;gap:6px"><span style="flex:1;min-width:0">${esc(c.name)}${(()=>{const t=ADMS&&ADMS[c.id];return t&&t.sales?`<div style="font-size:14px;font-weight:700">${fmtN(t.sales)} sales saved · ${fmtN(t.models)} model${t.models===1?"":"s"} priced</div>`:""})()}${f?`<div class="mu" style="font-size:13px">Read up to page ${f.pg}, ${ago(f.at)}</div>`:""}</span>
     ${f?`<button style="margin:0;min-height:40px;padding:6px 12px" onclick="fillCat(ADMC[${i}],${f.pg+1})">Continue p${f.pg+1}</button><button class="s" style="margin:0;min-height:40px;padding:6px 12px" onclick="fillCat(ADMC[${i}])">Start</button>`:`<button class="s" style="margin:0;min-height:40px;padding:6px 14px" onclick="fillCat(ADMC[${i}])">Fill prices</button>`}</div>`}).join("")}
    <div class="hint">Take it steady: a few pages, then a break.</div></div>
   <div class="card"><b>Fill any eBay category</b><div class="mu">Pick it like on eBay, down to the most specific one you can, then tap Fill.</div><div id="catbox_a" style="margin-top:10px"></div>
@@ -316,6 +320,22 @@ function pickClose(){$("pick").style.display="none";$("pick").innerHTML="";pickO
   document.addEventListener("touchend",e=>{const s=sel(e);if(!s)return;e.preventDefault();if(!moved){s.blur();pickFor(s)}},{capture:true});
   document.addEventListener("mousedown",e=>{const s=sel(e);if(!s)return;e.preventDefault();s.blur();pickFor(s)},true);
   document.addEventListener("keydown",e=>{const s=sel(e);if(s&&(e.key==="Enter"||e.key===" ")){e.preventDefault();pickFor(s)}},true)})();
+/* ---------- ADMIN: price list (every saved model at a glance) ---------- */
+const PL={q:"",sort:"n"};
+function vPList(){if(BK.list==null&&!BK.busy)setTimeout(loadBook,0);
+  return`<h2>Price list</h2><div class="mu" style="margin:-6px 4px 12px">Every model with a saved price. "Sells for" is a careful price: 4 in 10 recent sales went for less.</div>
+  <input type="search" placeholder="Search, e.g. 2080" aria-label="Search models" value="${esc(PL.q)}" oninput="PL.q=this.value;$('pl_list').innerHTML=plRows()">
+  <div class="seg" style="margin:10px 0">${[["n","Most sold"],["az","A–Z"],["hi","Highest price"],["lo","Lowest price"]].map(t=>`<button class="${PL.sort===t[0]?"on":""}" onclick="PL.sort='${t[0]}';render()">${t[1]}</button>`).join("")}</div>
+  <div id="pl_list">${plRows()}</div>`}
+function plRows(){if(BK.list==null)return`<div class="card mu">${BK.err?"Couldn't load: "+esc(BK.err):"Loading prices…"}</div>`;
+  const w=PL.q.toLowerCase().split(/\s+/).filter(Boolean);
+  let L=BK.list.filter(p=>{const t=(p.label||"").toLowerCase();return w.every(x=>t.includes(x))});
+  const srt={n:(a,b)=>(b.n||0)-(a.n||0),az:(a,b)=>String(a.label).localeCompare(String(b.label)),hi:(a,b)=>b.avg-a.avg,lo:(a,b)=>a.avg-b.avg}[PL.sort];
+  L=L.sort(srt);const all=L.length;L=L.slice(0,300);
+  if(!all)return`<div class="card mu">${BK.list.length?"No model matches that.":"No saved prices yet. Fill a category first."}</div>`;
+  return`<div class="mu" style="margin:0 4px 6px">${fmtN(all)} model${all===1?"":"s"}${all>300?" · showing 300, search to narrow":""}</div><div class="card" style="padding-top:4px;padding-bottom:4px">${L.map(p=>`<div class="li" style="padding:9px 0;gap:10px">
+   <span style="flex:1;min-width:0"><b style="font-weight:700">${esc(p.label)}</b><div class="mu" style="font-size:13px">${p.n?`${fmtN(p.n)} sold`:"checked by you"}${p.lo!=null&&p.hi!=null?` · most £${Math.round(p.lo)}–£${Math.round(p.hi)}`:""} · ${ago(p.at)}${p.fresh===false?" · old":""}</div></span>
+   <span style="text-align:right;flex:none"><b class="num-t" style="font-size:17px">${gbp(p.avg)}</b><div class="mu" style="font-size:12px">${p.post!=null?`+ ${gbp(p.post)} post`:"post not known"}</div></span></div>`).join("")}</div>`}
 function goConnect(){go("settings");setTimeout(()=>{const a=$("adv");if(a){a.open=true;a.scrollIntoView({behavior:"smooth",block:"start"})}},60)}
 function go(t){if(t===tab)return;prev.push(tab);if(prev.length>20)prev.shift();tab=t;render()}
 function onBack(){
@@ -337,11 +357,11 @@ try{matchMedia("(prefers-color-scheme: dark)").addEventListener("change",applyTh
 
 function render(){
   applyTheme();
-  const sub=["settings","deal","cats","admin"].includes(tab);
+  const sub=["settings","deal","cats","admin","plist"].includes(tab);
   $("gear").innerHTML=sub?I.back:I.gear;$("gear").onclick=sub?()=>{onBack()}:()=>go("settings");
   $("gear").setAttribute("aria-label",sub?"Back":"Settings");
   $("nav").innerHTML=TABS.map(t=>`<button class="${tab===t[0]?"on":""}" onclick="go('${t[0]}')" aria-label="${t[1]}"><span class="pill">${I[t[2]]}</span>${t[1]}</button>`).join("");
-  $("app").innerHTML=({calc:vCalc,deals:vHunt,follow:vFollow,cats:vCats,deal:vDeal,book:vBook,stock:vStock,dash:vDash,settings:vSettings,admin:vAdmin,scan:vScan,saved:vDeals})[tab]();
+  $("app").innerHTML=({calc:vCalc,deals:vHunt,follow:vFollow,cats:vCats,deal:vDeal,book:vBook,stock:vStock,dash:vDash,settings:vSettings,admin:vAdmin,plist:vPList,scan:vScan,saved:vDeals})[tab]();
   if(tab==="calc")recalc();
   if(tab!==render.last){window.scrollTo(0,0);render.last=tab}
 }
@@ -616,7 +636,9 @@ function vSettings(){
    <label class="chkrow" style="min-height:44px"><input type="checkbox" ${h.bpf?"checked":""} onchange="H().bpf=this.checked;save();pushConfig()"><span>Add eBay's buyer protection fee to costs (estimate) ${ti("bpf")}</span></label></div>`})()}
   <div class="card"><b>Appearance</b><div class="seg" style="margin-top:10px">${[["auto","Auto"],["light","Light"],["dark","Dark"]].map(t=>`<button class="${(s.theme||"auto")===t[0]?"on":""}" onclick="S.set.theme='${t[0]}';save();render()">${t[1]}</button>`).join("")}</div><div class="hint">Auto follows your phone's setting.</div></div>
   <div class="card"><b>Your buying rules</b><div class="mu">These decide what counts as a good buy. Changes save straight away.</div>
-   ${FIELDS.map(f=>`<label for="r_${f[0]}">${f[1]}</label><input id="r_${f[0]}" inputmode="decimal" value="${r[f[0]]}" onchange="setRule('${f[0]}',this.value)">${f[2]?`<div class="hint">${f[2]}</div>`:""}`).join("")}</div>
+   ${FIELDS.map(f=>`<label for="r_${f[0]}">${f[1]}</label><input id="r_${f[0]}" inputmode="decimal" value="${r[f[0]]}" onchange="setRule('${f[0]}',this.value)">${f[2]?`<div class="hint">${f[2]}</div>`:""}`).join("")}
+   <label class="chkrow" style="min-height:44px;margin-top:10px"><input type="checkbox" ${r.cheap!==false?"checked":""} onchange="S.rules.cheap=this.checked;save();pushConfig();toast('Saved. New deals show after the next check.')"><span>Must not lose money if it only sells cheap</span></label>
+   <div class="hint">On: the most FlipScout lets you pay still breaks even if it sells at the low end of recent sales. This is safer but shows fewer deals, and for anything over about £40 it matters more than your minimum profit. Off: your minimum profit decides.</div></div>
   <div class="card"><b>Backup</b>
    ${connected()?`<div class="li ${cloudErr?"warn":"ok"}">${cloudErr?"⚠":"✓"} <span>Automatic cloud backup is on. ${cloudErr?`Last try failed (${esc(cloudErr)}).`:cloudAt()?`Last saved ${new Date(cloudAt()).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}.`:"Saves a few seconds after each change."}</span></div>
    <div class="btns"><button onclick="cloudPush(true)">Back up now</button><button class="s" onclick="cloudCheck()">Restore from cloud</button></div>`
@@ -719,7 +741,7 @@ const errText=e=>e.message==="Failed to fetch"?"no connection":e.message;
 let pcT=null;
 function pushConfig(now){clearTimeout(pcT);const go_=async()=>{if(!connected())return;const h=H(),r=S.rules;
   try{await api("config=1",{cats:h.cats,types:h.types,alerts:!!h.alerts,interval:h.interval,paused:h.paused,region:S.set.region,
-   rules:{minProfit:r.minProfit,minRoi:r.minRoi,seller:r.seller,feePct:r.feePct,feeFixed:r.feeFixed,post:h.post,pack:h.pack,bpf:h.bpf,alertScore:h.alertScore,minScore:h.minScore}})}
+   rules:{cheap:r.cheap!==false,minProfit:r.minProfit,minRoi:r.minRoi,seller:r.seller,feePct:r.feePct,feeFixed:r.feeFixed,post:h.post,pack:h.pack,bpf:h.bpf,alertScore:h.alertScore,minScore:h.minScore}})}
   catch(e){toast("Couldn't save hunting settings: "+errText(e))}};
   if(now)return go_();pcT=setTimeout(go_,800)}
 async function loadDeals(){if(!connected()||HD.busy)return;HD.busy=true;HD.err="";
@@ -830,7 +852,7 @@ function vHunt(){
       <div class="${d.type==="AUC"?"warn":"ok"}" style="font-size:13px;font-weight:800" ${d.type==="AUC"?`data-end="${d.end}"`:""}>${d.type==="AUC"?"⏱ "+left(d.end):"🆕 listed "+ago(d.created||d.found)}</div>
       <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px">${esc(d.title)}</div>
       <div class="ok num-t" style="font-weight:800;margin-top:2px">${p>=0?"+":"−"}${gbp(Math.abs(p))}${d.type==="AUC"?' <span class="mu" style="font-weight:600;font-size:12px">likely</span>':""}</div></button>`}).join("")}</div></div>`})()}
-  ${HD.deals===null?`<div class="card mu">Loading deals…</div>`:list.length?list.map(d=>dealCard(d,(HD.deals||[]).indexOf(d))).join("")
+  ${HD.deals===null?`<div class="card mu">Loading deals…</div>`:list.length?list.map(d=>dealCard(d,(HD.deals||[]).indexOf(d))).join("")+whyLine(rep)
    :qq&&base.length?`<div class="card empty"><b>No deals match “${esc(HD.q)}”</b><div class="mu">Try another word, or clear the search.</div><button class="s" onclick="HD.q='';render()">Clear search</button></div>`
    :`<div class="card empty">${I.bolt}<b>No deals right now</b><div class="mu">Real bargains are rare, so FlipScout only shows ones backed by real sold prices. It keeps checking and alerts you when one turns up.</div>${whyLine(rep)}<button class="s" onclick="go('cats')">My categories</button></div>`}
 `;
@@ -840,8 +862,8 @@ function sumBox(title,rows,foot){return`<div class="card"><b>${title}</b>${rows.
 // price shown the way eBay shows it: item price + postage (the all-in cost with fees is on the deal page)
 const pp=d=>gbp(d.price)+(d.ship?` + ${gbp(d.ship)} post`:" + free post");
 function whyLine(rep){const w=rep&&rep.why,L=HD.learning;let t="";
-  if(w&&w.judged)t+=`<div class="hint" style="text-align:left;margin-top:10px">Last check looked at <b>${w.judged}</b> listings: ${w.fair} at a normal price, ${w.noData} still learning prices, ${w.risky} risky.</div>`;
-  if(L&&L.sales)t+=`<div class="hint" style="text-align:left">Learned from <b>${L.sales}</b> sold prices so far${L.cats?`, including ${L.cats} popular categories in the background`:""}.</div>`;
+  if(w&&w.judged)t+=`<div class="hint" style="text-align:left;margin-top:10px">Last check looked at <span style="font-weight:800">${w.judged}</span> listings: ${w.fair} not cheap enough, ${w.noData} with no price yet, ${w.risky} risky.${S.set.admin&&w.noData>w.judged/2?" Fill more categories in Admin tools to price more of them.":""}</div>`;
+  if(L&&L.sales)t+=`<div class="hint" style="text-align:left">Learned from <span style="font-weight:800">${L.sales}</span> sold prices so far${L.cats?`, including ${L.cats} popular categories in the background`:""}.</div>`;
   return t}
 function closeCalls(){const c=HD.close||[];if(!c.length)return"";
   return`<h3 style="margin:18px 4px 4px">Nearly deals</h3><div class="hint" style="margin:0 4px 10px">Cheaper than usual, but less profit than your ${gbp(S.rules.minProfit)}${S.rules.minRoi>0?` and ${S.rules.minRoi}%`:""} rule. No alerts for these.</div>`+
@@ -1111,10 +1133,10 @@ function fillCat(c,start){if(!c)return;const IAB=window.cordova&&window.cordova.
 async function fillSave(c,rows){closeSheet();toast(`Sorting ${rows.length} sales into models…`);
   try{const r={read:0,fresh:0,models:0,saved:0,few:0,kept:0,top:[]},seen=new Map();
     for(let i=0;i<rows.length;i+=1500){const x=await api("fill=1",{cat:c.id,catName:c.name,cond:"used",rows:rows.slice(i,i+1500).map(x=>({id:x.id,n:x.n,p:x.p,s:x.s,d:x.d,c:x.c}))});
-      ["read","fresh","models","few","kept"].forEach(k=>r[k]+=x[k]||0);(x.top||[]).forEach(t=>seen.set(t.label,t))}
+      ["read","fresh","models","few","kept"].forEach(k=>r[k]+=x[k]||0);if(x.stats){ADMS=ADMS||{};ADMS[c.id]=x.stats;r.stats=x.stats}(x.top||[]).forEach(t=>seen.set(t.label,t))}
     r.top=[...seen.values()].sort((a,b)=>b.n-a.n);r.saved=r.top.length;
     BK.list=null;loadBook();
-    openSheet(`<h2 style="margin-top:0">Saved ${r.saved} prices</h2><div class="mu">${esc(c.name)} · ${r.read} sales read, ${r.fresh} new (repeats skipped)</div>
+    openSheet(`<h2 style="margin-top:0">Saved ${r.saved} prices</h2><div class="mu">${esc(c.name)} · ${r.read} sales read, ${r.fresh} new (repeats skipped)</div>${r.stats?`<div style="margin-top:6px;font-weight:700">${esc(c.name)} in total: ${fmtN(r.stats.sales)} sales saved · ${fmtN(r.stats.models)} models priced</div>`:""}
      <div style="margin-top:10px;max-height:46vh;overflow:auto">${(r.top||[]).map(x=>`<div class="li" style="padding:7px 0"><span style="flex:1;min-width:0">${esc(x.label)} <span class="mu">· ${x.n} sold</span></span><span class="num-t" style="font-weight:700">${gbp(x.avg)}</span></div>`).join("")||`<div class="mu">No model had enough sales yet. Try a few more pages.</div>`}</div>
      ${r.few?`<div class="hint">${r.few} model${r.few>1?"s":""} had fewer than 5 sales, so ${r.few>1?"they weren't":"it wasn't"} saved. More pages next time will add them.</div>`:""}
      ${r.kept?`<div class="hint">${r.kept} price${r.kept>1?"s":""} you checked yourself this week ${r.kept>1?"were":"was"} kept.</div>`:""}
@@ -1179,7 +1201,7 @@ async function bookFind(manual){const t=String(($("bk_q")||{}).value||BK.q).trim
   BK.finding=false}
 async function loadBook(){if(!connected()||BK.busy)return;BK.busy=true;BK.err="";
   try{const a=await api("prices=1");BK.list=a.prices||[]}catch(e){BK.err=errText(e)}
-  BK.busy=false;if(tab==="book")render()}
+  BK.busy=false;if(tab==="book"||tab==="plist")render()}
 async function unprice(i){const p=(BK.list||[])[i];if(!p)return;try{await api("unprice="+encodeURIComponent(p.pkey));BK.list.splice(i,1);BK.open=-1;render();toast("Removed.")}catch(e){toast("Couldn't remove: "+errText(e))}}
 function bookFilter(v){BK.q=v;const el=$("bk_list");if(el)el.innerHTML=bookList()}
 function bkAsk(i,v){const p=BK.list[i],el=$("bk_r"+i);if(!el||!p)return;const a=num(v);if(!(a>0)){el.innerHTML="";return}

@@ -119,7 +119,8 @@ function sellFee(x, r) { return r.seller === "private" ? 0 : x * r.feePct / 100 
 function bpf(p) { return 0.1 + Math.min(p, 20) * 0.07 + Math.max(0, Math.min(p, 300) - 20) * 0.04 + Math.max(0, Math.min(p, 4000) - 300) * 0.02; }
 function maxPay(med, low, r) {
   const out = r.post + r.pack, N = med - sellFee(med, r) - out, k = r.minRoi / 100;
-  return Math.min(N - r.minProfit, (N - k * r.pack) / (1 + k), low - sellFee(low, r) - out - 0.01);
+  // "cheap" (on by default): also never lose money if it only sells at the cheap end
+  return Math.min(N - r.minProfit, (N - k * r.pack) / (1 + k), r.cheap === false ? Infinity : low - sellFee(low, r) - out - 0.01);
 }
 
 /* ---------------- grouping comparable items (by spec, not brand) ---------------- */
@@ -417,7 +418,7 @@ async function fillPrices(env, b) {
   // first fill after the careful-price update: recalculate every model already collected, not just this page's
   if (!(await kvGet(env, "fillV2", false))) {
     const all = await env.DB.prepare("SELECT f.pkey, p.label, p.q FROM fillsales f LEFT JOIN prices p ON p.pkey = f.pkey").all();
-    for (const r of all.results || []) if (!groups.has(r.pkey) && r.label) groups.set(r.pkey, { label: r.label, q: r.q || "", add: [] });
+    for (const r of all.results || []) if (!groups.has(r.pkey) && r.label) groups.set(r.pkey, { label: r.label, q: r.q || "", add: [], recalc: true });
     await kvSet(env, "fillV2", true);
   }
   const keys = [...groups.keys()], have = new Map();
@@ -441,7 +442,7 @@ async function fillPrices(env, b) {
     const dated = keep.filter((r) => r[3]).sort((a, c) => a[3] - c[3]); let trend = "steady";
     if (dated.length >= 8) { const h = dated.length >> 1, o = median(dated.slice(0, h).map((r) => r[1])), nw = median(dated.slice(h).map((r) => r[1])); trend = nw > o * 1.05 ? "rising" : nw < o * 0.95 ? "falling" : "steady"; }
     prices.push([key, x.label.slice(0, 120), x.q.slice(0, 400), avg, null, sh.length ? Math.round(median(sh) * 100) / 100 : null, trend, now, "fill", use.length, lo, hi]);
-    saved.push({ label: x.label, n: use.length, avg });
+    saved.push({ label: x.label, n: use.length, avg, key });
   }
   // few queries per save (free plan allows 50): many rows per statement
   const multi = (head, tail, cols, list, per) => { const st = []; for (let i = 0; i < list.length; i += per) { const part = list.slice(i, i + per); st.push(env.DB.prepare(head + part.map(() => "(" + Array(cols).fill("?").join(",") + ")").join(",") + tail).bind(...part.flat())); } return st; };
@@ -449,9 +450,24 @@ async function fillPrices(env, b) {
     ...multi("INSERT INTO prices (pkey,label,q,avg,st,post,trend,at,src,n,lo,hi) VALUES ", " ON CONFLICT(pkey) DO UPDATE SET label=excluded.label, q=excluded.q, avg=excluded.avg, post=excluded.post, trend=excluded.trend, at=excluded.at, src='fill', n=excluded.n, lo=excluded.lo, hi=excluded.hi", 12, prices, 8)];
   if (st.length) await env.DB.batch(st);
   saved.sort((a, c) => c.n - a.n);
-  return { read: rows.length, fresh, models: groups.size, saved: saved.length, few, kept, top: saved.slice(0, 40) };
+  // per-category totals for Admin tools: sales stored and models priced
+  let stats = null;
+  try {
+    const fc = await kvGet(env, "fillCats", {}), e = fc[cat] || { k: {} }, ok = new Set(saved.map((x) => x.key));
+    const kind = (k) => k.split(":")[0], kinds = new Set([...groups].filter(([, x]) => x.add.length).map(([k]) => kind(k)));
+    for (const [key, list] of blobs) {
+      const x = groups.get(key);
+      // this page's models, ones already counted for this category, and (on the one-off recalculation) earlier models of the same kind
+      if (!(x.add.length || e.k[key] || (x.recalc && kinds.has(kind(key)) && !/^t/.test(key)))) continue;
+      e.k[key] = [JSON.parse(list).length, ok.has(key) || mine.has(key) ? 1 : 0];
+    }
+    e.name = catName; e.at = now; fc[cat] = e; await kvSet(env, "fillCats", fc);
+    stats = fillStat(e);
+  } catch (err) {}
+  return { read: rows.length, fresh, models: groups.size, saved: saved.length, few, kept, top: saved.slice(0, 40), stats };
 }
 
+const fillStat = (e) => { const v = Object.values(e.k || {}); return { sales: v.reduce((a, x) => a + x[0], 0), models: v.filter((x) => x[1]).length, at: e.at || 0, name: e.name || "" }; };
 // the sold-price search FlipScout opens for a listing's product (Check sold prices)
 function lookInfo(s, alt) {
   if (!s.pkey || s.bucket === "parts") return null;
@@ -520,7 +536,7 @@ async function closing(env) {
 }
 
 /* ---------------- the hunt ---------------- */
-const DEFAULT_RULES = { minProfit: 20, minRoi: 0, seller: "business", feePct: 12.8, feeFixed: 0.4, post: 5, pack: 1, bpf: true, alertScore: 70, minScore: 40 };
+const DEFAULT_RULES = { cheap: true, minProfit: 20, minRoi: 0, seller: "business", feePct: 12.8, feeFixed: 0.4, post: 5, pack: 1, bpf: true, alertScore: 70, minScore: 40 };
 function cleanConfig(c) {
   c = c || {};
   return {
@@ -767,8 +783,9 @@ async function sweep(env, manual) {
       const med = b.avg + (post || 0); // what buyers pay in total, like our own sold prices
       let ev = now - b.at < 7 * DAY ? 1 : 0.85; // fresher is better
       if (sold.length >= 3) { const off = Math.abs(median(sold) - med) / med; ev *= off < 0.15 ? 1 : off < 0.3 ? 0.85 : 0.65; } // agrees with what we've seen sell?
-      let low = med * 0.85;
-      if (b.trend === "falling") low = med * 0.8;
+      // the cheap end: the real 25th percentile when the fill recorded it (its "sells for" is already careful), else 15% under
+      let low = b.lo != null ? Math.min(b.lo + (post || 0), med) : med * 0.85;
+      if (b.trend === "falling") low = Math.min(low, med * 0.8);
       if (b.st != null && b.st < 25) low = Math.min(low, med * 0.8); // slow sellers: plan for a lower price
       return { med, low, n: sold.length, src: "book", fill: b.src === "fill", bookN: b.n || null, spread: 0.15, ev, st: b.st, post, trend: b.trend, at: b.at, lo: b.lo != null ? b.lo + (post || 0) : null, hi: b.hi != null ? b.hi + (post || 0) : null, lastAt: b.at };
     }
@@ -1108,7 +1125,7 @@ export default {
     if (!env.APP_KEY || P("key") !== env.APP_KEY) return json({ error: "wrong key" }, 401);
 
     // ---- hunting (needs the database) ----
-    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "test", "device", "check", "price", "prices", "unprice", "needs", "lookfor", "fill"].some((k) => u.searchParams.has(k));
+    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "test", "device", "check", "price", "prices", "unprice", "needs", "lookfor", "fill", "fillstats"].some((k) => u.searchParams.has(k));
     if (huntCall) {
       if (!env.DB) return json({ error: "hunting database not set up yet" }, 501);
       try {
@@ -1166,9 +1183,14 @@ export default {
           const b = JSON.parse(await request.text());
           return json(await fillPrices(env, b));
         }
+        if (P("fillstats")) {
+          const fc = await kvGet(env, "fillCats", {}), out = {};
+          for (const c in fc) out[c] = fillStat(fc[c]);
+          return json({ stats: out });
+        }
         if (P("prices")) {
           await ensureSrc(env);
-          const rows = await env.DB.prepare("SELECT pkey, label, q, avg, st, post, trend, at, src FROM prices ORDER BY at DESC LIMIT 3000").all();
+          const rows = await env.DB.prepare("SELECT pkey, label, q, avg, st, post, trend, at, src, n, lo, hi FROM prices ORDER BY at DESC LIMIT 3000").all();
           return json({ prices: (rows.results || []).map((r) => ({ ...r, url: lookupUrl(r.q || ""), fresh: Date.now() - r.at < BOOK_DAYS * DAY })) });
         }
         if (P("unprice")) {

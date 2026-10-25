@@ -1265,13 +1265,14 @@ function fillCat(c,start){if(!c)return;const IAB=window.cordova&&window.cordova.
     if(save)fillSave(c,[...acc.values()]);
     else openSheet(`<h2 style="margin-top:0">Save what FlipScout read?</h2><div class="mu" style="font-size:16px">${acc.size} sold prices from ${esc(c.name)}.</div><div class="btns"><button onclick="fillSave(FILLC,FILLR)">Save all</button><button class="s" onclick="closeSheet();toast('Not saved.')">Don't save</button></div>`);
     window.FILLC=c;window.FILLR=[...acc.values()]})}
-async function fillSave(c,rows,quiet){if(!quiet){closeSheet();toast(`Sorting ${rows.length} sales into models…`)}
+async function fillSave(c,rows,quiet,total){if(!quiet){closeSheet();toast(`Sorting ${rows.length} sales into models…`)}
   try{const r={read:0,fresh:0,models:0,saved:0,few:0,kept:0,top:[]},seen=new Map();
     for(let i=0;i<rows.length;i+=1500){const x=await api("fill=1",{cat:c.id,catName:c.name,cond:"used",rows:rows.slice(i,i+1500).map(x=>({id:x.id,n:x.n,p:x.p,s:x.s,d:x.d,c:x.c}))});
       ["read","fresh","models","few","kept"].forEach(k=>r[k]+=x[k]||0);if(x.stats){ADMS=ADMS||{};ADMS[c.id]=x.stats;r.stats=x.stats}(x.top||[]).forEach(t=>seen.set(t.label,t))}
     r.top=[...seen.values()].sort((a,b)=>b.n-a.n);r.saved=r.top.length;
     BK.list=null;loadBook();
-    if(quiet){toast(`Daily fill: ${c.name}, ${r.read} sales read, ${r.saved} models priced.`);if(!HD.busy)huntNow();return r}
+    if(quiet==="silent")return r;
+    if(quiet){toast(`Daily fill finished: ${c.name}, ${fmtN(total||r.read)} sales read${r.stats?`, ${fmtN(r.stats.models)} models priced in total`:""}.`);if(!HD.busy)huntNow();return r}
     openSheet(`<h2 style="margin-top:0">Saved ${r.saved} prices</h2><div class="mu">${esc(c.name)} · ${r.read} sales read, ${r.fresh} new (repeats skipped)</div>${r.stats?`<div style="margin-top:6px;font-weight:700">${esc(c.name)} in total: ${fmtN(r.stats.sales)} sales saved · ${fmtN(r.stats.models)} models priced</div>`:""}
      <div style="margin-top:10px;max-height:46vh;overflow:auto">${(r.top||[]).map(x=>`<div class="li" style="padding:7px 0"><span style="flex:1;min-width:0">${esc(x.label)} <span class="mu">· ${x.n} sold</span></span><span class="num-t" style="font-weight:700">${gbp(x.avg)}</span></div>`).join("")||`<div class="mu">No model had enough sales yet. Try a few more pages.</div>`}</div>
      ${r.few?`<div class="hint">${r.few} model${r.few>1?"s":""} had fewer than 5 sales, so ${r.few>1?"they weren't":"it wasn't"} saved. More pages next time will add them.</div>`:""}
@@ -1289,13 +1290,27 @@ const afState=()=>{try{return JSON.parse(localStorage.getItem(AFKEY)||"{}")}catc
 function afSet(o){try{localStorage.setItem(AFKEY,JSON.stringify({...afState(),...o}))}catch(e){}}
 function afCats(){const seen=new Set();return[...STARTER.map(([id,name])=>({id,name})),...H().cats].filter(c=>!seen.has(String(c.id))&&seen.add(String(c.id)))}
 function afNext(){const L=afCats(),st=afState();return L.slice().sort((a,b)=>{const fa=fillPg(a.id),fb=fillPg(b.id);return(fa?fa.at:0)-(fb?fb.at:0)}).find(c=>String(c.id)!==String(st.cat))||L[0]}
-function afMaybe(){const st=afState();if(!S.set.admin||st.off||AF.on||st.day===today()||!connected()||document.hidden)return;if(!(window.cordova&&window.cordova.InAppBrowser))return;autoFill(afNext())}
+const afRunsToday=st=>st.day===today()?(st.n||1):0;
+function afDue(st){const n=afRunsToday(st);return n===0||(!!st.twice&&n<2&&Date.now()-(st.at||0)>6*36e5)}
+function afMaybe(){const st=afState();if(!S.set.admin||st.off||AF.on||!afDue(st)||!connected()||document.hidden)return;if(!(window.cordova&&window.cordova.InAppBrowser))return;autoFill(afNext())}
 function afStop(){if(AF.stop)AF.stop("stopped")}
+// keep the screen on while it runs (Android pauses FlipScout when the screen turns off)
+let AFLOCK=null;async function afAwake(on){try{if(on){if(!AFLOCK&&navigator.wakeLock)AFLOCK=await navigator.wakeLock.request("screen");if(AFLOCK)AFLOCK.addEventListener("release",()=>{AFLOCK=null})}else if(AFLOCK){await AFLOCK.release();AFLOCK=null}}catch(e){AFLOCK=null}}
+function afWatch(){if(AF.on&&AF.w)try{AF.w.show()}catch(e){toast("Couldn't show the page.")}}
+// open the last page the fill read, in a normal browser window, to see it with your own eyes
+function afOpenLast(){const st=afState(),c=afCats().find(x=>String(x.id)===String(st.cat))||{id:st.cat,name:st.name},IAB=window.cordova&&window.cordova.InAppBrowser,u=fillUrl(c,st.pg||1,!!st.kw);
+  if(IAB)IAB.open(u,"_blank","location=yes,hideurlbar=yes,toolbarcolor=#1B201D,closebuttoncolor=#ffffff,navigationbuttoncolor=#ffffff,closebuttoncaption=Done,zoom=no");else window.open(u,"_blank")}
 function autoFill(c){const IAB=window.cordova&&window.cordova.InAppBrowser;if(!IAB||!c||AF.on)return;
   const f=fillPg(c.id),start=f&&Date.now()-f.at<14*864e5?f.pg+1:1;
   const acc=new Map();let page=start,kw=false,blank=0,done=0,last=-1,timer=null,ended=false;
   AF={on:true,c,page,pages:0,read:0,why:""};
-  const w=IAB.open(fillUrl(c,page,kw),"_blank","hidden=yes");
+  const w=IAB.open(fillUrl(c,page,kw),"_blank","hidden=yes,location=yes,hideurlbar=yes,toolbarcolor=#1B201D,closebuttoncolor=#ffffff,closebuttoncaption=Stop & close,zoom=no");AF.w=w;afAwake(true);
+  // watchdog: if a page hasn't been read for 75 seconds (eBay slow, or FlipScout was paused in the background), load it again; give up after 3 tries
+  let lastAt=Date.now(),tries=0;const saved=new Set();
+  const dog=setInterval(()=>{if(ended){clearInterval(dog);return}if(document.hidden||Date.now()-lastAt<75000)return;
+   if(++tries>3){finish("stuck");return}lastAt=Date.now();go2()},15000);
+  // save what's been read every 5 pages, so nothing is lost if the app is closed
+  const saveSome=()=>{const fresh=[...acc.values()].filter(x=>!saved.has(x.id));fresh.forEach(x=>saved.add(x.id));if(fresh.length)fillSave(c,fresh,"silent")};
   const go2=()=>w.executeScript({code:"location.href="+JSON.stringify(fillUrl(c,page,kw))});
   const finish=why=>{if(ended)return;ended=true;clearTimeout(timer);AF.why=why;try{w.close()}catch(e){}};
   AF.stop=finish;
@@ -1307,22 +1322,24 @@ function autoFill(c){const IAB=window.cordova&&window.cordova.InAppBrowser;if(!I
    const pm=u.match(/_pgn=(\d+)/);if(pm)page=+pm[1];
    if(!got.length){if(++blank>=6){if(!kw&&/_sacat=/.test(u)){kw=true;blank=0;go2()}else finish(done?"done":"empty")}return}
    blank=0;if(page===last)return;last=page;
-   got.forEach(x=>{if(x&&x.n&&!acc.has(x.id))acc.set(x.id,x)});done++;fillPgSet(c.id,page);
-   Object.assign(AF,{page,pages:done,read:acc.size});if(tab==="admin")render();
+   got.forEach(x=>{if(x&&x.n&&!acc.has(x.id))acc.set(x.id,x)});done++;fillPgSet(c.id,page);lastAt=Date.now();tries=0;
+   Object.assign(AF,{page,pages:done,read:acc.size});if(tab==="admin")render();if(done%5===0&&done<AFPAGES)saveSome();
    if(done>=AFPAGES){finish("done");return}
    timer=setTimeout(()=>{if(ended)return;page++;go2()},AFGAP)});
-  w.addEventListener("exit",async()=>{ended=true;clearTimeout(timer);AF.on=false;
-   afSet({day:today(),cat:c.id,name:c.name,pages:done,read:acc.size,why:AF.why||"stopped",at:Date.now()});
-   if(acc.size)await fillSave(c,[...acc.values()],true);
+  w.addEventListener("exit",async()=>{ended=true;clearTimeout(timer);clearInterval(dog);AF.on=false;AF.w=null;afAwake(false);const st0=afState();
+   afSet({day:today(),n:afRunsToday(st0)+1,cat:c.id,name:c.name,pg:page,kw,pages:done,read:acc.size,why:AF.why||"stopped",at:Date.now()});
+   const rest=[...acc.values()].filter(x=>!saved.has(x.id));
+   if(acc.size)await fillSave(c,rest.length?rest:[],true,acc.size);
    else toast(AF.why==="signin"?"Daily fill stopped: eBay wants you to sign in. Open Fill on any category once and sign in.":AF.why==="check"?"Daily fill stopped: eBay showed a check page. It'll try again tomorrow.":"Daily fill read nothing today.");
    if(tab==="admin")render()})}
 function afCard(){const st=afState(),nx=afNext();
-  const why={done:"finished",stopped:"stopped by you",signin:"stopped: eBay asked you to sign in",check:"stopped: eBay showed a check page",empty:"no sold listings found"};
-  return`<div class="card"><b>Daily price fill</b><div class="mu">Each day FlipScout reads up to ${AFPAGES} pages of one category's sold listings for you, about one page every 30 seconds, while the app is open. A different category each day.</div>
-   ${AF.on?`<div class="li ok" style="margin-top:8px">⟳ <span>${esc(AF.c.name)}: page ${AF.pages} of ${AFPAGES} · ${fmtN(AF.read)} sales read</span></div><button class="s" onclick="afStop()">Stop</button>`
-   :st.day?`<div class="mu" style="margin-top:8px">${st.day===today()?"Today":"Last run"}: ${esc(st.name||"")}, ${st.pages||0} pages, ${fmtN(st.read||0)} sales (${why[st.why]||st.why}).</div>`:""}
-   ${AF.on?"":`<div class="mu" style="margin-top:4px">Next: ${esc(nx?nx.name:"")}</div>`}
+  const why={done:"finished",stopped:"stopped by you",signin:"stopped: eBay asked you to sign in",check:"stopped: eBay showed a check page",empty:"no sold listings found",stuck:"stopped: eBay's page stopped loading"};
+  return`<div class="card"><b>Daily price fill</b><div class="mu">FlipScout reads up to ${AFPAGES} pages of one category's sold listings, about one page every 30 seconds, then saves them. A different category each run. It only runs while FlipScout is <b>on screen</b>: switching apps pauses it, and it carries on when you come back.</div>
+   ${AF.on?`<div class="li ok" style="margin-top:8px">⟳ <span>${esc(AF.c.name)}: page ${AF.pages} of ${AFPAGES} · ${fmtN(AF.read)} sales read</span></div><div class="btns" style="margin-top:6px"><button class="s" onclick="afWatch()">Watch it ›</button><button class="s" onclick="afStop()">Stop</button></div><div class="mu" style="font-size:13px">Watch it shows the eBay page it's reading. Closing that page stops the fill.</div>`
+   :st.day?`<div class="mu" style="margin-top:8px">${st.day===today()?"Today":"Last run"}: ${esc(st.name||"")}, ${st.pages||0} pages, ${fmtN(st.read||0)} sales (${why[st.why]||st.why}).</div>${st.cat?`<button class="s" style="margin-top:6px" onclick="afOpenLast()">Open last page ›</button>`:""}`:""}
+   ${AF.on?"":`<div class="mu" style="margin-top:4px">Next: ${esc(nx?nx.name:"")}${afDue(st)?"":st.twice&&afRunsToday(st)<2?" (about 6 hours after the last run)":" (tomorrow)"}</div>`}
    <label class="chkrow" style="min-height:44px"><input type="checkbox" ${st.off?"":"checked"} onchange="afSet({off:!this.checked});render()"><span>Run the daily fill</span></label>
+   ${st.off?"":`<label class="chkrow" style="min-height:44px"><input type="checkbox" ${st.twice?"checked":""} onchange="afSet({twice:this.checked});render()"><span>Run twice a day (6+ hours apart)</span></label>`}
    ${AF.on||st.off?"":`<button class="s" onclick="afSet({day:''});autoFill(afNext())">Run now</button>`}
    <div class="hint warn">This reads eBay's website automatically. eBay's rules don't allow automated access, so there is some risk to your eBay account. Turn it off any time.</div></div>`}
 function soldResult(L,x){BK.cur=L;BK.sold=x;const dt=t=>new Date(t).toLocaleDateString("en-GB",{day:"numeric",month:"short"});
@@ -1566,7 +1583,7 @@ function finishOnb(){try{localStorage.setItem(OKEY,"1")}catch(e){}$("onb").style
 H();render();
 autoPush();
 try{if(!localStorage.getItem(OKEY))showOnb()}catch(e){}
-setTimeout(afMaybe,20000);document.addEventListener("visibilitychange",()=>{if(!document.hidden)setTimeout(afMaybe,5000)});
+setTimeout(afMaybe,20000);document.addEventListener("visibilitychange",()=>{if(!document.hidden){if(AF.on)afAwake(true);setTimeout(afMaybe,5000)}});
 // offer to restore a cloud backup once, on a fresh install, never on every open
 (()=>{let asked=false;try{asked=!!localStorage.getItem("flipscout_restore_asked")}catch(e){}
   if(!asked&&connected()&&!S.items.length&&!S.base.length){try{localStorage.setItem("flipscout_restore_asked","1")}catch(e){}cloudCheck(true)}})();

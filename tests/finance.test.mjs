@@ -33,4 +33,17 @@ t("worked example from the deal page sums adds up", () => {
   near(fee, 4.32, "fee"); near(pay, 98.64, "total you pay");
   const back = 134.98 - 0 - 6; near(back, 128.98, "you receive"); near(back - pay, 30.34, "profit");
 });
+t("auction max bid: never lose money if it sells at the cheap end (RTX 5090 preview example)", () => {
+  const r = { ...priv, minProfit: 5, minRoi: 0, cheap: true }, med = 4305, low = 3900, ship = 0;
+  const mp = maxPay(med, low, r); near(mp, 3893.99, "most to pay in total (cheap end minus postage & packing)");
+  const maxBid = Math.floor((mp - ship - bpf(mp)) * 100) / 100; near(maxBid, 3809.41, "max bid after buyer protection fee");
+  const total = maxBid + ship + bpf(maxBid); assert.ok(total <= mp, "paying the max bid stays within the most to pay");
+  const cheapEnd = low - sellFee(low, r) - (r.post + r.pack) - total; assert.ok(cheapEnd > 0, "still no loss at the cheap end"); near(cheapEnd, 1.7, "profit if it sells at the cheap end");
+  near(med - sellFee(med, r) - (r.post + r.pack) - total, 406.7, "profit at the typical price, at your max bid");
+});
+t("business sellers: the max bid also covers eBay's selling fee", () => {
+  const r = { ...biz, minProfit: 5, minRoi: 0, cheap: true }, med = 4305, low = 3900;
+  const mp = maxPay(med, low, r); near(mp, low - sellFee(low, r) - 6 - 0.01, "cheap end after selling fee");
+  assert.ok(mp < maxPay(med, low, { ...r, seller: "private" }), "less than a private seller can pay");
+});
 console.log(`\n${n} checks passed`);

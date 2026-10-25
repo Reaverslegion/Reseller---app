@@ -684,6 +684,8 @@ function vSettings(){
    <button class="choice ${r.seller!=="private"?"on":""}" onclick="setSeller('business')">Business seller<small>${r.feePct}% + ${gbp(r.feeFixed)} per order</small></button>
    ${r.seller!=="private"?`<div class="row"><div><label for="r_feePct">Fee %</label><input id="r_feePct" inputmode="decimal" value="${r.feePct}" onchange="setRule('feePct',this.value)"></div><div><label for="r_feeFixed">Per-order fee £</label><input id="r_feeFixed" inputmode="decimal" value="${r.feeFixed}" onchange="setRule('feeFixed',this.value)"></div></div><div class="hint">Rates vary by category. Check eBay's fee page for yours.</div>`:`<div class="hint">If you buy to resell regularly, eBay and HMRC may treat you as a business.</div>`}</div>
   <div class="card"><b>Your buying rules</b><div class="mu">These decide what counts as a good buy. Changes save straight away.</div>
+   <label for="r_maxPrice">Most I'll spend on one item £</label><input id="r_maxPrice" inputmode="decimal" placeholder="No limit" value="${r.maxPrice>0?r.maxPrice:""}" onchange="setRule('maxPrice',this.value||0)">
+   <div class="hint">Total including postage and eBay's buyer fee. Deals that cost more are hidden, and your max bid never goes above it. Leave empty for no limit.</div>
    ${FIELDS.filter(f=>f[0]==="minProfit"||f[0]==="minRoi").map(f=>`<label for="r_${f[0]}">${f[1]}</label><input id="r_${f[0]}" inputmode="decimal" value="${r[f[0]]}" onchange="setRule('${f[0]}',this.value)">${f[2]?`<div class="hint">${f[2]}</div>`:""}`).join("")}
    <label class="chkrow" style="min-height:44px;margin-top:10px"><input type="checkbox" ${r.cheap!==false?"checked":""} onchange="S.rules.cheap=this.checked;save();pushConfig();toast('Saved. New deals show after the next check.')"><span>Must not lose money if it only sells cheap</span></label>
    <div class="hint">On: the most FlipScout lets you pay still breaks even if it sells at the low end of recent sales. This is safer but shows fewer deals, and for anything over about £40 it matters more than your minimum profit. Off: your minimum profit decides.</div>
@@ -805,7 +807,7 @@ const errText=e=>e.message==="Failed to fetch"?"no connection":e.message;
 let pcT=null;
 function pushConfig(now){clearTimeout(pcT);const go_=async()=>{if(!connected())return;const h=H(),r=S.rules;
   try{await api("config=1",{cats:h.cats,types:h.types,alerts:!!h.alerts,interval:h.interval,paused:h.paused,quiet:h.quiet,region:S.set.region,
-   rules:{cheap:r.cheap!==false,minProfit:r.minProfit,minRoi:r.minRoi,seller:r.seller,feePct:r.feePct,feeFixed:r.feeFixed,post:h.post,pack:h.pack,bpf:h.bpf,alertScore:h.alertScore,minScore:h.minScore}})}
+   rules:{cheap:r.cheap!==false,maxSpend:+r.maxPrice||0,minProfit:r.minProfit,minRoi:r.minRoi,seller:r.seller,feePct:r.feePct,feeFixed:r.feeFixed,post:h.post,pack:h.pack,bpf:h.bpf,alertScore:h.alertScore,minScore:h.minScore}})}
   catch(e){toast("Couldn't save hunting settings: "+errText(e))}};
   if(now)return go_();pcT=setTimeout(go_,800)}
 async function loadDeals(){if(!connected()||HD.busy)return;HD.busy=true;HD.err="";
@@ -979,7 +981,9 @@ const normType=d=>(d.type=/^AUC/i.test(String(d.type||""))?"AUC":"BIN",d);
 const isGuess=d=>d.kind!=="spares"&&d.src==="asking";
 // safety net: never list a deal that wouldn't make money (the hunter already requires your minimum profit;
 // this catches one whose price went up since the last check)
-const paysOff=d=>d.kind==="spares"||(shownProfit(d)??0)>0;
+const paysOff=d=>(d.kind==="spares"||(shownProfit(d)??0)>0)&&inSpend(d);
+// within "most I'll spend on one item": Buy It Now total incl. buyer fee, auctions today's bid + postage
+const inSpend=d=>{const m=+S.rules.maxPrice||0;if(!(m>0))return true;const t=d.type==="AUC"?d.price+d.ship:d.price+d.ship+(dBpf(d)?bpfA(d.price):0);return t<=m};
 function fDeals(){const A=(HD.deals||[]).filter(d=>!HIDE.includes(d.id)&&paysOff(d)&&(!HD.cat||String(d.cat)===HD.cat)),L0=A.filter(d=>!isGuess(d)),L=L0.filter(d=>!d.collect);return{col:L0.filter(d=>d.collect),all:L.filter(d=>d.kind!=="spares"),bin:L.filter(d=>d.kind!=="spares"&&d.type==="BIN"),auc:L.filter(d=>d.kind!=="spares"&&d.type==="AUC"),mis:L.filter(d=>(d.tags||[]).includes("Misspelt title")),spares:L.filter(d=>d.kind==="spares"),guess:A.filter(isGuess)}}
 function vHunt(){
   const h=H();

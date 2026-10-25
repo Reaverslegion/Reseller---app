@@ -609,12 +609,12 @@ async function closing(env) {
 }
 
 /* ---------------- the hunt ---------------- */
-const DEFAULT_RULES = { cheap: true, minProfit: 20, minRoi: 0, seller: "business", feePct: 12.8, feeFixed: 0.4, post: 5, pack: 1, bpf: true, alertScore: 70, minScore: 40 };
+const DEFAULT_RULES = { cheap: true, maxSpend: 0, minProfit: 20, minRoi: 0, seller: "business", feePct: 12.8, feeFixed: 0.4, post: 5, pack: 1, bpf: true, alertScore: 70, minScore: 40 };
 function cleanConfig(c) {
   c = c || {};
   return {
     cats: Array.isArray(c.cats) ? c.cats.filter((x) => x && /^\d+$/.test(String(x.id))).slice(0, 15).map((x) => ({ id: String(x.id), name: String(x.name || "").slice(0, 80) })) : [],
-    rules: { ...DEFAULT_RULES, ...(c.rules || {}) },
+    rules: (() => { const r = { ...DEFAULT_RULES, ...(c.rules || {}) }; r.maxSpend = Math.max(0, Math.min(100000, +r.maxSpend || 0)); return r; })(),
     types: { bin: true, auction: true, misspelt: true, spares: false, ...(c.types || {}) },
     region: c.region === "any" ? "any" : "uk",
     alerts: c.alerts !== false,
@@ -753,7 +753,8 @@ async function sweep(env, manual) {
   for (let i = 0; i < per; i++) cats.push(cfg.cats[(rot + i) % cfg.cats.length]);
   await kvSet(env, "rot", (rot + per) % cfg.cats.length);
 
-  const base = ["priceCurrency:GBP", "deliveryCountry:GB", "price:[1..3000]"];
+  // "most I'll spend on one item": eBay only sends listings priced under it (postage and fees are checked when judging)
+  const base = ["priceCurrency:GBP", "deliveryCountry:GB", `price:[1..${r.maxSpend > 0 ? Math.ceil(Math.min(3000, r.maxSpend)) : 3000}]`];
   if (cfg.region === "uk") base.push("itemLocationCountry:GB");
   const seen = [];
   for (const c of cats) {
@@ -942,12 +943,15 @@ async function sweep(env, manual) {
     if (!m) { why.noData++; continue; }
     if (m.spread > 0.9 && (s.matchQ || 0.5) < 0.8) { why.noData++; continue; } // prices all over the place: not confident
     const cost = s.price + s.ship + extra;
+    // over your "most I'll spend on one item" (total incl. postage and buyer fee; for auctions, today's bid + postage)
+    if (r.maxSpend > 0 && (s.type === "AUC" ? s.price + s.ship : cost) > r.maxSpend) continue;
     if (cost < m.med * 0.4 && (s.seller.fb < 5 || s.seller.pct < 95 || SCAM_WORDS.test(s.title))) { hidden++; continue; }
     if (SCAM_WORDS.test(s.title)) { hidden++; continue; }
     // a Buy It Now at under a fifth of what it sells for is almost always a box, a photo, a code or a scam
     if (s.type !== "AUC" && cost < m.med * 0.2) { hidden++; continue; }
     const ri = m.post != null ? { ...r, post: m.post } : r; // postage out for this product, from the price book
-    const mp = maxPay(m.med, m.low, ri);
+    // the most to pay in total, never above your spending limit (so max bids and max offers stay under it too)
+    const mp = r.maxSpend > 0 ? Math.min(maxPay(m.med, m.low, ri), r.maxSpend) : maxPay(m.med, m.low, ri);
     if (mp <= 0) continue;
     const out = ri.post + ri.pack;
     const profit = m.med - sellFee(m.med, r) - out - cost;

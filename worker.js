@@ -30,10 +30,18 @@ async function saveQuota(env) {
   await kvSet(env, "quota", { d: today(), n });
 }
 const DAY = 864e5;
+// compares the app key in constant time, so its length or letters can't be guessed from how fast "wrong key" comes back
+function sameKey(a, b) {
+  a = String(a || ""); b = String(b || "");
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < b.length; i++) diff |= (a.charCodeAt(i % (a.length || 1)) || 0) ^ b.charCodeAt(i);
+  return diff === 0 && a.length > 0;
+}
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "*",
+  "Access-Control-Max-Age": "86400", // the phone asks "may I send the key header?" once a day, not before every call
 };
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", ...CORS } });
@@ -631,6 +639,31 @@ async function refreshLearned(env) {
   return c;
 }
 
+// once a week: copy the price list (and the sales behind it) to the backup store, keeping the last 4 weeks.
+// Cloudflare's own undo only reaches back 30 days; this is an extra copy that can be put back if ever needed.
+async function weeklyExport(env) {
+  if (!env.BACKUP || !env.DB) return;
+  const now = Date.now(), last = await kvGet(env, "lastExport", 0);
+  if (now - last < 7 * DAY) return;
+  await kvSet(env, "lastExport", now);
+  const prices = (await env.DB.prepare("SELECT * FROM prices").all()).results || [];
+  const sales = (await env.DB.prepare("SELECT pkey, data, at FROM fillsales").all()).results || [];
+  let body = JSON.stringify({ at: now, prices, fillsales: sales, cover: await kvGet(env, "fillCover", {}), cats: await kvGet(env, "fillCats", {}) });
+  if (body.length > 20e6) body = JSON.stringify({ at: now, prices, note: "sales left out: too big" });
+  const name = "prices-" + new Date(now).toISOString().slice(0, 10);
+  await env.BACKUP.put(name, body, { metadata: { at: now, prices: prices.length } });
+  const list = await env.BACKUP.list({ prefix: "prices-" });
+  const old = (list.keys || []).map((k) => k.name).sort().slice(0, -4);
+  for (const k of old) await env.BACKUP.delete(k);
+}
+// should this scheduled scan wait, to keep eBay calls within the day? used = calls so far today, sinceLast = ms since last scan
+function paceSkip(used, now, cats, interval, sinceLast) {
+  const left = EBAY_DAILY * 0.97 - used, d = new Date(now), minsLeft = 1440 - (d.getUTCHours() * 60 + d.getUTCMinutes()), perScan = Math.min(cats, 8) * 3 + 10;
+  if (left < perScan) return "eBay daily limit reached";
+  const need = Math.ceil(minsLeft / Math.max(1, Math.floor(left / perScan)));
+  const ahead = used > EBAY_DAILY * 0.9 * ((1440 - minsLeft) / 1440) + 200; // using calls faster than the day allows
+  return ahead && need > interval && sinceLast < need * 60000 - 30000 ? "slowed to stay under eBay's daily limit" : "";
+}
 async function sweep(env, manual) {
   await schema(env);
   const cfg = cleanConfig(await kvGet(env, "config", null));
@@ -641,6 +674,8 @@ async function sweep(env, manual) {
     if (now - last < cfg.interval * 60000 - 30000) return { skipped: "not due" };
   }
   if (!cfg.cats.length) return { error: "Add some categories first." };
+  // stay under eBay's 5,000 calls a day: near the limit, scans space themselves out so calls last until midnight (UTC)
+  if (!manual) { const why = paceSkip(await quota(env), now, cfg.cats.length, cfg.interval, now - last); if (why) return { skipped: why }; }
   await kvSet(env, "lastRun", now);
   const D = env.DB, r = cfg.rules, report = { checked: 0, newDeals: 0, hidden: 0, errors: [] };
 
@@ -1297,10 +1332,13 @@ export default {
   async scheduled(event, env, ctx) {
     if (!env.DB) return;
     ctx.waitUntil((async () => {
-      const r = await sweep(env, false).catch(() => ({}));
+      // errors here used to vanish; keep the latest one so it can be looked at ("lastCrash" in the kv table)
+      const crash = (where) => (e) => kvSet(env, "lastCrash", { at: Date.now(), where, msg: String((e && e.message) || e).slice(0, 300) }).catch(() => {});
+      const r = await sweep(env, false).catch((e) => (crash("scan")(e), {}));
+      await weeklyExport(env).catch(crash("weekly price export"));
       if (r && r.skipped) {
-        await closing(env).catch(() => {});
-        await spareVerify(env).catch(() => {});
+        await closing(env).catch(crash("auction learning"));
+        await spareVerify(env).catch(crash("deal check"));
       }
     })());
   },
@@ -1308,7 +1346,20 @@ export default {
   async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     const u = new URL(request.url), P = (k) => u.searchParams.get(k);
-    if (!env.APP_KEY || P("key") !== env.APP_KEY) return json({ error: "wrong key" }, 401);
+    // the app sends the key in a header; older app versions put it in the address, which still works
+    if (!env.APP_KEY || !sameKey(request.headers.get("X-FlipScout-Key") || P("key"), env.APP_KEY)) return json({ error: "wrong key" }, 401);
+    // hourly limits on the calls that use eBay or write a lot, far above normal use, so a leaked key can't run up your eBay calls
+    const lim = P("q") ? ["search", 300] : P("check") ? ["check", 300] : P("fill") ? ["fill", 120] : P("suggest") ? ["suggest", 300] : null;
+    if (lim && env.DB) {
+      try {
+        await schema(env);
+        const h = Math.floor(Date.now() / 3600e3), rl = await kvGet(env, "rate", { h: 0, n: {} });
+        if (rl.h !== h) { rl.h = h; rl.n = {}; }
+        rl.n[lim[0]] = (rl.n[lim[0]] || 0) + 1;
+        if (rl.n[lim[0]] > lim[1]) return json({ error: "Too many requests this hour. Try again later." }, 429);
+        await kvSet(env, "rate", rl);
+      } catch (e) {}
+    }
 
     // ---- hunting (needs the database) ----
     const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "test", "device", "check", "price", "prices", "unprice", "needs", "lookfor", "fill", "fillstats"].some((k) => u.searchParams.has(k));
@@ -1335,7 +1386,7 @@ export default {
           const deals = (rows.results || []).map((r) => ({ ...JSON.parse(r.data), found: r.created }));
           const lc = await kvGet(env, "learnCats", { cats: [] });
           const cnt = (await kvGet(env, "learnedCounts", null)) || (await refreshLearned(env));
-          return json({ deals, report: await kvGet(env, "lastReport", null), learned: cnt.byCat, close: await kvGet(env, "close", []), later: await kvGet(env, "later", []), aucLearn: await kvGet(env, "aucLearn", {}), learning: { cats: lc.cats.length, sales: cnt.total } });
+          return json({ deals, report: await kvGet(env, "lastReport", null), learned: cnt.byCat, close: await kvGet(env, "close", []), later: await kvGet(env, "later", []), aucLearn: await kvGet(env, "aucLearn", {}), learning: { cats: lc.cats.length, sales: cnt.total }, lastCrash: await kvGet(env, "lastCrash", null) });
         }
         if (P("check")) {
           const id = String(P("check")).replace(/\D/g, "");

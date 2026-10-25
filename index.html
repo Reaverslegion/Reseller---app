@@ -194,22 +194,26 @@ function load(){
   return JSON.parse(JSON.stringify(DEF))}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast("Couldn't save on this phone.")}cloudSoon()}
 /* ---------- automatic cloud backup (to your Scan service) ---------- */
-const CAKEY="flipscout_cloud_at";let cbT=null,cloudErr="";
+const CAKEY="flipscout_cloud_at";let cbT=null,cloudErr="",cloudLast="";
 const connected=()=>!!(S.set.url&&S.set.key);
+// every call to your Scan service: the key goes in a hidden header, not in the web address (addresses end up in logs)
+const kfetch=(url,key,qs,o)=>{o=o||{};return fetch(`${url}?${qs}`,{...o,headers:{...(o.headers||{}),"X-FlipScout-Key":String(key||"")}})};
 const cloudAt=()=>{try{return+localStorage.getItem(CAKEY)||0}catch(e){return 0}};
 function cloudSoon(){clearTimeout(cbT);if(connected())cbT=setTimeout(cloudPush,4000)}
 async function cloudPush(manual){
   if(!connected())return false;
-  if(!manual&&!S.items.length&&!S.base.length)return false;
-  try{const r=await fetch(`${S.set.url}?key=${encodeURIComponent(S.set.key)}&backup=1`,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(S)});const d=await r.json().catch(()=>({}));
+  if(!manual&&!S.items.length&&!S.base.length&&!(H().cats||[]).length)return false; // a brand-new, empty app never overwrites your backup
+  // skip the upload when nothing has changed since the last good backup (saves the Scan service's daily storage writes)
+  const body=JSON.stringify(S);if(!manual&&body===cloudLast)return true;
+  try{const r=await kfetch(S.set.url,S.set.key,"backup=1",{method:"POST",headers:{"Content-Type":"text/plain"},body});const d=await r.json().catch(()=>({}));
     if(!r.ok||d.error)throw new Error(d.error||"error "+r.status);
-    localStorage.setItem(CAKEY,String(Date.now()));cloudErr="";if(manual)toast("Backed up.");if(tab==="settings")render();return true}
+    cloudLast=body;localStorage.setItem(CAKEY,String(Date.now()));cloudErr="";if(manual)toast("Backed up.");if(tab==="settings")render();return true}
   catch(e){cloudErr=e.message==="Failed to fetch"?"no connection":e.message;if(manual)toast("Backup failed: "+cloudErr);return false}
 }
 async function cloudCheck(silentIfNone){
   if(!connected())return;
   if(silentIfNone){try{localStorage.setItem("flipscout_restore_asked","1")}catch(e){}}
-  try{const r=await fetch(`${S.set.url}?key=${encodeURIComponent(S.set.key)}&backup=1`),d=await r.json();
+  try{const r=await kfetch(S.set.url,S.set.key,"backup=1"),d=await r.json();
     if(d.error)throw new Error(d.error);
     if(d.none||!d.data||!Array.isArray(d.data.items)){if(!silentIfNone)toast("No cloud backup yet.");return}
     window._cb=d.data;const n=d.data.items.length,t=(d.data.base||[]).length,when=d.at?new Date(d.at).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"recently";
@@ -345,7 +349,8 @@ function vAdmin(){if(!S.set.admin)return`<div class="card">Admin tools are off.<
   ${connected()?`<div class="card"><b>Scan service</b><div class="mu">How often FlipScout searches eBay. Every search uses some of eBay's 5,000 daily calls.</div>
    <label for="hi">Check every</label><select id="hi" onchange="H().interval=+this.value;save();pushConfig()">${[5,10,15,30,60].map(m=>`<option value="${m}"${H().interval===m?" selected":""}>${m} minutes</option>`).join("")}</select>
    <label class="chkrow" style="min-height:44px"><input type="checkbox" ${H().paused?"checked":""} onchange="H().paused=this.checked;save();pushConfig();render()"><span>Pause hunting (stops all searches and followed-listing checks)</span></label>
-   <button onclick="huntNow()" ${HD.busy?"disabled":""}>${HD.busy?"Checking…":"Scan now"}</button></div>${connCard()}
+   <button onclick="huntNow()" ${HD.busy?"disabled":""}>${HD.busy?"Checking…":"Scan now"}</button>
+   ${HD.crash&&Date.now()-HD.crash.at<48*36e5?`<div class="hint warn">Last problem, ${ago(HD.crash.at)} (${esc(HD.crash.where||"scan")}): ${esc(HD.crash.msg||"")}</div>`:""}</div>${connCard()}
   <div class="card"><b>Price list</b><div class="mu">Every model FlipScout has a price for: how many sold, what it sells for and how fast.</div><button onclick="go('plist')">Open price list ›</button></div>
   <div class="card"><b>Sell speed self-check</b><div class="mu">Each time you fill a category again, FlipScout checks whether each model's sales rate held up (within ±50%). This measures the sales rate behind the speed estimate. Only you see this.</div>
    <div style="margin-top:8px;font-weight:700">${SPDCHK&&SPDCHK.n?`${fmtN(SPDCHK.hit)} of ${fmtN(SPDCHK.n)} checks held up (${Math.round(SPDCHK.hit/SPDCHK.n*100)}%)`:"No checks yet"}</div>
@@ -427,7 +432,7 @@ function loadCats(force){
   if(!force){try{const x=JSON.parse(localStorage.getItem(CKEY)||"null");if(x&&x.rows&&Date.now()-x.at<30*864e5){CT=buildCT(x.rows);return Promise.resolve(CT)}}catch(e){}}
   const s=S.set;if(!s.url||!s.key)return Promise.reject(new Error("noconn"));
   if(CTload)return CTload;
-  CTload=fetch(`${s.url}?key=${encodeURIComponent(s.key)}&tree=1`).then(async r=>{
+  CTload=kfetch(s.url,s.key,"tree=1").then(async r=>{
     if(r.status===401)throw new Error("wrong key");if(!r.ok)throw new Error("error "+r.status);
     const d=await r.json();if(d.error)throw new Error(d.error);
     const rows=[];(function walk(node,parent){(node.childCategoryTreeNodes||[]).forEach(ch=>{rows.push([ch.category.categoryId,ch.category.categoryName,parent]);walk(ch,ch.category.categoryId)})})(d.rootCategoryNode,"0");
@@ -462,7 +467,7 @@ function drawCat(key){
 function catBox(){CAT.f=F.cat||"";drawCat("f")}
 async function catSuggest(key){
   const s=S.set,q=key==="f"?(F.q||F.n).trim():(window._catQ||"");if(!q){toast("Add the item name first.");return}
-  try{const r=await fetch(`${s.url}?key=${encodeURIComponent(s.key)}&suggest=${encodeURIComponent(q)}`),d=await r.json();if(!r.ok||d.error)throw new Error(d.error||r.status);
+  try{const r=await kfetch(s.url,s.key,`suggest=${encodeURIComponent(q)}`),d=await r.json();if(!r.ok||d.error)throw new Error(d.error||r.status);
     const hit=(d.cats||[]).find(c=>CT&&CT[c.id]);if(!hit){toast("No suggestion found. Pick it from the list.");return}
     const lv=catChain(hit.id).length-1;CAT[key]=hit.id;if(key==="f"){F.cat=hit.id;F.catName=CT[hit.id].n;F.catPath=catPathOf(hit.id);saveDraft()}drawCat(key);toast(`Suggested: ${CT[hit.id].n}. Change it if it's wrong.`)}
   catch(e){toast("Couldn't get a suggestion right now.")}
@@ -741,7 +746,7 @@ async function runScan(list,label){
     n++;SC.prog=`Scanning ${n} of ${list.length}: ${b.name}`;const pe=$("prog");if(pe)pe.textContent=SC.prog;
     try{
       const lim=prodMax(b);if(lim<=0){errs.push(b.name+": no price passes your rules");continue}
-      const res=await fetch(`${s.url}?key=${encodeURIComponent(s.key)}&q=${encodeURIComponent(b.q)}&max=${Math.ceil(lim)}&region=${s.region||"uk"}${b.cat?"&cat="+b.cat:""}`);
+      const res=await kfetch(s.url,s.key,`q=${encodeURIComponent(b.q)}&max=${Math.ceil(lim)}&region=${s.region||"uk"}${b.cat?"&cat="+b.cat:""}`);
       if(res.status===401)throw new Error("wrong key (check Settings)");
       if(!res.ok)throw new Error("service error "+res.status);
       const d=await res.json();if(d.error)throw new Error(d.error);
@@ -791,7 +796,7 @@ function vScan(){
 const HDEF={cats:[],types:{bin:true,auction:true,misspelt:true,spares:false},alerts:false,interval:10,alertScore:70,minScore:40,post:5,pack:1,bpf:true,paused:false,quiet:{on:false,from:23,to:7}};
 let HD={cat:(()=>{try{const v=localStorage.getItem("flipscout_dcat")||"";return/^\d+$/.test(v)?v:""}catch(e){return""}})(),deals:null,report:null,learned:[],busy:false,err:"",filter:"all",at:0,q:"",sort:(()=>{try{const v=localStorage.getItem("flipscout_sort");return!v||(v==="score"&&!localStorage.getItem("flipscout_sort2"))?"now":v}catch(e){return"now"}})()},FL={list:null,busy:false,err:""},DV=null;
 const H=()=>{S.hunt={...HDEF,...(S.hunt||{}),types:{...HDEF.types,...((S.hunt||{}).types||{})}};return S.hunt};
-const api=(q,body)=>fetch(`${S.set.url}?key=${encodeURIComponent(S.set.key)}&${q}`,body!==undefined?{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(body)}:{}).then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok||d.error)throw new Error(d.error||("error "+r.status));return d});
+const api=(q,body)=>kfetch(S.set.url,S.set.key,q,body!==undefined?{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(body)}:{}).then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok||d.error)throw new Error(d.error||("error "+r.status));return d});
 const errText=e=>e.message==="Failed to fetch"?"no connection":e.message;
 let pcT=null;
 function pushConfig(now){clearTimeout(pcT);const go_=async()=>{if(!connected())return;const h=H(),r=S.rules;
@@ -800,7 +805,7 @@ function pushConfig(now){clearTimeout(pcT);const go_=async()=>{if(!connected())r
   catch(e){toast("Couldn't save hunting settings: "+errText(e))}};
   if(now)return go_();pcT=setTimeout(go_,800)}
 async function loadDeals(){if(!connected()||HD.busy)return;HD.busy=true;HD.err="";
-  try{const d=await api("deals=1");HD.deals=(d.deals||[]).map(normType);HD.report=d.report;HD.learned=d.learned||[];HD.close=d.close||[];HD.later=(d.later||[]).map(normType);HD.aucLearn=d.aucLearn||{};HD.learning=d.learning||null;HD.at=Date.now();markSeen()}catch(e){HD.err=errText(e)}
+  try{const d=await api("deals=1");HD.deals=(d.deals||[]).map(normType);HD.report=d.report;HD.learned=d.learned||[];HD.close=d.close||[];HD.later=(d.later||[]).map(normType);HD.aucLearn=d.aucLearn||{};HD.learning=d.learning||null;HD.crash=d.lastCrash||null;HD.at=Date.now();markSeen()}catch(e){HD.err=errText(e)}
   HD.busy=false;if(FL.list==null)loadFollows();if(tab==="deals"||tab==="cats")render()}
 async function huntNow(){if(HD.busy)return;if(!H().cats.length){go("cats");toast("Pick some categories first.");return}
   HD.busy=true;render();

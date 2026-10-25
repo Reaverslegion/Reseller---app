@@ -207,7 +207,7 @@ function phoneKey(t) {
   const st = storageOf(t);
   return { key: "phone:" + model + (st ? " " + st : ""), label: model.replace(/\b\w/g, (c) => c.toUpperCase()).replace("Iphone", "iPhone") + (st ? " " + stLabel(st) : ""), match: st ? 0.9 : 0.7 };
 }
-const NOT_CONSOLE = /\b(portal|remote play|vr2?|psvr2?|camera|headset|pulse|dualsense edge|charging station|disc drive|drive only|media remote|cover plates?|vertical stand|cooling|games?|game bundle only|steelbook|amiibo|gift card|voucher|membership|subscription|ps plus|game pass)\b/i;
+const NOT_CONSOLE = /\b(portal|remote play|vr2?|psvr2?|camera|headset|pulse|dualsense edge|charging station|disc drive|drive only|media remote|cover plates?|vertical stand|cooling|games?|game bundle only|steelbook|amiibo|gift card|voucher|membership|subscription|ps plus|game pass|pegi|code only|(?:download|digital|game) code|code in (?:a )?box|cartridge|cart only|disc only|game card)\b/i;
 const CON_ACC = /\b(controllers?|joy[- ]?cons?|gamepads?|dualsense|dualshock|grips?|docks?|charg(?:er|ers|ing)|cables?|cases?|covers?|skins?|stands?|headsets?|faceplates?|shells?|screen protectors?|tempered glass|memory cards?|sd cards?|carry(?:ing)? (?:bag|case)|power (?:supply|adapter)|psu|fans?|cooling|replacement|thumb ?sticks?|joysticks?|buttons?)\b/i;
 const CON_YES = /\b(console|system|handheld|bundle|with|inc|includes?|including|boxed|complete|\+)(?=\W|$)/i;
 const CON_BARE = /\b(console only|tablet only|unit only|handheld only|screen only|system only|main unit|no (?:joy[- ]?cons?|controllers?|pads?|dock|charger|cables?|leads?|power (?:lead|cable|supply))|without (?:joy[- ]?cons?|controllers?|pads?|dock|charger|cables?|leads?))\b/i;
@@ -216,7 +216,7 @@ function consoleKey(t) {
   if (/\b(portal|remote play|psvr|vr2|disc drive|drive only)\b/i.test(t)) return null;
   // accessories on their own (controllers, docks, cases...) are not consoles; a console listing that mentions them is fine
   if (CON_ACC.test(t) && !CON_YES.test(t)) return null;
-  if (/\b(lcd|screen replacement|motherboard|housing|shell|faceplate|for parts)\b/i.test(t)) return null;
+  if (/\b(lcd|screen replacement|motherboard|housing|shell|faceplate|for parts|empty|packaging|box only|pegi|code only)\b/i.test(t)) return null;
   const l = t.toLowerCase(); let m, k = null;
   if ((m = l.match(/\b(ps5|playstation\s*5)\b/))) k = "ps5 " + (/\bpro\b/.test(l) ? "pro" : /digital/.test(l) ? "digital" : "disc") + (/\bslim\b/.test(l) ? " slim" : "");
   else if ((m = l.match(/\b(ps4|playstation\s*4)\b/))) k = "ps4" + (/\bpro\b/.test(l) ? " pro" : /\bslim\b/.test(l) ? " slim" : "");
@@ -480,8 +480,11 @@ const SPECIAL = /\b(poseidon|water ?cooled|watercooled|water ?block|hybrid|aio|b
 // auction learning buckets: time left (day+, 2h+, 30m+, under 30m) and bids (0-2, 3+)
 const aucBucket = (mins, bids) => (mins > 1440 ? "d" : mins > 120 ? "h" : mins > 30 ? "m" : "s") + (bids > 2 ? "+" : "-");
 /* ---------------- what the hunter avoids ---------------- */
-const RISK_WORDS = /\b(box only|empty box|read desc|read description|see desc|see description|please read|photo of|picture of|image of|replica|fake|not genuine|dummy|display only|case only|cover only|manual only|cable only|stand only|bundle only|no console|card only|for parts|spares|repairs?|faulty|broken|cracked|not working|untested|bios lock|icloud|activation lock|locked|blacklisted|no power|water damage|liquid damage)\b/i;
-const SCAM_WORDS = /\b(read desc|read description|photo of|picture of|image of|empty box|box only|replica|fake|not genuine|contact me|message me before|whatsapp|bank transfer)\b/i;
+const RISK_WORDS = /\b(empty (?:retail |original |console )?(?:box|packaging|case)|packaging only|box (?:and|&) (?:inserts?|packaging|manual)|box\W{1,4}empty|empty\W{1,4}(?:box|packaging)|box only|empty box|read desc|read description|see desc|see description|please read|photo of|picture of|image of|replica|fake|not genuine|dummy|display only|case only|cover only|manual only|cable only|stand only|bundle only|no console|card only|for parts|spares|repairs?|faulty|broken|cracked|not working|untested|bios lock|icloud|activation lock|locked|blacklisted|no power|water damage|liquid damage|damaged|dented|bent pins?|burnt|burned|scorched|melted|smashed|shattered|bricked|no display|no signal|no picture|dead pixels?|artifact(?:s|ing)|artefact(?:s|ing))\b/i;
+const SCAM_WORDS = /\b(empty (?:retail |original |console )?(?:box|packaging|case)|packaging only|box (?:and|&) (?:inserts?|packaging|manual)|box\W{1,4}empty|empty\W{1,4}(?:box|packaging)|read desc|read description|photo of|picture of|image of|empty box|box only|replica|fake|not genuine|contact me|message me before|whatsapp|bank transfer)\b/i;
+// "iPhone 12 Pro Max 128GB BOX": a title that ends in "box" is usually the box alone ("... with box" is fine)
+const BOX_END = /(?<!\b(?:with|w\/|and|&|\+|inc|incl|includes?|including|in|original|retail) )\bbox(?:es)?\W*$/i;
+const RISK_G = new RegExp(RISK_WORDS.source, "gi");
 const MISSPELT = /\b(nvidea|nvida|nvdia|geforse|gefroce|playstaion|playsation|plastation|playstatio|nintedo|nintndo|nitendo|xobx|xbxo|iphne|iphome|ipohne|samsng|samsumg|sumsung|macbok|mackbook|macbbok|thinkpda|lenova|lenvo|hewlet|cannon eos|nikkon|dysen|delonghi|de longhi|airpod pro|sonos|bose|playstation 4 pro|ps4 pro|ps5 disc|xbox seris|xbox sereis|apple watc|ipda|ipadd|gopro hreo|go pro|dyosn|kitchen aid|lego technic)\b/i;
 const MIS_ONLY = /\b(nvidea|nvida|nvdia|geforse|gefroce|playstaion|playsation|plastation|playstatio|nintedo|nintndo|nitendo|xobx|xbxo|iphne|iphome|ipohne|samsng|samsumg|sumsung|macbok|mackbook|macbbok|thinkpda|lenova|lenvo|hewlet|nikkon|dysen|xbox seris|xbox sereis|apple watc|ipda|ipadd|gopro hreo|dyosn)\b/i;
 
@@ -836,12 +839,15 @@ async function sweep(env, manual) {
       continue;
     }
     if (RISK_WORDS.test(s.title)) { why.risky++; continue; }
+    if (BOX_END.test(s.title)) { hidden++; continue; }
     const m = market(s.pkey, s.id, s.matchQ || 0.5);
     if (!m) { why.noData++; continue; }
     if (m.spread > 0.9 && (s.matchQ || 0.5) < 0.8) { why.noData++; continue; } // prices all over the place: not confident
     const cost = s.price + s.ship + extra;
     if (cost < m.med * 0.4 && (s.seller.fb < 5 || s.seller.pct < 95 || SCAM_WORDS.test(s.title))) { hidden++; continue; }
     if (SCAM_WORDS.test(s.title)) { hidden++; continue; }
+    // a Buy It Now at under a fifth of what it sells for is almost always a box, a photo, a code or a scam
+    if (s.type !== "AUC" && cost < m.med * 0.2) { hidden++; continue; }
     const ri = m.post != null ? { ...r, post: m.post } : r; // postage out for this product, from the price book
     const mp = maxPay(m.med, m.low, ri);
     if (mp <= 0) continue;
@@ -1085,7 +1091,7 @@ async function getMany(env, ids) {
 }
 
 /* ---------------- is a listing still for sale? ---------------- */
-async function checkLive(env, id, pre) {
+async function checkLive(env, id, pre, full) {
   const D = env.DB, now = Date.now();
   let d = pre;
   if (!d) try { d = await ebay(env, `/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id=${id}`); }
@@ -1104,6 +1110,7 @@ async function checkLive(env, id, pre) {
   const pr = auction && d.currentBidPrice ? d.currentBidPrice : d.price;
   const so = (d.shippingOptions || [])[0];
   const out = { live: true, price: pr ? parseFloat(pr.value) : null, ship: so && so.shippingCost ? parseFloat(so.shippingCost.value) || 0 : 0, bids: +d.bidCount || 0, end };
+  if (full) out.info = listingInfo(d);
   const row = await D.prepare("SELECT data FROM deals WHERE id=?").bind(id).first();
   if (row && out.price != null) {
     const deal = JSON.parse(row.data);
@@ -1115,6 +1122,26 @@ async function checkLive(env, id, pre) {
     await D.prepare("UPDATE deals SET checked=? WHERE id=?").bind(now, id).run();
   }
   return out;
+}
+// what the seller wrote: description, condition notes, item details, photos, returns. Shown on the deal page.
+function plainText(h) {
+  return String(h || "").replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ").replace(/<br\s*\/?>|<\/(p|div|li|tr|h\d)>/gi, "\n").replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&pound;/g, "£")
+    .replace(/[ \t]+/g, " ").replace(/ *\n[\s]*/g, "\n").trim();
+}
+function listingInfo(d) {
+  const desc = plainText(d.description || d.shortDescription).slice(0, 4000);
+  const note = String(d.conditionDescription || "").slice(0, 600);
+  const words = [...new Set(((note + "\n" + desc).match(RISK_G) || []).map((w) => w.toLowerCase()))].slice(0, 6);
+  const rt = d.returnTerms || {}, sl = d.seller || {}, loc = d.itemLocation || {};
+  return {
+    desc, note, warn: words,
+    photos: [d.image, ...(d.additionalImages || [])].filter(Boolean).map((x) => x.imageUrl).filter(Boolean).slice(0, 12),
+    specs: (d.localizedAspects || []).slice(0, 20).map((a) => [String(a.name).slice(0, 40), String(a.value).slice(0, 80)]),
+    returns: rt.returnsAccepted ? (rt.returnPeriod ? rt.returnPeriod.value + " " + String(rt.returnPeriod.unit || "days").toLowerCase() : "accepted") : rt.returnsAccepted === false ? "none" : null,
+    seller: sl.username ? { name: sl.username, pct: parseFloat(sl.feedbackPercentage) || 0, fb: +sl.feedbackScore || 0 } : null,
+    where: [loc.city, loc.postalCode].filter(Boolean).join(" "),
+  };
 }
 async function verifyDeals(env, n) {
   // checks the deals checked longest ago (deals in this scan's results already count as checked)
@@ -1215,7 +1242,7 @@ export default {
         if (P("check")) {
           const id = String(P("check")).replace(/\D/g, "");
           if (!id) return json({ error: "need a listing" }, 400);
-          return json(await checkLive(env, id));
+          return json(await checkLive(env, id, null, true));
         }
         if (P("price") && request.method === "POST") {
           const b = JSON.parse(await request.text());

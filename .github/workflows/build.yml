@@ -19,6 +19,9 @@ jobs:
         run: |
           mkdir www
           cp index.html www/index.html
+          # version = 2.0.<build number>, shown in Settings and in the phone's App info, so you can tell which build is installed
+          sed -i 's/VER="2.0"/VER="2.0.${{ github.run_number }}"/' www/index.html
+          grep -c 'VER="2.0.${{ github.run_number }}"' www/index.html
           npm init -y
           npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6 @capacitor/app@6 @capacitor/push-notifications@6 @capacitor/app-launcher@6 cordova-plugin-inappbrowser@6.0.0
           npx cap init "FlipScout" com.reaverslegion.flipscout --web-dir www
@@ -63,6 +66,10 @@ jobs:
           cat >> android/app/build.gradle <<'EOF'
           android { signingConfigs { debug { storeFile file('flipscout.keystore'); storePassword 'android'; keyAlias 'androiddebugkey'; keyPassword 'android' } } }
           EOF
+      - name: Version number
+        run: |
+          sed -i -E 's/versionCode [0-9]+/versionCode ${{ github.run_number }}/; s/versionName "[^"]*"/versionName "2.0.${{ github.run_number }}"/' android/app/build.gradle
+          grep -E 'versionCode|versionName' android/app/build.gradle
       - name: Build APK
         run: cd android && chmod +x gradlew && ./gradlew assembleDebug
       - uses: actions/upload-artifact@v4

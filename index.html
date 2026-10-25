@@ -53,6 +53,7 @@ input[type=checkbox]{width:22px;height:22px;min-height:0;padding:0;flex:none;acc
 textarea{min-height:120px;font-family:ui-monospace,Menlo,monospace;font-size:15px}
 .hint{font-size:14px;color:var(--mu);margin-top:6px}
 button{min-height:48px;padding:12px 18px;font:inherit;font-weight:700;border:0;border-radius:14px;background:var(--grad);color:var(--ontx);margin:10px 8px 0 0;cursor:pointer}
+button.sm{min-height:36px;padding:6px 12px;font-size:14px;border-radius:10px;margin:0}
 button.s{background:var(--card2);color:var(--tx);border:1px solid var(--bd)}
 button.d{background:var(--badbg);color:var(--bad)}
 button.link{background:none;color:var(--ac);padding:8px 4px;min-height:40px;margin:4px 0 0}
@@ -303,11 +304,11 @@ function vAdmin(){if(!S.set.admin)return`<div class="card">Admin tools are off.<
   ${connected()?`<div class="card"><b>Scan service</b><div class="mu">How often FlipScout searches eBay. Every search uses some of eBay's 5,000 daily calls.</div>
    <label for="hi">Check every</label><select id="hi" onchange="H().interval=+this.value;save();pushConfig()">${[5,10,15,30,60].map(m=>`<option value="${m}"${H().interval===m?" selected":""}>${m} minutes</option>`).join("")}</select>
    <label class="chkrow" style="min-height:44px"><input type="checkbox" ${H().paused?"checked":""} onchange="H().paused=this.checked;save();pushConfig();render()"><span>Pause hunting (stops all searches and followed-listing checks)</span></label>
-   <button onclick="huntNow()" ${HD.busy?"disabled":""}>${HD.busy?"Checking…":"Scan now"}</button></div>
+   <button onclick="huntNow()" ${HD.busy?"disabled":""}>${HD.busy?"Checking…":"Scan now"}</button></div>${connCard()}
   <div class="card"><b>Price list</b><div class="mu">Every model FlipScout has a price for: how many sold and what it sells for.</div><button onclick="go('plist')">Open price list ›</button></div>
   <div class="card"><b>Fill prices for a whole category</b><div class="mu">Opens eBay's sold listings for the category, sorted newest first. Tap Next page as often as you like, then Save all. FlipScout sorts them into models and saves each one with 5+ sales.</div>
    ${ADMC.map((c,i)=>{const f=fillPg(c.id);return`<div class="li" style="padding:8px 0;flex-wrap:wrap;gap:6px"><span style="flex:1;min-width:0">${esc(c.name)}${(()=>{const t=ADMS&&ADMS[c.id];return t&&t.sales?`<div style="font-size:14px;font-weight:700">${fmtN(t.sales)} sales saved · ${fmtN(t.models)} model${t.models===1?"":"s"} priced</div>`:""})()}${f?`<div class="mu" style="font-size:13px">Read up to page ${f.pg}, ${ago(f.at)}</div>`:""}</span>
-    ${f?`<button style="margin:0;min-height:40px;padding:6px 12px" onclick="fillCat(ADMC[${i}],${f.pg+1})">Continue p${f.pg+1}</button><button class="s" style="margin:0;min-height:40px;padding:6px 12px" onclick="fillCat(ADMC[${i}])">Start</button>`:`<button class="s" style="margin:0;min-height:40px;padding:6px 14px" onclick="fillCat(ADMC[${i}])">Fill prices</button>`}</div>`}).join("")}
+    <span style="display:flex;gap:6px;flex:none;align-self:center;align-items:center">${f?`<button class="sm" onclick="fillCat(ADMC[${i}],${f.pg+1})">Page ${f.pg+1} ›</button><button class="s sm" onclick="fillCat(ADMC[${i}])">Start</button>`:`<button class="s sm" onclick="fillCat(ADMC[${i}])">Fill</button>`}</span></div>`}).join("")}
    <div class="hint">Take it steady: a few pages, then a break.</div></div>
   <div class="card"><b>Fill any eBay category</b><div class="mu">Pick it like on eBay, down to the most specific one you can, then tap Fill.</div><div id="catbox_a" style="margin-top:10px"></div>
    <div class="hint">Phones, graphics cards, consoles, laptops and the other popular kinds are sorted model by model. Anything else is grouped by matching titles, which is rougher, so the most specific category gives the best prices.</div></div>`:`<div class="card">Connect your Scan service first.</div>`}`}
@@ -636,7 +637,7 @@ function vSettings(){
     ${h.quiet&&h.quiet.on?`<div class="row"><div><label for="qf">From</label><select id="qf" onchange="H().quiet.from=+this.value;save();pushConfig()">${hourOpts(h.quiet.from)}</select></div><div><label for="qt">Until</label><select id="qt" onchange="H().quiet.to=+this.value;save();pushConfig()">${hourOpts(h.quiet.to)}</select></div></div><div class="hint">FlipScout keeps hunting. Deals found in quiet hours still show in the app; followed listings alert you afterwards if still under your max.</div>`:""}
     <label for="as">Alert me for deals scoring</label><select id="as" onchange="H().alertScore=+this.value;save();pushConfig()">${[[60,"60+ (more alerts)"],[70,"70+ (recommended)"],[85,"85+ (only the best)"]].map(o=>`<option value="${o[0]}"${h.alertScore===o[0]?" selected":""}>${o[1]}</option>`).join("")}</select>
     <details><summary>Not getting alerts?</summary><div class="mu">Some phones stop apps in the background to save battery. On Xiaomi, Redmi or POCO: open phone <b>Settings › Apps › FlipScout</b>, turn on <b>Autostart</b>, and set <b>Battery saver</b> to <b>No restrictions</b>. On Samsung: <b>Settings › Apps › FlipScout › Battery › Unrestricted</b>.<br><br>No sound? Open phone <b>Settings › Apps › FlipScout › Notifications › Deal alerts</b> and turn on <b>Sound</b> (Xiaomi also has <b>Allow sound</b> there).</div></details>`}</div>
-  <div class="card"><b>Hunting in</b>${h.cats.length?`<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">${h.cats.map(c=>`<span class="chip" style="font-size:14px;padding:6px 12px;color:var(--tx);background:var(--card2)">${esc(c.name)}</span>`).join("")}</div>`:`<div class="mu">No categories picked yet.</div>`}<button class="s" onclick="go('cats')">Change categories</button>
+  <div class="card"><b>Hunting in</b>${h.cats.length?`<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">${h.cats.map(c=>`<span class="chip" style="font-size:14px;padding:6px 12px;color:var(--tx);background:var(--card2)">${esc(c.name)}</span>`).join("")}</div>`:`<div class="mu">No categories picked yet.</div>`}<button onclick="go('cats')" style="width:100%;margin:14px 0 4px">Change categories ›</button>
    <div class="row"><div><label for="hp">Your postage out £</label><input id="hp" inputmode="decimal" value="${h.post}" onchange="setHunt('post',this.value)"></div><div><label for="hk">Packaging £</label><input id="hk" inputmode="decimal" value="${h.pack}" onchange="setHunt('pack',this.value)"></div></div>
    <div class="hint">Used for deal profit. Typical medium parcel: about £5 to £7.</div>
    <label class="chkrow" style="min-height:44px"><input type="checkbox" ${h.bpf?"checked":""} onchange="H().bpf=this.checked;save();pushConfig()"><span>Add eBay's buyer protection fee to costs (estimate) ${ti("bpf")}</span></label></div>`})()}
@@ -650,16 +651,17 @@ function vSettings(){
    <div class="btns"><button onclick="cloudPush(true)">Back up now</button><button class="s" onclick="cloudCheck()">Restore from cloud</button></div>`
    :`<div class="mu">Connect your Scan service (below) and your data backs up automatically.</div>`}
    ${S.set.admin?`<details><summary>Manual backup (copy and paste)</summary><div class="btns" style="margin-top:-6px"><button class="s" onclick="backup()">Copy backup text</button><button class="s" onclick="restoreSheet()">Paste backup</button></div></details>`:""}</div>
-  ${connected()&&!S.set.admin?"":`<details class="card" id="adv" ${connected()?"":"open"}><summary>${connected()?"Advanced: Scan connection":"Connect your Scan service"}</summary>
+  ${connected()?"":connCard()}
+  <div class="card"><button class="s" onclick="ob=0;showOnb()">Show the welcome guide again</button><div class="mu" style="margin-top:10px;user-select:none" onclick="admTap()">FlipScout version ${VER}</div></div>
+  ${S.set.admin?`<div class="card"><b>Admin tools</b><div class="mu">For building the price database. Not for customers.</div><button class="s" onclick="go('admin')">Open admin tools</button></div>`:""}`;
+}
+function connCard(){const s=S.set;return `<details class="card" id="adv" ${connected()?"":"open"}><summary>${connected()?"Advanced: Scan connection":"Connect your Scan service"}</summary>
    <div class="mu">The address and key of your Scan service.</div>
    <label for="s_url">Service address</label><input id="s_url" value="${esc(s.url)}" placeholder="https://something.workers.dev" onchange="setConn(this.value)">
    <label for="s_key">Key</label><input id="s_key" value="${esc(s.key)}" onchange="S.set.key=this.value.trim();save();toast('Saved.');afterConn()">
    <label for="s_reg">Where sellers are</label><select id="s_reg" onchange="S.set.region=this.value;save();pushConfig();toast('Saved.')"><option value="uk"${s.region!=="any"?" selected":""}>UK sellers only</option><option value="any"${s.region==="any"?" selected":""}>Anywhere that posts to the UK</option></select>
    <div class="hint">Overseas sellers may add import fees and slower delivery.</div>
    ${connected()?`<button class="s" onclick="copySetup()">Copy setup code</button><div class="hint">Paste this setup code into the Service address box on a new install, and the address and key fill in together.</div>`:`<div class="hint">Tip: you can paste a setup code into the Service address box.</div>`}</details>`}
-  <div class="card"><button class="s" onclick="ob=0;showOnb()">Show the welcome guide again</button><div class="mu" style="margin-top:10px;user-select:none" onclick="admTap()">FlipScout ${VER}</div></div>
-  ${S.set.admin?`<div class="card"><b>Admin tools</b><div class="mu">For building the price database. Not for customers.</div><button class="s" onclick="go('admin')">Open admin tools</button></div>`:""}`;
-}
 const hourOpts=v=>Array.from({length:24},(_,i)=>`<option value="${i}"${+v===i?" selected":""}>${String(i).padStart(2,"0")}:00</option>`).join("");
 function setConn(v){v=String(v||"").trim();const i=v.indexOf("#");if(i>0){S.set.url=v.slice(0,i);S.set.key=v.slice(i+1)}else S.set.url=v;save();render();toast("Saved.");afterConn()}
 function afterConn(){if(connected()){CT=null;HD.deals=null;FL.list=null;if(H().cats.length)pushConfig();autoPush();if(!S.items.length&&!S.base.length)cloudCheck(true);else cloudSoon()}}
@@ -833,7 +835,7 @@ function dealCard(d,i){
   ${sp?`<div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:8px"><div class="stat">${pp(d)}</div><div class="mu">working ones sell for ${gbp(d.workMed)}</div></div>`
    :priceRow(d)+`<div class="mu" style="margin-top:8px;font-size:var(--fs-meta)">${d.type!=="AUC"&&(d.maxItem==null||d.price<=d.maxItem)?"Sells-for price "+evShort(d):`Sells for about <b class="num-t">${gbp(d.med)}</b> (estimate) · ${evShort(d)}`}${retPct(d)!=null?` · <b class="num-t">${retPct(d)}%</b> return`:""}</div>`}
   ${(()=>{const tg=(d.tags||[]).filter(t=>!/^\d+ bids?$|^No bids yet$/.test(t));return tagChips(tg)})()}
-  <div style="display:flex;gap:8px;margin-top:10px">${!sp&&d.look?`<button class="s" style="margin:0;flex:1;white-space:nowrap;padding:12px 10px" onclick="event.stopPropagation();lookUp(${esc(JSON.stringify(d.look))})" aria-label="Check sold prices">Sold prices</button>`:""}${sp?"":isFollowed(d.id)?`<button class="s" style="margin:0;flex:none;color:var(--ok)" onclick="event.stopPropagation();go('follow')" aria-label="Following this deal">✓ Following</button>`:`<button style="margin:0;flex:none;padding:12px 16px" onclick="event.stopPropagation();quickFollow(${i})" aria-label="Follow this deal">Follow</button>`}<button class="s" style="margin:0;${!sp&&d.look?"flex:none":"flex:1"}" onclick="event.stopPropagation();hideDeal(${esc(JSON.stringify(d.id))})" aria-label="Hide this deal">Hide</button></div>
+  <div style="display:flex;gap:8px;margin-top:10px"><button class="s" style="margin:0;flex:1" onclick="event.stopPropagation();openDeal(${i})" aria-label="See full details">Details</button>${sp?"":isFollowed(d.id)?`<button class="s" style="margin:0;flex:1;color:var(--ok)" onclick="event.stopPropagation();go('follow')" aria-label="Following this deal">✓ Following</button>`:`<button style="margin:0;flex:1;padding:12px 16px" onclick="event.stopPropagation();quickFollow(${i})" aria-label="Follow this deal">Follow</button>`}<button class="s" style="margin:0;flex:1" onclick="event.stopPropagation();hideDeal(${esc(JSON.stringify(d.id))})" aria-label="Hide this deal">Hide</button></div>
   </div>`}
 const FILTERS=[["all","All"],["bin","Buy It Now"],["auc","Auctions"],["mis","Misspelt"],["spares","Spares"],["col","Collection"],["guess","Guesses"]];
 // Deals priced only from asking prices (what sellers want, not what things sold for) are kept apart as "Guesses"
@@ -864,13 +866,13 @@ function vHunt(){
   ${HD.filter==="guess"?`<div class="hint" style="margin:0 4px 10px">Guesses are priced from what sellers are <b>asking</b>, not what things actually sold for. Check sold prices before buying. No alerts for these.</div>`:""}
   ${rep.hidden?`<div class="hint" style="margin:0 4px 10px">🛡 Scam shield hid ${rep.hidden} risky listing${rep.hidden>1?"s":""} last check.</div>`:""}
   ${(()=>{const A=list.filter(actNow).sort((a,b)=>rightNow(b)-rightNow(a)).slice(0,8);if(!A.length)return"";
-    return`<section aria-label="Act now" style="margin:2px 0 14px;padding:14px 0 12px;border-radius:20px;background:var(--warnbg);border:1.5px solid color-mix(in srgb,var(--warn) 45%,transparent)">
-    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:0 16px 10px"><div style="font-weight:800;font-size:17px">⚡ Act now</div><div class="mu" style="font-size:13px;font-weight:600">${A.length} ending soon or just listed${A.length>1?" · swipe ›":""}</div></div>
-    <div id="actrow" onscroll="actDots()" style="display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding:0 16px;padding:0 16px 4px;scrollbar-width:none">${A.map(d=>{const i=(HD.deals||[]).indexOf(d),rg=profRange(d),auc=d.type==="AUC";return`<button class="s" style="margin:0;flex:none;width:${A.length>1?"78%":"100%"};scroll-snap-align:start;text-align:left;padding:14px;border-radius:16px;display:block;background:var(--card);border:1px solid var(--bd);box-shadow:var(--shadow)" onclick="openDeal(${i})">
-      <span class="chip" style="background:${auc?"var(--warnbg)":"var(--okbg)"};color:${auc?"var(--warn)":"var(--ok)"};border:0" ${auc?`data-end="${d.end}"`:""}>${auc?"Ends in "+left(d.end).replace(" left",""):"Listed "+ago(d.created||d.found)}</span>
-      <div style="font-weight:700;margin-top:8px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.6em">${esc(d.title)}</div>
-      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-top:8px"><span class="mu" style="font-size:13px">${auc?"Bid":"Buy"} ${gbp(d.price)}</span><span class="ok num-t" style="font-weight:800;font-size:17px;white-space:nowrap">${rg?`${sgn(rg[0])} – ${sgn(rg[1])}`:sgn(d.profit)}</span></div></button>`}).join("")}</div>
-    ${A.length>1?`<div id="actdots" aria-hidden="true" style="display:flex;justify-content:center;gap:6px;margin-top:8px">${A.map((_,k)=>`<span style="width:${k?6:16}px;height:6px;border-radius:3px;background:${k?"var(--bd)":"var(--warn)"};transition:width .2s"></span>`).join("")}</div>`:""}</section>`})()}
+    return`<section aria-label="Act now" style="margin:2px 0 12px;padding:8px 0;border-radius:14px;background:var(--warnbg);border:1.5px solid color-mix(in srgb,var(--warn) 45%,transparent)">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:0 12px 6px"><div style="font-weight:800;font-size:14px">⚡ Act now</div><div class="mu" style="font-size:12px;font-weight:600">${A.length}${A.length>1?" · swipe ›":""}</div></div>
+    <div id="actrow" onscroll="actDots()" style="display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding:0 12px;padding:0 12px;scrollbar-width:none">${A.map(d=>{const i=(HD.deals||[]).indexOf(d),rg=profRange(d),auc=d.type==="AUC";return`<button class="s" style="margin:0;flex:none;width:${A.length>1?"74%":"100%"};min-height:0;scroll-snap-align:start;text-align:left;padding:8px 10px;border-radius:10px;font-size:13px;display:block;background:var(--card);border:1px solid var(--bd);box-shadow:var(--shadow)" onclick="openDeal(${i})">
+      <span class="chip" style="font-size:11px;padding:1px 7px;background:${auc?"var(--warnbg)":"var(--okbg)"};color:${auc?"var(--warn)":"var(--ok)"};border:0" ${auc?`data-end="${d.end}"`:""}>${auc?"Ends in "+left(d.end).replace(" left",""):"Listed "+ago(d.created||d.found)}</span>
+      <div style="font-weight:700;margin-top:4px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.title)}</div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-top:2px"><span class="mu" style="font-size:12px;white-space:nowrap">${auc?"Bid":"Buy"} ${gbp(d.price)}</span><span class="ok num-t" style="font-weight:800;font-size:14px;white-space:nowrap">${rg?`${sgn(rg[0])} – ${sgn(rg[1])}`:sgn(d.profit)}</span></div></button>`}).join("")}</div>
+    </section>`})()}
   ${HD.deals===null?`<div class="card mu">Loading deals…</div>`:list.length?list.map(d=>dealCard(d,(HD.deals||[]).indexOf(d))).join("")+laterBox(qq)+whyLine(rep)
    :qq&&base.length?`<div class="card empty"><b>No deals match “${esc(HD.q)}”</b><div class="mu">Try another word, or clear the search.</div><button class="s" onclick="HD.q='';render()">Clear search</button></div>`
    :`<div class="card empty">${I.bolt}<b>No deals right now</b><div class="mu">Real bargains are rare, so FlipScout only shows ones backed by real sold prices. It keeps checking and alerts you when one turns up.</div>${whyLine(rep)}<button class="s" onclick="go('cats')">My categories</button></div>${laterBox(qq)}`}
@@ -909,10 +911,10 @@ function reprice(d){const bf=H().bpf?bpfA(d.price):0;d.cost=Math.round((d.price+
   d.tags=(d.tags||[]).map(t=>/^(\d+ bids?|No bids yet)$/.test(t)?(d.bids?d.bids+" bid"+(d.bids>1?"s":""):"No bids yet"):t);
   const mx=d.maxItem!=null?d.maxItem:d.maxBid;if(mx!=null&&d.price>mx)d.gone="dear"}
 function openDeal(i){DV=(HD.deals||[])[i];if(!DV)return;const d=DV;d.live=undefined;go("deal");
-  api("check="+d.id).then(r=>{d.live=r.live;
+  api("check="+d.id).then(r=>{d.live=r.live;if(r.info)d.info=r.info;
     if(!r.live||r.tooDear){d.gone=r.live?"dear":"ended";HD.deals=(HD.deals||[]).filter(x=>x.id!==d.id)}
     else if(r.price!=null&&Math.abs(r.price+r.ship-(d.price+d.ship))>0.009){d.changed=d.type==="AUC"?"bid":"price";d.price=r.price;d.ship=r.ship;if(r.bids!=null)d.bids=r.bids;reprice(d);if(d.gone)HD.deals=(HD.deals||[]).filter(x=>x.id!==d.id)}
-    if(tab==="deal"&&DV===d)render()}).catch(()=>{d.live=true;if(tab==="deal"&&DV===d)render()})}
+    if(tab==="deal"&&DV===d)render()}).catch(()=>{d.live=true;d.info=d.info||{err:1};if(tab==="deal"&&DV===d)render()})}
 // "Why it scores": each part of the score, what it means in plain words, and the points it earned
 const FACTORS=[
   ["evidence","Price evidence",25,"How sure FlipScout is about what this really sells for."],
@@ -977,6 +979,21 @@ function trustCard(d){const p=d.parts||{},sel=d.seller||{},v=k=>p[k]!=null?+p[k]
    <div style="margin-top:10px">${lines.map(([x,a,b])=>`<div style="display:flex;gap:6px;padding:9px 0;border-top:1px solid var(--bd)">${mark(x)}<div style="min-width:0"><div>${a}</div><div class="mu" style="font-size:13px">${b}</div></div></div>`).join("")}</div>
    ${d.look?`<button class="${d.src==="book"?"s":""}" style="width:100%;margin-top:6px" onclick="lookUp(DV.look)">${d.src==="book"?"Check sold prices again":"Check sold prices"}</button>`:""}
    ${pts?`<details style="margin-top:8px"><summary class="mu" style="font-size:14px">Score details (${d.score}/100)</summary>${pts}<div class="hint">70+ is a strong deal and sends an alert.</div></details>`:""}</div>`}
+// what the seller wrote, fetched live when the deal opens: warnings, photos, notes, item details, description
+function aboutCard(d){const x=d.info;
+  if(!x)return`<div class="card"><b style="font-size:17px">About the listing</b><div class="mu" style="margin-top:6px">Loading what the seller wrote…</div></div>`;
+  if(x.err)return`<div class="card"><b style="font-size:17px">About the listing</b><div class="mu" style="margin-top:6px">Couldn't load the description. Read it on eBay before you buy.</div></div>`;
+  const sl=x.seller;
+  return`<div class="card"><b style="font-size:17px">About the listing</b>
+   ${x.warn&&x.warn.length?`<div class="verdict no" style="margin-top:10px"><b>The seller's words mention: ${x.warn.map(w=>"“"+esc(w)+"”").join(", ")}</b><div class="mu">Read the description below carefully before you buy.</div></div>`:""}
+   ${x.photos&&x.photos.length>1?`<div style="display:flex;gap:8px;overflow-x:auto;margin:10px -4px 0;padding:0 4px 4px;scrollbar-width:none">${x.photos.map(u=>`<img src="${esc(u)}" alt="" loading="lazy" onclick="photoSheet(${esc(JSON.stringify(u))})" style="width:96px;height:96px;object-fit:cover;border-radius:10px;flex:none;background:var(--card2);cursor:pointer">`).join("")}</div>`:""}
+   ${x.note?`<div class="mu" style="margin-top:12px;font-size:13px;font-weight:700">SELLER'S CONDITION NOTES</div><div style="margin-top:4px;white-space:pre-line">${esc(x.note)}</div>`:""}
+   <div class="li"><span style="flex:1">Seller</span><span>${sl?`${esc(sl.name)} · ${sl.pct}% (${fmtN(sl.fb)})`:"–"}</span></div>
+   <div class="li"><span style="flex:1">Returns</span><span>${x.returns==="none"?"No returns":x.returns?esc(x.returns):"–"}</span></div>
+   ${x.where?`<div class="li"><span style="flex:1">Item location</span><span>${esc(x.where)}</span></div>`:""}
+   ${x.specs&&x.specs.length?`<details><summary>Item details (${x.specs.length})</summary>${x.specs.map(a=>`<div class="li"><span style="flex:1" class="mu">${esc(a[0])}</span><span style="text-align:right;max-width:60%">${esc(a[1])}</span></div>`).join("")}</details>`:""}
+   ${x.desc?`<details${x.warn&&x.warn.length?" open":""}><summary>Seller's description</summary><div style="white-space:pre-line;font-size:15px;line-height:1.5;max-height:420px;overflow:auto">${esc(x.desc)}</div></details>`:`<div class="mu" style="margin-top:8px">No description given.</div>`}</div>`}
+function photoSheet(u){openSheet(`<img src="${esc(u)}" alt="" style="width:100%;max-height:70vh;object-fit:contain;border-radius:12px;background:var(--card2)"><button class="s" onclick="closeSheet()">Close</button>`)}
 function vDeal(){
   const d=DV;if(!d)return`<div class="card">That deal has gone.</div>`;
   const sp=d.kind==="spares",p=d.parts||{},sel=d.seller||{};
@@ -997,7 +1014,7 @@ function vDeal(){
   const ev=d.src==="book"?`Saved price: sells for about ${gbp(d.med)} incl. postage. Saved ${ago(d.bookAt)}`:d.src==="sold"?`${d.n} sold prices in the last 30 days`:`${d.n} asking prices (no sales recorded yet, so it scores lower)`;
   return head+`<div class="card"><b style="font-size:17px">The money</b>${d.type==="AUC"?`<div class="mu" style="font-size:14px">Auction · ${left(d.end)}</div>`:""}
    ${priceRow(d,1)}${moneyLines(d)}</div>
-  ${trustCard(d)}
+  ${trustCard(d)}${aboutCard(d)}
   <div class="btns"><a href="${esc(ukUrl(d.url))}" target="_blank" rel="noopener"><button>${d.type==="AUC"?"Bid on eBay":"Buy on eBay · "+gbp(d.price+d.ship)}</button></a><button class="s" onclick="followSheet()">Follow</button><button class="s" onclick="itemSheet(0,{name:DV.title,buy:DV.price+DV.ship,exp:DV.med,url:DV.url})">I bought it</button></div>
   <div class="hint">Always read the listing before you pay.</div>`;
 }

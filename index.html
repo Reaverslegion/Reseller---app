@@ -396,7 +396,7 @@ function onBack(){
   if(pickOn){pickClose();return true}
   if(sheetOn){closeSheet();return true}
   if($("onb").style.display==="flex"){if(ob>0){ob--;renderOnb()}return true}
-  if(prev.length){tab=prev.pop();render();return true}
+  if(prev.length){tab=prev.pop();render.restore=true;render();return true}
   if(tab!=="deals"){tab="deals";render();return true}
   return false;
 }
@@ -409,7 +409,10 @@ function applyTheme(){
 }
 try{matchMedia("(prefers-color-scheme: dark)").addEventListener("change",applyTheme)}catch(e){}
 
+// remembers how far down each page you were, so Back returns you to the same spot (e.g. the deal you opened)
+const SCROLLS={};
 function render(){
+  if(render.last&&tab!==render.last)SCROLLS[render.last]=window.scrollY;
   applyTheme();
   const sub=["settings","deal","cats","admin","plist"].includes(tab);
   // settings now lives in the bottom bar (Menu); the top button is only a Back button on pages opened from somewhere else
@@ -419,7 +422,8 @@ function render(){
   $("nav").innerHTML=TABS.map(t=>`<button class="${tab===t[0]||(t[0]==="settings"&&menuOn)?"on":""}" onclick="go('${t[0]}')" aria-label="${t[1]}"><span class="pill">${I[t[2]]}</span>${t[1]}</button>`).join("");
   $("app").innerHTML=({calc:vCalc,deals:vHunt,follow:vFollow,cats:vCats,deal:vDeal,book:vBook,stock:vStock,dash:vDash,settings:vSettings,admin:vAdmin,plist:vPList,scan:vScan,saved:vDeals})[tab]();
   if(tab==="calc")recalc();
-  if(tab!==render.last){window.scrollTo(0,0);render.last=tab}
+  if(tab!==render.last){const y=render.restore?SCROLLS[tab]||0:0;window.scrollTo(0,y);if(y)requestAnimationFrame(()=>window.scrollTo(0,y));render.last=tab}
+  render.restore=false;
 }
 
 /* ---------- CHECK ---------- */

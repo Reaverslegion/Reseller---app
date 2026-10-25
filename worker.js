@@ -396,15 +396,64 @@ const bareKey = (k) => String(k || "").replace(/^t\d*:/, "t:"); // "similar titl
 const BOOK_DAYS = 30;
 // prices saved by a category fill are marked "fill"; prices the user checked themselves have no mark
 let srcReady = false;
-async function ensureSrc(env) { if (srcReady) return; for (const c of ["src TEXT", "n INTEGER", "lo REAL", "hi REAL"]) { try { await env.DB.prepare("ALTER TABLE prices ADD COLUMN " + c).run(); } catch (e) {} } srcReady = true; }
+async function ensureSrc(env) { if (srcReady) return; for (const c of ["src TEXT", "n INTEGER", "lo REAL", "hi REAL", "spd REAL", "sdays REAL", "sn INTEGER", "act INTEGER", "act_at INTEGER"]) { try { await env.DB.prepare("ALTER TABLE prices ADD COLUMN " + c).run(); } catch (e) {} } srcReady = true; }
 // a careful "sells for": the lower-middle sale price (40th percentile), from the last 30 days when there are 5+ sales, else 90 days
 const pctl = (a, f) => { const s = [...a].sort((x, y) => x - y); if (!s.length) return null; const i = (s.length - 1) * f, lo = Math.floor(i); return s[lo] + (s[Math.min(s.length - 1, lo + 1)] - s[lo]) * (i - lo); };
 const FILL_SKIP = /\b(faulty|spares|repairs?|broken|for parts|parts only|job ?lot|joblot|bundle|empty box|box only|untested|read desc|read description|see desc|see description|please read|not working|cracked|icloud locked)\b/i;
+/* ---------------- sell speed ----------------
+   eBay's sold pages show the day each item sold, not how long it was listed. So speed is estimated from
+   (a) sales per day: sales counted only on days whose sold pages were actually read ("covered" days), and
+   (b) how many of the model are for sale now (one official API call per model, refreshed every 3 days).
+   Rough wait = for sale now ÷ sales per day. Never shown as a promise; thin evidence shows "not enough data". */
+const SPEED_MIN_SALES = 10, SPEED_MIN_DAYS = 3, SPEED_WINDOW = 30;
+// covered time: a list of [from, to] ms ranges, merged, kept for 90 days
+function coverAdd(list, from, to, now) {
+  const all = [...(Array.isArray(list) ? list : []), [from, to]].filter((r) => r && r[1] > r[0] && r[1] > now - 90 * DAY).sort((a, c) => a[0] - c[0]), out = [];
+  for (const r of all) { const l = out[out.length - 1]; if (l && r[0] <= l[1]) l[1] = Math.max(l[1], r[1]); else out.push([r[0], r[1]]); }
+  return out;
+}
+const coverDays = (list, since, until) => (list || []).reduce((a, r) => a + Math.max(0, Math.min(r[1], until) - Math.max(r[0], since)), 0) / DAY;
+const inCover = (list, t) => (list || []).some((r) => t >= r[0] && t < r[1]);
+// the range a fill's rows prove was read in full: from the day after the oldest sale (that day was only partly read) to the end of the newest day
+function coverOf(rows, now) {
+  const ds = rows.map((r) => +(r && r.d)).filter((d) => d > now - 400 * DAY && d <= now + DAY);
+  if (ds.length < 20) return null;
+  const from = Math.min(...ds) + DAY, to = Math.min(now, Math.max(...ds) + DAY);
+  return to > from ? [from, to] : null;
+}
+// sales per day for one model, from its sales [id, price, post, soldAt] inside covered days of the last 30
+function salesRate(list, cover, now) {
+  const since = now - SPEED_WINDOW * DAY, days = coverDays(cover, since, now);
+  const sn = list.filter((r) => r[3] && r[3] >= since && inCover(cover, r[3])).length;
+  return { spd: days >= 1 ? sn / days : null, sdays: Math.round(days * 10) / 10, sn };
+}
+// what the app shows: band + a range in days, or why there isn't one. b = price row {spd, sdays, sn, act, act_at}
+function speedOf(b, now) {
+  if (!b || b.sn == null) return null;
+  const base = { sold: b.sn, overDays: b.sdays, forSale: b.act != null ? b.act : null, checked: b.act_at || null };
+  if (b.sn < SPEED_MIN_SALES || b.sdays < SPEED_MIN_DAYS || !(b.spd > 0)) return { ...base, band: "none" };
+  const perWeek = Math.round(b.spd * 7 * 10) / 10;
+  if (b.act == null || !b.act_at || now - b.act_at > 7 * DAY) return { ...base, band: null, perWeek };
+  const days = Math.max(1, b.act) / b.spd;
+  return { ...base, perWeek, days: Math.round(days * 10) / 10, lo: Math.max(1, Math.round(days * 0.6)), hi: Math.max(2, Math.round(days * 1.6)), band: days <= 7 ? "fast" : days <= 28 ? "normal" : "slow" };
+}
+// self-check: did last fill's sales rate hold up in the days read since? (within ±50% counts as a hit)
+function rateCheck(prev, list, cover, now) {
+  if (!prev || !(prev.spd > 0) || (prev.sn || 0) < SPEED_MIN_SALES || (prev.sdays || 0) < SPEED_MIN_DAYS || !prev.at) return null;
+  const days = coverDays(cover, prev.at, now);
+  if (days < SPEED_MIN_DAYS) return null;
+  const n = list.filter((r) => r[3] && r[3] > prev.at && inCover(cover, r[3])).length, obs = n / days;
+  return { hit: Math.abs(obs - prev.spd) <= prev.spd * 0.5, pred: prev.spd, obs };
+}
 async function fillPrices(env, b) {
   // Every sale is kept by its eBay item number (so pages read twice, or on different days, never count twice)
   // in one small record per model; each model's price comes from all its sales in the last 90 days.
   const cat = String(b.cat || "").replace(/\D/g, ""), catName = String(b.catName || "").slice(0, 80), cond = b.cond === "new" ? "new" : "used";
   const rows = (Array.isArray(b.rows) ? b.rows : []).slice(0, 3000), groups = new Map(), now = Date.now(), cut = now - 90 * DAY;
+  // which days these pages covered in full, for sales-per-day
+  const covAll = await kvGet(env, "fillCover", {}), rng = coverOf(rows, now);
+  const cover = rng ? coverAdd(covAll[cat], rng[0], rng[1], now) : coverAdd(covAll[cat], 0, 0, now);
+  if (rng && cat) { covAll[cat] = cover; await kvSet(env, "fillCover", covAll); }
   for (const r of rows) {
     const t = String((r && r.n) || "").slice(0, 200), p = +r.p, id = String((r && r.id) || "").replace(/\D/g, "").slice(0, 20);
     if (!t || !id || !(p > 0 && p < 100000) || FILL_SKIP.test(t)) continue;
@@ -428,6 +477,12 @@ async function fillPrices(env, b) {
     const part = keys.slice(i, i + 90), q = await env.DB.prepare("SELECT pkey, data FROM fillsales WHERE pkey IN (" + part.map(() => "?").join(",") + ")").bind(...part).all();
     for (const r of q.results || []) { try { have.set(r.pkey, JSON.parse(r.data)); } catch (e) {} }
   }
+  const prevRate = new Map();
+  for (let i = 0; i < keys.length; i += 90) {
+    const part = keys.slice(i, i + 90), q = await env.DB.prepare("SELECT pkey, spd, sdays, sn, at FROM prices WHERE pkey IN (" + part.map(() => "?").join(",") + ")").bind(...part).all();
+    for (const r of q.results || []) prevRate.set(r.pkey, r);
+  }
+  const chk = await kvGet(env, "spdCheck", { n: 0, hit: 0 }); let chkNew = 0;
   const old = await env.DB.prepare("SELECT pkey, at, src FROM prices WHERE at > ?").bind(now - 7 * DAY).all();
   const mine = new Set((old.results || []).filter((r) => r.src !== "fill").map((r) => r.pkey));
   const blobs = [], prices = [], saved = []; let few = 0, kept = 0, fresh = 0;
@@ -443,13 +498,16 @@ async function fillPrices(env, b) {
     const avg = Math.round(pctl(ps, 0.4) * 100) / 100, lo = Math.round(pctl(ps, 0.25)), hi = Math.round(pctl(ps, 0.75)), sh = use.map((r) => r[2]).filter((v) => v != null);
     const dated = keep.filter((r) => r[3]).sort((a, c) => a[3] - c[3]); let trend = "steady";
     if (dated.length >= 8) { const h = dated.length >> 1, o = median(dated.slice(0, h).map((r) => r[1])), nw = median(dated.slice(h).map((r) => r[1])); trend = nw > o * 1.05 ? "rising" : nw < o * 0.95 ? "falling" : "steady"; }
-    prices.push([key, x.label.slice(0, 120), x.q.slice(0, 400), avg, null, sh.length ? Math.round(median(sh) * 100) / 100 : null, trend, now, "fill", use.length, lo, hi]);
+    const rt = salesRate(keep, cover, now), ck = rng ? rateCheck(prevRate.get(key), keep, cover, now) : null;
+    if (ck) { chk.n++; if (ck.hit) chk.hit++; chkNew++; }
+    prices.push([key, x.label.slice(0, 120), x.q.slice(0, 400), avg, null, sh.length ? Math.round(median(sh) * 100) / 100 : null, trend, now, "fill", use.length, lo, hi, rt.spd, rt.sdays, rt.sn]);
     saved.push({ label: x.label, n: use.length, avg, key });
   }
   // few queries per save (free plan allows 50): many rows per statement
   const multi = (head, tail, cols, list, per) => { const st = []; for (let i = 0; i < list.length; i += per) { const part = list.slice(i, i + per); st.push(env.DB.prepare(head + part.map(() => "(" + Array(cols).fill("?").join(",") + ")").join(",") + tail).bind(...part.flat())); } return st; };
   const st = [...multi("INSERT INTO fillsales (pkey,data,at) VALUES ", " ON CONFLICT(pkey) DO UPDATE SET data=excluded.data, at=excluded.at", 3, blobs, 30),
-    ...multi("INSERT INTO prices (pkey,label,q,avg,st,post,trend,at,src,n,lo,hi) VALUES ", " ON CONFLICT(pkey) DO UPDATE SET label=excluded.label, q=excluded.q, avg=excluded.avg, post=excluded.post, trend=excluded.trend, at=excluded.at, src='fill', n=excluded.n, lo=excluded.lo, hi=excluded.hi", 12, prices, 8)];
+    ...multi("INSERT INTO prices (pkey,label,q,avg,st,post,trend,at,src,n,lo,hi,spd,sdays,sn) VALUES ", " ON CONFLICT(pkey) DO UPDATE SET label=excluded.label, q=excluded.q, avg=excluded.avg, post=excluded.post, trend=excluded.trend, at=excluded.at, src='fill', n=excluded.n, lo=excluded.lo, hi=excluded.hi, spd=excluded.spd, sdays=excluded.sdays, sn=excluded.sn", 15, prices, 6)];
+  if (chkNew) { chk.at = now; await kvSet(env, "spdCheck", chk); }
   if (st.length) await env.DB.batch(st);
   saved.sort((a, c) => c.n - a.n);
   // per-category totals for Admin tools: sales stored and models priced
@@ -783,7 +841,7 @@ async function sweep(env, manual) {
     const chunk = keys.slice(i, i + 45), q = chunk.map(() => "?").join(",");
     const bk = [...new Set([...chunk, ...chunk.map(bareKey)])];
     await ensureSrc(env);
-    const br = await D.prepare(`SELECT pkey, avg, st, post, trend, at, src, n, lo, hi FROM prices WHERE pkey IN (${bk.map(() => "?").join(",")}) AND at>?`).bind(...bk, now - BOOK_DAYS * DAY).all();
+    const br = await D.prepare(`SELECT pkey, avg, st, post, trend, at, src, n, lo, hi, spd, sdays, sn, act, act_at, q FROM prices WHERE pkey IN (${bk.map(() => "?").join(",")}) AND at>?`).bind(...bk, now - BOOK_DAYS * DAY).all();
     for (const row of br.results || []) bookBy[row.pkey] = row;
     const sr = await D.prepare(`SELECT pkey, price, at FROM sales WHERE pkey IN (${q}) AND at>?`).bind(...chunk, now - 30 * DAY).all();
     for (const row of sr.results || []) { (soldBy[row.pkey] = soldBy[row.pkey] || []).push(row.price); soldLast[row.pkey] = Math.max(soldLast[row.pkey] || 0, row.at || 0); }
@@ -811,7 +869,7 @@ async function sweep(env, manual) {
       let low = b.lo != null ? Math.min(b.lo + (post || 0), med) : med * 0.85;
       if (b.trend === "falling") low = Math.min(low, med * 0.8);
       if (b.st != null && b.st < 25) low = Math.min(low, med * 0.8); // slow sellers: plan for a lower price
-      return { med, low, n: sold.length, src: "book", fill: b.src === "fill", bookN: b.n || null, spread: 0.15, ev, st: b.st, post, trend: b.trend, at: b.at, lo: b.lo != null ? b.lo + (post || 0) : null, hi: b.hi != null ? b.hi + (post || 0) : null, lastAt: b.at };
+      return { med, low, n: sold.length, src: "book", fill: b.src === "fill", bookN: b.n || null, spread: 0.15, ev, st: b.st, post, trend: b.trend, at: b.at, lo: b.lo != null ? b.lo + (post || 0) : null, hi: b.hi != null ? b.hi + (post || 0) : null, lastAt: b.at, row: b };
     }
     if (sold.length >= needSold) {
       const med = median(sold), low = pct(sold, 0.25), iqr = pct(sold, 0.75) - low;
@@ -908,7 +966,9 @@ async function sweep(env, manual) {
       comp = Math.min(1, comp);
     }
     // demand: how many listings actually sell (from the price book). Unknown counts as average.
-    const dem = m.st == null ? 0.6 : m.st >= 60 ? 1 : m.st >= 40 ? 0.8 : m.st >= 25 ? 0.55 : 0.25;
+    const speed = m.row ? speedOf(m.row, now) : null;
+    const dem = m.st != null ? (m.st >= 60 ? 1 : m.st >= 40 ? 0.8 : m.st >= 25 ? 0.55 : 0.25)
+      : speed && speed.band ? ({ fast: 1, normal: 0.7, slow: 0.35, none: 0.6 })[speed.band] : 0.6;
     let score = Math.round(25 * ev + 20 * match + 15 * sel + 20 * mar + 10 * comp + 10 * dem);
     if (m.src === "asking") { score = Math.min(score, r.alertScore - 1, 69); tags.push("Price not confirmed by sales"); }
     if (m.src === "book") tags.push(m.fill ? "Price from category check" : "Price from price book");
@@ -926,7 +986,7 @@ async function sweep(env, manual) {
       med: Math.round(m.med * 100) / 100, low: Math.round(m.low * 100) / 100,
       n: m.n, src: m.src, fill: !!m.fill, bookN: m.bookN || null, score, parts: { evidence: ev, match, seller: sel, margin: mar, competition: comp, demand: dem }, tags,
       sellFee: Math.round(sellFee(m.med, r) * 100) / 100, out: Math.round(out * 100) / 100,
-      st: m.st != null ? m.st : null, trend: m.trend || null, bookAt: m.at || null,
+      st: m.st != null ? m.st : null, trend: m.trend || null, bookAt: m.at || null, speed, speedKey: m.row && m.row.sn >= SPEED_MIN_SALES ? m.row.pkey : null,
       // evidence shown on the deal page: typical price range and how recent the newest evidence is
       rangeLo: m.lo != null ? Math.round(m.lo) : null, rangeHi: m.hi != null ? Math.round(m.hi) : null, lastAt: m.lastAt || null,
       look: lookInfo(s, market(s.pkey, s.id, s.matchQ || 0.5, true)),
@@ -948,6 +1008,27 @@ async function sweep(env, manual) {
     const merged = [...close, ...old].sort((a, b) => b.profit - a.profit).slice(0, 10);
     await kvSet(env, "close", merged);
   } catch (e) {}
+
+  // 5b. sell speed: count how many of each deal's model are for sale now (official API, a few models per run, each refreshed every 3 days)
+  try {
+    const need = new Map();
+    for (const d of deals) { const b = d.speedKey && bookBy[d.speedKey]; if (b && (!b.act_at || now - b.act_at > 3 * DAY) && !need.has(b.pkey)) need.set(b.pkey, { b, d }); }
+    const spare = (await quota(env)) + CALLS < EBAY_DAILY * 0.8; // never let this eat into the deal hunt's calls
+    for (const { b, d } of spare ? [...need.values()].slice(0, 6) : []) {
+      const q = String(b.q || "").split(/\s+/).filter((w) => w && !w.startsWith("-")).join(" ").slice(0, 100);
+      if (!q) continue;
+      // same as the sold pages FlipScout reads: UK, condition "Used" (3000)
+      const f = ["priceCurrency:GBP", "deliveryCountry:GB", "itemLocationCountry:GB", "buyingOptions:{FIXED_PRICE|AUCTION}", "conditionIds:{3000}"];
+      const res = await ebay(env, `/buy/browse/v1/item_summary/search?q=${encodeURIComponent(q)}&category_ids=${d.cat}&limit=200&filter=${encodeURIComponent(f.join(","))}`);
+      const items = res.itemSummaries || [], total = +res.total || items.length;
+      // only listings that are really this model, used, and not spares
+      const same = items.filter((it) => { if (FILL_SKIP.test(it.title || "") || String(it.conditionId || "3000") !== "3000") return false; const g = groupOf(it, d.cat, d.catName, "used"); return g && g.match >= 0.6 && bareKey(g.key) === bareKey(b.pkey); }).length;
+      const act = items.length ? Math.round(total > items.length ? same / items.length * total : same) : 0;
+      await D.prepare("UPDATE prices SET act=?, act_at=? WHERE pkey=?").bind(act, now, b.pkey).run();
+      b.act = act; b.act_at = now;
+    }
+    if (need.size) for (const d of deals) if (d.speedKey && bookBy[d.speedKey]) d.speed = speedOf(bookBy[d.speedKey], now);
+  } catch (e) { report.errors.push("sell speed: " + e.message); }
 
   // 6. spares: fetch the seller's own condition words (a few per run)
   for (const sp of spares.slice(0, 3)) {
@@ -1291,12 +1372,12 @@ export default {
         if (P("fillstats")) {
           const fc = await kvGet(env, "fillCats", {}), out = {};
           for (const c in fc) out[c] = fillStat(fc[c]);
-          return json({ stats: out });
+          return json({ stats: out, speedCheck: await kvGet(env, "spdCheck", { n: 0, hit: 0 }) });
         }
         if (P("prices")) {
           await ensureSrc(env);
-          const rows = await env.DB.prepare("SELECT pkey, label, q, avg, st, post, trend, at, src, n, lo, hi FROM prices ORDER BY at DESC LIMIT 3000").all();
-          return json({ prices: (rows.results || []).map((r) => ({ ...r, url: lookupUrl(r.q || ""), fresh: Date.now() - r.at < BOOK_DAYS * DAY })) });
+          const rows = await env.DB.prepare("SELECT pkey, label, q, avg, st, post, trend, at, src, n, lo, hi, spd, sdays, sn, act, act_at FROM prices ORDER BY at DESC LIMIT 3000").all();
+          return json({ prices: (rows.results || []).map((r) => ({ ...r, url: lookupUrl(r.q || ""), fresh: Date.now() - r.at < BOOK_DAYS * DAY, speed: speedOf(r, Date.now()) })) });
         }
         if (P("unprice")) {
           await env.DB.prepare("DELETE FROM prices WHERE pkey=?").bind(String(P("unprice"))).run();

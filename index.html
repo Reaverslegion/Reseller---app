@@ -87,6 +87,24 @@ button:disabled{opacity:.55}
 .verdict.no{background:var(--badbg);border:1.5px solid var(--bad)}
 .verdict.info{background:var(--card);border:1.5px solid var(--ac)}
 .verdict h3{margin:0 0 4px;font-size:22px}
+.sellsfor{margin-top:12px;padding:12px;border-radius:10px;background:var(--inset);border:1px solid var(--bd)}
+.mline{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:7px 0;font-size:15px}
+.mline>span{min-width:0;color:var(--mu)}.mline small{display:block;font-size:12px;margin-top:1px}
+.mline>b{font-weight:700;white-space:nowrap}
+.mline.tot{border-top:1px solid var(--bd);margin-top:2px;padding-top:9px}.mline.tot>span{color:var(--tx);font-weight:700}.mline.tot>b{font-weight:800;font-size:17px}
+.spchip{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;padding:3px 10px;border-radius:99px!important;border:1px solid currentColor;background:var(--inset);white-space:nowrap;max-width:100%}
+.spchip i{width:7px;height:7px;border-radius:50%!important;background:currentColor;flex:none}
+.spbadge{font-size:13px;font-weight:800;padding:3px 10px;border-radius:99px;border:1px solid currentColor;white-space:nowrap}
+.spbig{font-size:26px;font-weight:800;line-height:1.15;margin-top:2px}
+.spmeter{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-top:12px}
+.spmeter span{height:8px;border-radius:99px;background:var(--inset);border:1px solid var(--bd)}
+.spmeter span.on{background:currentColor;border-color:currentColor}
+.spmlab{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;font-size:12px;color:var(--mu);margin-top:4px}
+.spmlab b{color:inherit}
+.sptiles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+.sptiles div{background:var(--inset);border:1px solid var(--bd);border-radius:10px;padding:8px 6px;text-align:center}
+.sptiles b{display:block;font-size:18px;font-weight:800;color:var(--tx)}
+.sptiles span{font-size:12px;color:var(--mu);line-height:1.3;display:block}
 .chip{display:inline-block;font-size:13px;font-weight:700;padding:3px 10px;border-radius:99px;background:var(--card2);color:var(--mu);border:1px solid var(--bd)}
 .chip.ok{background:var(--okbg);color:var(--ok);border-color:transparent}.chip.bad{background:var(--badbg);color:var(--bad);border-color:transparent}.chip.warn{background:var(--warnbg);color:var(--warn);border-color:transparent}
 .li{display:flex;gap:8px;margin:7px 0;font-size:15px}
@@ -207,7 +225,9 @@ function loadDraft(){try{return{...BLANK,...JSON.parse(localStorage.getItem(DKEY
 function saveDraft(){try{localStorage.setItem(DKEY,JSON.stringify(F))}catch(e){}}
 
 /* ---------- helpers ---------- */
-const gbp=n=>(n<0?"-£":"£")+Math.abs(+n||0).toFixed(2);
+const gbp=n=>(n<0?"-£":"£")+Math.abs(+n||0).toLocaleString("en-GB",{minimumFractionDigits:2,maximumFractionDigits:2});
+// estimates (what it sells for) in whole pounds: pence would suggest more precision than there is
+const gbp0=n=>(n<0?"-£":"£")+Math.round(Math.abs(+n||0)).toLocaleString("en-GB");
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const num=v=>{const n=parseFloat(String(v).replace(/[£,\s]/g,""));return isNaN(n)?0:n};
 const $=id=>document.getElementById(id);
@@ -315,7 +335,7 @@ const TABS=[["deals","Deals","bolt"],["follow","Following","bell"],["settings","
 let admN=0,admT=0;
 function admTap(){const t=Date.now();admN=t-admT<1500?admN+1:1;admT=t;if(admN>=7){admN=0;S.set.admin=!S.set.admin;save();render();toast(S.set.admin?"Admin tools on.":"Admin tools off.")}}
 let ADMC=[],ADMS=null;
-async function loadFillStats(){try{const a=await api("fillstats=1");ADMS=a.stats||{}}catch(e){ADMS=ADMS||{}}if(tab==="admin")render()}
+let SPDCHK=null;async function loadFillStats(){try{const a=await api("fillstats=1");ADMS=a.stats||{};SPDCHK=a.speedCheck||null}catch(e){ADMS=ADMS||{}}if(tab==="admin")render()}
 const fmtN=n=>Number(n||0).toLocaleString("en-GB");
 function fillPicked(){if(!CAT.a||!CT||!CT[CAT.a]){toast('Pick a category first.');return}fillCat({id:CAT.a,name:CT[CAT.a].n})}
 function vAdmin(){if(!S.set.admin)return`<div class="card">Admin tools are off.</div>`;setTimeout(()=>{CAT.a=CAT.a||"";drawCat("a")},0);
@@ -326,7 +346,10 @@ function vAdmin(){if(!S.set.admin)return`<div class="card">Admin tools are off.<
    <label for="hi">Check every</label><select id="hi" onchange="H().interval=+this.value;save();pushConfig()">${[5,10,15,30,60].map(m=>`<option value="${m}"${H().interval===m?" selected":""}>${m} minutes</option>`).join("")}</select>
    <label class="chkrow" style="min-height:44px"><input type="checkbox" ${H().paused?"checked":""} onchange="H().paused=this.checked;save();pushConfig();render()"><span>Pause hunting (stops all searches and followed-listing checks)</span></label>
    <button onclick="huntNow()" ${HD.busy?"disabled":""}>${HD.busy?"Checking…":"Scan now"}</button></div>${connCard()}
-  <div class="card"><b>Price list</b><div class="mu">Every model FlipScout has a price for: how many sold and what it sells for.</div><button onclick="go('plist')">Open price list ›</button></div>
+  <div class="card"><b>Price list</b><div class="mu">Every model FlipScout has a price for: how many sold, what it sells for and how fast.</div><button onclick="go('plist')">Open price list ›</button></div>
+  <div class="card"><b>Sell speed self-check</b><div class="mu">Each time you fill a category again, FlipScout checks whether each model's sales rate held up (within ±50%). This measures the sales rate behind the speed estimate. Only you see this.</div>
+   <div style="margin-top:8px;font-weight:700">${SPDCHK&&SPDCHK.n?`${fmtN(SPDCHK.hit)} of ${fmtN(SPDCHK.n)} checks held up (${Math.round(SPDCHK.hit/SPDCHK.n*100)}%)`:"No checks yet"}</div>
+   <div class="mu" style="font-size:13px">${!SPDCHK||SPDCHK.n<30?"Too few checks to judge yet: refill categories a few days apart to build this up (30+ checks).":"Enough checks to trust this figure."}</div></div>
   <div class="card"><b>Fill prices for a whole category</b><div class="mu">Opens eBay's sold listings for the category, sorted newest first. Tap Next page as often as you like, then Save all. FlipScout sorts them into models and saves each one with 5+ sales.</div>
    ${ADMC.map((c,i)=>{const f=fillPg(c.id);return`<div class="li" style="padding:8px 0;flex-wrap:wrap;gap:6px"><span style="flex:1;min-width:0">${esc(c.name)}${(()=>{const t=ADMS&&ADMS[c.id];return t&&t.sales?`<div style="font-size:14px;font-weight:700">${fmtN(t.sales)} sales saved · ${fmtN(t.models)} model${t.models===1?"":"s"} priced</div>`:""})()}${f?`<div class="mu" style="font-size:13px">Read up to page ${f.pg}, ${ago(f.at)}</div>`:""}</span>
     <span style="display:flex;gap:6px;flex:none;align-self:center;align-items:center">${f?`<button class="sm" onclick="fillCat(ADMC[${i}],${f.pg+1})">Page ${f.pg+1} ›</button><button class="s sm" onclick="fillCat(ADMC[${i}])">Start</button>`:`<button class="s sm" onclick="fillCat(ADMC[${i}])">Fill</button>`}</span></div>`}).join("")}
@@ -360,7 +383,7 @@ function plRows(){if(BK.list==null)return`<div class="card mu">${BK.err?"Couldn'
   L=L.sort(srt);const all=L.length;L=L.slice(0,300);
   if(!all)return`<div class="card mu">${BK.list.length?"No model matches that.":"No saved prices yet. Fill a category first."}</div>`;
   return`<div class="mu" style="margin:0 4px 6px">${fmtN(all)} model${all===1?"":"s"}${all>300?" · showing 300, search to narrow":""}</div><div class="card" style="padding-top:4px;padding-bottom:4px">${L.map(p=>`<div class="li" style="padding:9px 0;gap:10px">
-   <span style="flex:1;min-width:0"><b style="font-weight:700">${esc(p.label)}</b><div class="mu" style="font-size:13px">${p.n?`${fmtN(p.n)} sold`:"checked by you"}${p.lo!=null&&p.hi!=null?` · most £${Math.round(p.lo)}–£${Math.round(p.hi)}`:""} · ${ago(p.at)}${p.fresh===false?" · old":""}</div></span>
+   <span style="flex:1;min-width:0"><b style="font-weight:700">${esc(p.label)}</b><div class="mu" style="font-size:13px">${p.n?`${fmtN(p.n)} sold`:"checked by you"}${p.lo!=null&&p.hi!=null?` · most £${Math.round(p.lo)}–£${Math.round(p.hi)}`:""} · ${ago(p.at)}${p.fresh===false?" · old":""}</div>${p.speed&&p.speed.band!=="none"?`<div style="margin-top:5px">${spChip(p.speed)}</div>`:""}</span>
    <span style="text-align:right;flex:none"><b class="num-t" style="font-size:17px">${gbp(p.avg)}</b><div class="mu" style="font-size:12px">${p.post!=null?`+ ${gbp(p.post)} post`:"post not known"}</div></span></div>`).join("")}</div>`}
 function goConnect(){go("settings");setTimeout(()=>{const a=$("adv");if(a){a.open=true;a.scrollIntoView({behavior:"smooth",block:"start"})}},60)}
 function go(t){if(t===tab)return;prev.push(tab);if(prev.length>20)prev.shift();tab=t;render()}
@@ -812,9 +835,9 @@ function priceRow(d,noProfit){
   const cell=(label,val,note,cls)=>`<div style="min-width:0"><div class="mu" style="font-size:12px;letter-spacing:.02em">${label}</div><div class="stat num-t ${cls||""}" style="font-size:22px;line-height:1.2">${val}</div>${note?`<div class="mu" style="font-size:12px">${note}</div>`:""}</div>`;
   return`<div style="margin-top:10px;border-radius:${CALM?8:16}px;background:${CALM?"var(--inset,var(--card2))":"var(--card2)"};overflow:hidden">
    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:9px 12px">
-    ${cell(auc?"Current bid":"Buy it now",gbp(d.price),postNote(d))}
-    ${auc||(!under&&mx!=null)?cell(midLabel,mx!=null?gbp(mx):"—",auc?(d.bids?d.bids+" bid"+(d.bids>1?"s":"")+" so far":"no bids yet"):bo?"offer this or less":"",CALM?'':'ok')
-      :cell("Sells for",gbp(d.med),"typical, incl. post",CALM?'':'ok')}</div>
+    ${cell(auc?"Current bid":"Buy it now",gbp(d.price),(auc?(d.bids?d.bids+" bid"+(d.bids>1?"s":"")+" · ":"no bids · "):"")+postNote(d))}
+    ${auc||(!under&&mx!=null)?cell(midLabel,mx!=null?gbp(mx):"—",auc?"eBay bids for you up to this":bo?"offer this or less":"",CALM?'':'ok')
+      :mx!=null?cell("Most to pay",gbp(mx),"for the item, still hits your minimum profit"):cell("Sells for about",gbp0(d.med),"estimate, incl. post",CALM?'':'ok')}</div>
    ${noProfit?"":`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 12px;background:${good?"var(--okbg)":"var(--badbg,rgba(248,113,113,.16))"};border-top:1px solid var(--bd)">
     <span style="font-size:13px;font-weight:700" class="${good?"ok":"bad"}">Profit after fees</span>
     <span class="num-t ${good?"ok":"bad"}" style="font-weight:800;font-size:20px;white-space:nowrap">${rg?`${sgn(rg[0])} <span style="font-weight:600;opacity:.8">–</span> ${sgn(rg[1])}`:sgn(prof)}</span></div>`}</div>`}
@@ -824,7 +847,33 @@ function shownProfit(d){return d.type==="AUC"&&d.profitAtMax!=null?d.profitAtMax
 const dBpf=d=>d.bpfOn!=null?!!d.bpfOn&&!!H().bpf:!!H().bpf&&!(d.seller&&d.seller.biz);
 function retPct(d){const auc=d.type==="AUC",item=auc?(d.maxItem!=null?d.maxItem:d.maxBid):d.price,pay=(item||0)+(d.ship||0)+(dBpf(d)?bpfA(item||0):0)+(+H().pack||0);return pay>0?Math.round(shownProfit(d)/pay*100):null}
 // Where the "sells for" figure comes from, in a few words
-function evShort(d){return d.src==="book"?(d.fill?`from ${d.bookN?d.bookN+" sales":"your category check"}${d.rangeLo!=null?` (most £${d.rangeLo}–£${d.rangeHi})`:""}`:"from sold prices you checked"):d.src==="sold"?`${d.n} sale${d.n===1?"":"s"} in 30 days`:`${d.n} asking prices, no sales yet`}
+/* ---------- sell speed: an estimate from evidence, never a promise ----------
+   sp = {band: fast|normal|slow|none|null, lo, hi (days), sold, overDays, forSale, perWeek} from the Scan service */
+const spDays=(lo,hi)=>hi<=10?`${lo}–${hi} days`:hi<=60?`${Math.max(1,Math.round(lo/7))}–${Math.max(2,Math.round(hi/7))} weeks`:lo>=60?"over 2 months":`${Math.max(1,Math.round(lo/7))} weeks to 2+ months`;
+const SPBAND={fast:["Fast seller","var(--ok)"],normal:["Normal seller","var(--ac)"],slow:["Slow seller","var(--warn)"]};
+function spHead(sp){if(!sp)return null;if(sp.band&&SPBAND[sp.band])return`${SPBAND[sp.band][0]} · usually about ${spDays(sp.lo,sp.hi)}`;
+  if(sp.band===null&&sp.perWeek)return`About ${sp.perWeek<1?"1 sale every "+Math.round(7/sp.perWeek)+" days":fmtN(Math.round(sp.perWeek))+" sold a week"}`;return"Sell speed: not enough data"}
+function spEv(sp){if(!sp)return"";const d=Math.round(sp.overDays||0);
+  if(sp.band==="none")return`Only ${fmtN(sp.sold||0)} sale${sp.sold===1?"":"s"} seen over ${d} day${d===1?"":"s"} of sold pages. Needs ${10}+ sales over 3+ days.`;
+  return`Based on ${fmtN(sp.sold)} sold over ${d} days of sold pages${sp.forSale!=null&&sp.band?` and about ${fmtN(sp.forSale)} for sale now`:""}. An estimate at the typical price, not a promise.`}
+// short chip for deal cards and the price list: "● Fast seller · 3–8 days"
+function spChip(sp){if(!sp||sp.band==="none")return"";const b=sp.band&&SPBAND[sp.band];
+  const t=b?`${b[0]} · ${spDays(sp.lo,sp.hi)}`:spHead(sp);return`<span class="spchip" style="color:${b?b[1]:"var(--mu)"}"><i></i>${esc(t)}</span>`}
+function speedLine(d){const c=spChip(d.speed);return c?`<div style="margin-top:8px">${c}</div>`:""}
+function speedCard(d){const sp=d.speed;if(!sp||d.kind==="spares")return"";const b=sp.band&&SPBAND[sp.band],c=b?b[1]:"var(--mu)",days=Math.round(sp.overDays||0);
+  const badge=`<span class="spbadge" style="color:${c}">${b?b[0].replace(" seller",""):sp.band==="none"?"Not enough data":"Estimate"}</span>`;
+  const tiles=(a)=>`<div class="sptiles">${a.map(([v,l])=>`<div><b class="num-t">${v}</b><span>${l}</span></div>`).join("")}</div>`;
+  let body;
+  if(b)body=`<div class="mu" style="font-size:14px;margin-top:10px">Usually sells in about</div><div class="spbig num-t" style="color:${c}">${esc(spDays(sp.lo,sp.hi))}</div>
+    <div style="color:${c}"><div class="spmeter">${["fast","normal","slow"].map(k=>`<span class="${k===sp.band?"on":""}"></span>`).join("")}</div></div>
+    <div class="spmlab"><span${sp.band==="fast"?` style="color:${c}"`:""}>Fast · under 1 wk</span><span style="text-align:center${sp.band==="normal"?`;color:${c}`:""}">Normal · 1–4 wks</span><span style="text-align:right${sp.band==="slow"?`;color:${c}`:""}">Slow · 4+ wks</span></div>
+    ${tiles([[fmtN(sp.sold),"sold"],[days,"days read"],[fmtN(sp.forSale),"for sale now"]])}`;
+  else if(sp.band===null)body=`<div class="spbig num-t" style="margin-top:10px">${esc(spHead(sp))}</div>${tiles([[fmtN(sp.sold),"sold"],[days,"days read"],["–","for sale now"]])}
+    <div class="mu" style="font-size:13px;margin-top:8px">How many are for sale hasn't been checked yet, so there's no wait time.</div>`;
+  else body=`<div class="mu" style="font-size:14px;margin-top:10px">Only <b style="color:var(--tx)">${fmtN(sp.sold||0)} sale${sp.sold===1?"":"s"}</b> seen over ${days} day${days===1?"":"s"} of sold pages. FlipScout needs 10+ sales over 3+ days. Filling this category again builds it up.</div>`;
+  return`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>How fast it sells</b>${badge}</div>${body}
+   ${b||sp.band===null?`<div class="mu" style="font-size:13px;margin-top:10px;line-height:1.45">An estimate at the typical price, not a promise. Cheaper usually goes faster, dearer slower, and condition and photos matter too.</div>`:""}</div>`}
+function evShort(d){return d.src==="book"?(d.fill?`from ${d.bookN?d.bookN+" sales":"your category check"}${d.rangeLo!=null?` (most ${gbp0(d.rangeLo)}–${gbp0(d.rangeHi)})`:""}`:"from sold prices you checked"):d.src==="sold"?`${d.n} sale${d.n===1?"":"s"} in 30 days`:`${d.n} asking prices, no sales yet`}
 // Likely final price of an auction: bids usually climb towards what these sell for, less so when it ends soon with few bids.
 // A simple estimate for now; it gets better as FlipScout records more finished auctions.
 function likelyEnd(d){if(d.type!=="AUC")return null;const mins=Math.max(0,((d.end||0)-Date.now())/60000),target=Math.max(d.price,(d.med||0)*0.88-(d.ship||0));
@@ -883,7 +932,9 @@ function dealCard(d,i){
   <div style="display:flex;gap:12px">${d.img?`<img src="${esc(d.img)}" alt="" style="width:64px;height:64px;object-fit:cover;flex:none;background:var(--card2)" loading="lazy">`:""}
    <div style="min-width:0"><div style="font-weight:700;line-height:1.3;overflow-wrap:anywhere">${isNew(d)?`<span class="newb">NEW</span> `:""}${esc(d.title)}</div><div class="mu" style="font-size:14px">${[d.cond,d.catName].filter(Boolean).map(esc).join(" · ")}</div>${d.matchLabel?`<div class="mu" style="font-size:13px;margin-top:1px">Priced as: ${esc(d.matchLabel)}</div>`:""}</div></div>
   ${sp?`<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:4px 10px;margin-top:8px"><div class="stat">${pp(d)}</div><div class="mu">working ones sell for ${gbp(d.workMed)}</div></div>`
-   :cardMoney(d)+`<div class="mu" style="margin-top:6px;font-size:var(--fs-meta)">${!auc&&(d.maxItem==null||d.price<=d.maxItem)?"Sells-for price "+evShort(d):`Sells for about <b class="num-t">${gbp(d.med)}</b> (estimate) · ${evShort(d)}`}${retPct(d)!=null?` · <b class="num-t">${retPct(d)}%</b> return`:""}</div>`}
+   :cardMoney(d)+`<div style="margin-top:8px;font-size:var(--fs-meta)"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><span>Sells for about <b class="num-t">${gbp0(d.med)}</b>${d.rangeLo!=null?` <span class="mu">· most ${gbp0(d.rangeLo)}–${gbp0(d.rangeHi)}</span>`:""}</span>${retPct(d)!=null?`<span class="mu"><b class="num-t" style="color:var(--tx)">${retPct(d)}%</b> return</span>`:""}</div>
+   <div class="mu" style="font-size:13px">${d.src==="book"?(d.fill?`From ${d.bookN?fmtN(d.bookN)+" sales":"your category check"}`:"From sold prices you checked"):d.src==="sold"?`From ${d.n} sale${d.n===1?"":"s"} in 30 days`:`<span class="warn">Guess from ${d.n} asking prices, no sales yet</span>`} · estimate</div></div>`}
+  ${sp?"":speedLine(d)}
   ${(()=>{const tg=(d.tags||[]).filter(t=>!/^\d+ bids?$|^No bids yet$|^Price from (category check|price book)$/.test(t));return tagChips(tg)})()}
   <div style="display:flex;gap:8px;margin-top:10px">${btn("s dbtn","Details",`openDeal(${i})`,"See full details")}${sp?"":isFollowed(d.id)?btn("s dbtn","✓ Following","go('follow')","Following this deal","color:var(--ok)"):btn("dbtn","Follow",`quickFollow(${i})`,"Follow this deal and get an alert")}${btn("s dbtn quiet","Hide",`hideDeal(${esc(JSON.stringify(d.id))})`,"Hide this deal")}</div>
   </div></div>`}
@@ -904,7 +955,7 @@ function cardMoney(d){
    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:8px 12px">
     ${cell(auc?"Current bid":"Buy it now",gbp(d.price),auc?(d.bids?d.bids+" bid"+(d.bids>1?"s":""):"no bids yet")+" · "+postNote(d):postNote(d))}
     ${auc||(!under&&mx!=null)?cell(auc?"Your max bid":"Max offer",mx!=null?gbp(mx):"—",auc?"eBay bids for you up to this":bo?"offer this or less":"",'ok')
-      :cell("Sells for",gbp(d.med),"typical, incl. post")}</div></div>`}
+      :mx!=null?cell("Most to pay",gbp(mx),"for the item, still hits your minimum profit"):cell("Sells for about",gbp0(d.med),"estimate, incl. post")}</div></div>`}
 // tap the score on a card: what the number means and how it was worked out
 function scoreSheet(i){const d=(HD.deals||[])[i];if(!d)return;
   const ev=d.src==="book"?`Saved price: sells for about ${gbp(d.med)} incl. postage. Saved ${ago(d.bookAt)}`:d.src==="sold"?`${d.n} sold prices in the last 30 days`:`${d.n} asking prices (no sales recorded yet, so it scores lower)`;
@@ -1017,7 +1068,8 @@ function scoreCard(d,ev){const p=d.parts||{},sel=d.seller||{};
 function evidenceCard(d){const src=d.src==="book"?"Your saved prices (you checked eBay's sold prices)":d.src==="sold"?"Sold prices FlipScout tracked on eBay":"Asking prices of similar listings (not sales)";
   const rows=[["Source",src],["Based on",d.src==="book"?(d.n?`your saved price, plus ${d.n} tracked sale${d.n===1?"":"s"}`:"your saved price"):d.src==="sold"?`${d.n} sales in the last 30 days`:`${d.n} listings for sale now`],
     d.rangeLo!=null&&d.rangeHi!=null?["Typical range",`${gbp(d.rangeLo)} – ${gbp(d.rangeHi)} <span class="mu">(middle half)</span>`]:null,
-    d.lastAt?[d.src==="book"?"Checked":"Newest",ago(d.lastAt)]:null,["Compared with",esc(d.matchLabel||"similar listings")]].filter(Boolean);
+    d.lastAt?[d.src==="book"?"Checked":"Newest",ago(d.lastAt)]:null,["Compared with",esc(d.matchLabel||"similar listings")],
+    d.speed?["How fast",`${esc(spHead(d.speed))}<div class="mu" style="font-size:13px">${esc(spEv(d.speed))}</div>`]:null].filter(Boolean);
   return`<div class="card"><b>Evidence for “sells for about ${gbp(d.med)}”</b>${rows.map(([l,v])=>`<div class="li"><span style="flex:none;width:118px;color:var(--mu)">${l}</span><span style="flex:1;text-align:right">${v}</span></div>`).join("")}
    <div class="hint">${d.src==="asking"?"<span class='warn'>⚠ No sales recorded yet.</span> Asking prices are what sellers hope for, so treat this as a guess.":"This is an estimate (the middle sale price), not a guaranteed price."}${d.n<10&&d.src==="sold"?" Fewer than 10 sales, so it's an early estimate.":""}</div></div>`}
 function dealSums(d){
@@ -1031,14 +1083,22 @@ function dealSums(d){
 // The money under the hero numbers: three short lines, every total worked out
 function moneyLines(d){
   const auc=d.type==="AUC",item=auc?(d.maxItem!=null?d.maxItem:d.maxBid):d.price,bf=dBpf(d)?Math.round(bpfA(item)*100)/100:0;
-  const pay=item+d.ship+bf,fee=d.sellFee||0,out=d.out||0,back=d.med-fee-out,prof=back-pay,ret=pay>0?Math.round(prof/(pay+(+H().pack||0))*100):0;
-  const row=(l,sub,v,cls)=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid var(--bd)"><div style="min-width:0"><div style="font-weight:700">${l}</div><div class="mu" style="font-size:13px">${sub}</div></div><div class="num-t" style="font-weight:800;font-size:17px;white-space:nowrap" ${cls?`class="${cls}"`:""}>${v}</div></div>`;
+  const pay=item+d.ship+bf,fee=d.sellFee||0,out=d.out||0,back=d.med-fee-out,prof=back-pay,rg=auc&&profRange(d);
   const sign=v=>(v>=0?"+":"−")+gbp(Math.abs(v));
-  return`<div style="margin-top:12px">
-   ${row(auc?"Total cost at your max bid":"Total cost",`${auc?"max bid":"price"} ${gbp(item)} + post ${gbp(d.ship)}${bf?` + buyer fee ${gbp(bf)} ${ti("bpf")}`:H().bpf&&d.seller&&d.seller.biz?" · no buyer fee (business seller)":""}`,gbp(pay))}
-   <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--bd)">
-    <div style="min-width:0"><div class="mu" style="font-size:13px">Typical resale price</div><div class="num-t" style="font-weight:800;font-size:20px">${gbp(d.med)}</div><div class="mu" style="font-size:12px">less ${fee?`${gbp(fee)} eBay fees and `:""}${gbp(out)} your post &amp; packing</div></div>
-    <div style="text-align:right"><div class="mu" style="font-size:13px">Profit</div><div class="num-t ${prof>=0?"ok":"bad"}" style="font-weight:800;font-size:${auc&&profRange(d)?20:24}px;white-space:nowrap">${sign(prof)}${auc&&profRange(d)?` <span style="font-weight:600">–</span> ${sign(d.profit)}`:""}</div></div></div>
+  const src=d.src==="book"?(d.fill?`From ${d.bookN?fmtN(d.bookN)+" sales":"recent sales"} in your category check · ${ago(d.bookAt||d.lastAt)}`:`From sold prices you checked · ${ago(d.bookAt||d.lastAt)}`):d.src==="sold"?`From ${d.n} sales in the last 30 days`:`<span class="warn">A guess from ${d.n} asking prices, no sales yet</span>`;
+  const ln=(l,v,o)=>`<div class="mline${o&&o.tot?" tot":""}"><span>${l}${o&&o.sub?`<small>${o.sub}</small>`:""}</span><b class="num-t${o&&o.cls?" "+o.cls:""}">${v}</b></div>`;
+  return`<div class="sellsfor">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px"><div><div class="mu" style="font-size:13px">Sells for about</div><div class="num-t" style="font-size:28px;font-weight:800;line-height:1.15">${gbp0(d.med)}</div></div>
+     ${d.rangeLo!=null&&d.rangeHi!=null?`<div style="text-align:right"><div class="mu" style="font-size:13px">Most sell for</div><div class="num-t" style="font-weight:700;font-size:16px">${gbp0(d.rangeLo)}–${gbp0(d.rangeHi)}</div></div>`:""}</div>
+    <div class="mu" style="font-size:13px;margin-top:4px">${src}. An estimate, incl. buyer's postage.</div></div>
+   <div style="margin-top:12px">
+    ${ln("Sale price (estimate)",gbp(d.med))}
+    ${fee?ln("eBay fees when you sell","−"+gbp(fee)):""}
+    ${ln("Your postage &amp; packing","−"+gbp(out))}
+    ${ln("You get back",gbp(back),{tot:1})}
+    ${ln(auc?"Cost at your max bid":"Cost to buy","−"+gbp(pay),{sub:`${auc?"max bid":"price"} ${gbp(item)} + post ${gbp(d.ship)}${bf?` + buyer fee ${gbp(bf)} ${ti("bpf")}`:H().bpf&&d.seller&&d.seller.biz?" · no buyer fee (business seller)":""}`})}
+    ${ln(rg?"Profit at your max bid":"Profit",sign(prof),{tot:1,cls:prof>=0?"ok":"bad"})}
+    ${rg?ln("Profit at today's bid",sign(d.profit),{cls:d.profit>=0?"ok":"bad",sub:"if no one bids higher"}):""}
    </div>`}
 // One panel answering "can I trust this?": plain checks, the score, and a way to confirm the price
 function trustCard(d){const p=d.parts||{},sel=d.seller||{},v=k=>p[k]!=null?+p[k]:null;
@@ -1050,12 +1110,12 @@ function trustCard(d){const p=d.parts||{},sel=d.seller||{},v=k=>p[k]!=null?+p[k]
   const srcTxt=d.src==="book"?(d.fill?`from ${d.bookN?d.bookN+" recent sales":"recent sales"} in your category check, ${ago(d.bookAt||d.lastAt)}`:`from sold prices you checked ${ago(d.bookAt||d.lastAt)}`):d.src==="sold"?`from ${d.n} sales in the last 30 days`:`a guess from ${d.n} asking prices – no sales yet`;
   const chance=(d.tags||[]).map(t=>/^(\d+ bids?|No bids yet)$/.test(t)?t.toLowerCase():TAGS[t]&&/overnight|Misspelt|Best Offer|New listing/.test(t)?tagOf(t)[0].toLowerCase():null).filter(Boolean);
   const lines=[
-   ["evidence",`Sells for about <b>${gbp(d.med)}</b>`,srcTxt+(d.rangeLo!=null?` · most sell for ${gbp(d.rangeLo)}–${gbp(d.rangeHi)}`:"")],
+   ["evidence",`Sells for about <b>${gbp0(d.med)}</b>`,srcTxt+(d.rangeLo!=null?` · most sell for ${gbp0(d.rangeLo)}–${gbp0(d.rangeHi)}`:"")],
    ["match",`Compared with ${esc(d.matchLabel||"similar listings")}`,"Check the listing is the same thing"],
-   ["margin",`If it only sells for ${gbp(d.low)}`,d.lowProfit>0?`you'd still make +${gbp(d.lowProfit)}`:"you'd make little or nothing"],
+   ["margin",`If it only sells for ${gbp0(d.low)}`,d.lowProfit>0?`you'd still make +${gbp(d.lowProfit)}`:"you'd make little or nothing"],
    ["seller",`Seller ${sel.pct||0}% positive`,`${sel.fb||0} feedback${sel.name?" · "+esc(sel.name):""}`],
    chance.length?["competition","Your chances",chance.join(" · ")]:null,
-   d.st!=null||d.trend?["demand","Demand",[d.st!=null?Math.round(d.st)+"% of listings sell":"",d.trend?"prices "+({falling:"dropping",rising:"rising",steady:"steady"}[d.trend]||d.trend):""].filter(Boolean).join(" · ")]:null].filter(Boolean);
+   d.st!=null||d.trend||(d.speed&&d.speed.band)?["demand","Demand",[d.st!=null?Math.round(d.st)+"% of listings sell":d.speed&&SPBAND[d.speed.band]?`${SPBAND[d.speed.band][0]} · about ${spDays(d.speed.lo,d.speed.hi)}`:"",d.trend?"prices "+({falling:"dropping",rising:"rising",steady:"steady"}[d.trend]||d.trend):""].filter(Boolean).join(" · ")]:null].filter(Boolean);
   const pts=FACTORS.filter(f=>p[f[0]]!=null).map(([k,n,max])=>{const x=Math.max(0,Math.min(1,+p[k]));return`<div style="display:flex;align-items:center;gap:10px;margin-top:8px"><span style="flex:1;font-size:14px">${n}</span><div class="meter" style="width:40%;margin:0"><i style="width:${Math.round(x*100)}%"></i></div><span class="num-t" style="width:44px;text-align:right;font-size:14px">${Math.round(x*max)}/${max}</span></div>`}).join("");
   return`<div class="card"><div style="display:flex;align-items:center;gap:12px">${ring(d.score,true)}<div><b style="font-size:17px">${confWord(d.score)} confidence</b><div class="mu" style="font-size:14px">${d.score>=70?"Strong deal – the checks below look good.":d.score>=50?"Worth a look – check the amber circles":"Risky – read the red circles"}</div></div></div>
    <div style="margin-top:10px">${lines.map(([x,a,b])=>`<div style="display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--bd)">${mark(x)}<div style="min-width:0"><div>${a}</div><div class="mu" style="font-size:13px">${b}</div></div></div>`).join("")}</div>
@@ -1097,7 +1157,7 @@ function vDeal(){
   const ev=d.src==="book"?`Saved price: sells for about ${gbp(d.med)} incl. postage. Saved ${ago(d.bookAt)}`:d.src==="sold"?`${d.n} sold prices in the last 30 days`:`${d.n} asking prices (no sales recorded yet, so it scores lower)`;
   return head+`<div class="card"><b style="font-size:17px">The money</b>
    ${priceRow(d,1)}${moneyLines(d)}</div>
-  ${trustCard(d)}${aboutCard(d)}
+  ${speedCard(d)}${trustCard(d)}${aboutCard(d)}
   <div class="hint" style="margin:0 4px 90px">Always read the listing before you pay.</div>
   <div class="actbar"><a href="${esc(ukUrl(d.url))}" target="_blank" rel="noopener" style="flex:1.6;display:flex"><button style="margin:0;flex:1">${d.type==="AUC"?"Bid on eBay":"Buy on eBay · "+gbp(d.price+d.ship)}</button></a>${isFollowed(d.id)?`<button class="s" style="margin:0;flex:1;color:var(--ok)" onclick="go('follow')">✓ Following</button>`:`<button class="s" style="margin:0;flex:1" onclick="followSheet()">Follow</button>`}</div>`;
 }

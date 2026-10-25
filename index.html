@@ -328,6 +328,7 @@ function vAdmin(){if(!S.set.admin)return`<div class="card">Admin tools are off.<
    <button onclick="huntNow()" ${HD.busy?"disabled":""}>${HD.busy?"Checking…":"Scan now"}</button></div>${connCard()}
   <div class="card"><b>Price list</b><div class="mu">Every model FlipScout has a price for: how many sold and what it sells for.</div><button onclick="go('plist')">Open price list ›</button></div>
   ${afCard()}
+  ${stCard()}
   <div class="card"><b>Fill prices for a whole category</b><div class="mu">Opens eBay's sold listings for the category, sorted newest first. Tap Next page as often as you like, then Save all. FlipScout sorts them into models and saves each one with 5+ sales.</div>
    ${ADMC.map((c,i)=>{const f=fillPg(c.id);return`<div class="li" style="padding:8px 0;flex-wrap:wrap;gap:6px"><span style="flex:1;min-width:0">${esc(c.name)}${(()=>{const t=ADMS&&ADMS[c.id];return t&&t.sales?`<div style="font-size:14px;font-weight:700">${fmtN(t.sales)} sales saved · ${fmtN(t.models)} model${t.models===1?"":"s"} priced</div>`:""})()}${f?`<div class="mu" style="font-size:13px">Read up to page ${f.pg}, ${ago(f.at)}</div>`:""}</span>
     <span style="display:flex;gap:6px;flex:none;align-self:center;align-items:center">${f?`<button class="sm" onclick="fillCat(ADMC[${i}],${f.pg+1})">Page ${f.pg+1} ›</button><button class="s sm" onclick="fillCat(ADMC[${i}])">Start</button>`:`<button class="s sm" onclick="fillCat(ADMC[${i}])">Fill</button>`}</span></div>`}).join("")}
@@ -1203,8 +1204,8 @@ function pageDump(){var o={u:location.href,ua:navigator.userAgent,ready:document
   var A=document.querySelectorAll("a[href]");o.links=[];for(var i=0;i<A.length&&o.links.length<6;i++)o.links.push(A[i].getAttribute("href").slice(0,80));o.nlinks=A.length;
   o.scripts=document.scripts.length;o.html=document.documentElement.outerHTML.length;var F=window.__fsF;if(F)o.copy={st:F.st,len:F.len,items:F.items,e:F.e};
   var h=document.documentElement.outerHTML,k=h.search(/Sold\s+\d|SOLD|soldDate|"sold/i);o.soldAt=k;if(k>0)o.soldBit=h.slice(Math.max(0,k-600),k+900);return JSON.stringify(o)}
-const PAGE_READ=`(function(){var selText=${selText};var soldReader=${soldReader};var copyRead=${copyRead};var u=location.href,b=!!document.getElementById("fs_bar"),g={};try{g=(${pageDiag})()}catch(e){g={de:String(e)}}
-  try{var r=soldReader();if(!r.length&&/\\/sch\\//.test(u)){var F=copyRead();g.f=F.st;g.fi=F.items||0;g.fl=F.len||0;if(F.e)g.fe=F.e;if(F.st==="done")r=F.rows||[];else if(F.st==="loading")return{u:u,b:b,g:g,r:[],wait:1}}return{u:u,b:b,g:g,r:r}}catch(e){return{u:u,b:b,g:g,r:[],e:String(e)}}})()`;
+const PAGE_READ=`(function(){var selText=${selText};var soldReader=${soldReader};var copyRead=${copyRead};var u=location.href,b=!!document.getElementById("fs_bar"),g={},tx="";try{tx=(document.title||"")+" "+((document.body&&document.body.innerText)||"").slice(0,1500)}catch(e){}try{g=(${pageDiag})()}catch(e){g={de:String(e)}}
+  try{var r=soldReader();if(!r.length&&/\\/sch\\//.test(u)){var F=copyRead();g.f=F.st;g.fi=F.items||0;g.fl=F.len||0;if(F.e)g.fe=F.e;if(F.st==="done")r=F.rows||[];else if(F.st==="loading")return{u:u,b:b,g:g,r:[],wait:1,tx:tx}}return{u:u,b:b,g:g,r:r,tx:tx}}catch(e){return{u:u,b:b,g:g,r:[],e:String(e),tx:tx}}})()`;
 const isSignIn=u=>/signin\.ebay|\/signin|SignIn/i.test(u);
 // eBay's pages keep loading pictures as you scroll, so don't wait for "finished": check every few seconds while open
 const PAGE_PROBE=`(function(){return location.href+"|"+document.querySelectorAll("a[href]").length+"|"+Math.round(((document.body&&document.body.innerText)||"").length/500)+"|"+(!!document.getElementById("fs_bar"))+"|"+(window.__fsF&&window.__fsF.st)})()`;
@@ -1215,7 +1216,7 @@ function iabAsk(w,code,cb){const id="q"+Math.random().toString(36).slice(2);w._f
   w.executeScript({code:`(function(){var res;try{res=${code}}catch(e){res={err:String(e)}}var m=JSON.stringify({fs:"res",id:"${id}",data:res});try{cordova_iab.postMessage(m)}catch(e){try{webkit.messageHandlers.cordova_iab.postMessage(m)}catch(e2){}}})()`})}
 function iabWatch(w,tick){let busy=0,last="",lastRead=null;const run=()=>{if(busy&&Date.now()-busy<8000)return;busy=Date.now();
   iabAsk(w,PAGE_PROBE,p=>{const k=String(p||"");if(k&&k===last&&lastRead){busy=0;return}
-   iabAsk(w,PAGE_READ,x=>{busy=0;x=x||{};last=k;lastRead=x;const g=x.g||{};window.FSDIAG=`${g.l||0} item links of ${g.a||0}, ${g.s||0} sold dates, ${g.n||0} parts, ${g.len||0} chars${g.f?`, copy ${g.f} (${g.fi} items)`:""}${g.de?", "+g.de:""}${x.err||x.e?", error: "+(x.err||x.e):""}`;tick(String(x.u||""),x.r||[],!!x.b,!!x.wait)})})};
+   iabAsk(w,PAGE_READ,x=>{busy=0;x=x||{};last=k;lastRead=x;const g=x.g||{};window.FSDIAG=`${g.l||0} item links of ${g.a||0}, ${g.s||0} sold dates, ${g.n||0} parts, ${g.len||0} chars${g.f?`, copy ${g.f} (${g.fi} items)`:""}${g.de?", "+g.de:""}${x.err||x.e?", error: "+(x.err||x.e):""}`;tick(String(x.u||""),x.r||[],!!x.b,!!x.wait,String(x.tx||""))})})};
   w.addEventListener("loadstop",()=>{last="";lastRead=null;busy=0;run()});const t=setInterval(run,3000);w.addEventListener("exit",()=>clearInterval(t));setTimeout(run,1500)}
 function soldCheck(L){BK.cur=L;const IAB=window.cordova&&window.cordova.InAppBrowser,url=soldUrl(L);
   if(!IAB){window.open(url,"_blank");setTimeout(()=>{BK.mode="sold";priceSheet()},300);return}
@@ -1284,63 +1285,222 @@ async function fillSave(c,rows,quiet,total){if(!quiet){closeSheet();toast(`Sorti
    Does what Fill prices does by hand: reads up to 20 pages of one category's sold listings a day, one page about every
    30 seconds, then saves. A different category each day (the one filled longest ago). It runs while FlipScout is open.
    It never tries to get round eBay: if eBay asks you to sign in or shows a check page, it stops and tells you. */
-const AFKEY="flipscout_autofill",AFPAGES=20,AFGAP=30000;
+/* AF-PURE START: daily fill settings and rules (tested in tests/autofill.test.mjs) */
+// ===== DAILY FILL SETTINGS: change these numbers to change how the daily fill runs =====
+const AF_CONFIG={
+  pagesPerRun:20,       // sold-listing pages read per run (allowed 1–30)
+  secondsBetweenPages:30, // pause between pages (allowed 10–120)
+  hoursBetweenRuns:6,   // minimum gap between automatic runs (allowed 4–24)
+  maxRunsPerDay:2,      // automatic runs per calendar day when "twice a day" is ticked (allowed 1–2)
+  stallSeconds:75,      // reload a page that hasn't loaded after this long (not used for check pages)
+  stallTries:3,         // give up after this many reloads
+  saveEvery:5,          // save what's been read every N pages
+  logSize:30            // how many past runs the log keeps
+};
+// keep every setting inside its allowed range, so a typo can't make it run too fast or forever
+const AF_LIMITS={pagesPerRun:[1,30],secondsBetweenPages:[10,120],hoursBetweenRuns:[4,24],maxRunsPerDay:[1,2],stallSeconds:[30,300],stallTries:[0,5],saveEvery:[1,30],logSize:[5,100]};
+function afConfig(c){const o={},bad=[];for(const k in AF_LIMITS){const[lo,hi]=AF_LIMITS[k],v=Number(c&&c[k]);if(!Number.isFinite(v)){o[k]=lo;bad.push(k);continue}const r=Math.round(Math.min(hi,Math.max(lo,v)));if(r!==v)bad.push(k);o[k]=r}return{cfg:o,bad}}
+// is a run due? st = saved state; now = time in ms; day = today's date string
+function afDueAt(st,now,day,cfg){if(!st||st.off||st.paused)return false;const n=st.day===day?(st.n||1):0;if(n===0)return now-(st.at||0)>=cfg.hoursBetweenRuns*36e5||!st.at;
+  return!!st.twice&&n<cfg.maxRunsPerDay&&now-(st.at||0)>=cfg.hoursBetweenRuns*36e5}
+// eBay sign-in, CAPTCHA, verification, block or other check page: stop at once, no retry
+const AF_SIGNIN=/signin\.ebay|\/signin|SignIn/i;
+const AF_CHALLENGE_URL=/captcha|challenge|splashui|interruption|verify|security|blocked|denied|\/sorry\b/i;
+const AF_CHALLENGE_TEXT=/pardon our interruption|verify (that )?you('|’)?re (a )?human|are you a (human|robot)|i('|’)?m not a robot|captcha|unusual (activity|traffic)|security (check|measure)|access (denied|restricted)|temporarily (blocked|restricted)|too many requests|confirm (it('|’)?s|you are) you/i;
+function afStopReason(url,text){url=String(url||"");if(AF_SIGNIN.test(url))return"signin";if(AF_CHALLENGE_URL.test(url)||AF_CHALLENGE_TEXT.test(String(text||"").slice(0,4000)))return"check";return""}
+function afLogAdd(log,entry,max){return[entry,...(Array.isArray(log)?log:[])].slice(0,max)}
+/* AF-PURE END */
+const AFC=afConfig(AF_CONFIG),AFCFG=AFC.cfg,AFPAGES=AFCFG.pagesPerRun,AFGAP=AFCFG.secondsBetweenPages*1000;
+if(AFC.bad.length)console.warn("Daily fill settings out of range, corrected:",AFC.bad.join(", "));
+const AFKEY="flipscout_autofill",AFLOGKEY="flipscout_autofill_log",AFLOCK_KEY="flipscout_autofill_lock";
 let AF={on:false};
+const afLog=()=>{try{return JSON.parse(localStorage.getItem(AFLOGKEY)||"[]")}catch(e){return[]}};
+function afLogPut(e){try{localStorage.setItem(AFLOGKEY,JSON.stringify(afLogAdd(afLog(),e,AFCFG.logSize)))}catch(x){}}
+// one run at a time, even if the app restarts mid-run (the lock expires after 45 minutes)
+function afLockTake(key){key=key||AFLOCK_KEY;try{const l=+localStorage.getItem(key)||0;if(Date.now()-l<45*6e4)return false;localStorage.setItem(key,String(Date.now()));return true}catch(e){return true}}
+function afLockFree(key){try{localStorage.removeItem(key||AFLOCK_KEY)}catch(e){}}
 const afState=()=>{try{return JSON.parse(localStorage.getItem(AFKEY)||"{}")}catch(e){return{}}};
 function afSet(o){try{localStorage.setItem(AFKEY,JSON.stringify({...afState(),...o}))}catch(e){}}
 function afCats(){const seen=new Set();return[...STARTER.map(([id,name])=>({id,name})),...H().cats].filter(c=>!seen.has(String(c.id))&&seen.add(String(c.id)))}
 function afNext(){const L=afCats(),st=afState();return L.slice().sort((a,b)=>{const fa=fillPg(a.id),fb=fillPg(b.id);return(fa?fa.at:0)-(fb?fb.at:0)}).find(c=>String(c.id)!==String(st.cat))||L[0]}
 const afRunsToday=st=>st.day===today()?(st.n||1):0;
-function afDue(st){const n=afRunsToday(st);return n===0||(!!st.twice&&n<2&&Date.now()-(st.at||0)>6*36e5)}
-function afMaybe(){const st=afState();if(!S.set.admin||st.off||AF.on||!afDue(st)||!connected()||document.hidden)return;if(!(window.cordova&&window.cordova.InAppBrowser))return;autoFill(afNext())}
-function afStop(){if(AF.stop)AF.stop("stopped")}
+const afDue=st=>afDueAt(st,Date.now(),today(),AFCFG);
+async function afMaybe(){const st=afState();if(!S.set.admin||AF.on||STBUSY||!afDue(st)||!connected()||document.hidden)return;if(!(window.cordova&&window.cordova.InAppBrowser))return;
+  // run the self-test first; if a safety or overlap check fails, don't start
+  const res=await stRun(true);if(!res||res.some(x=>x.status==="FAIL"&&/Safety stop|Overlap|Schedule|Failures/.test(x.area))){toast("Daily fill not started: the self-test found a problem. See Menu › Admin › Self-test.");return}
+  if(AF.on||!afDue(afState())||document.hidden)return;autoFill(afNext())}
+function afStop(){if(AF.on&&AF.stop)AF.stop("stopped")}
 // keep the screen on while it runs (Android pauses FlipScout when the screen turns off)
 let AFLOCK=null;async function afAwake(on){try{if(on){if(!AFLOCK&&navigator.wakeLock)AFLOCK=await navigator.wakeLock.request("screen");if(AFLOCK)AFLOCK.addEventListener("release",()=>{AFLOCK=null})}else if(AFLOCK){await AFLOCK.release();AFLOCK=null}}catch(e){AFLOCK=null}}
 function afWatch(){if(AF.on&&AF.w)try{AF.w.show()}catch(e){toast("Couldn't show the page.")}}
 // open the last page the fill read, in a normal browser window, to see it with your own eyes
 function afOpenLast(){const st=afState(),c=afCats().find(x=>String(x.id)===String(st.cat))||{id:st.cat,name:st.name},IAB=window.cordova&&window.cordova.InAppBrowser,u=fillUrl(c,st.pg||1,!!st.kw);
   if(IAB)IAB.open(u,"_blank","location=yes,hideurlbar=yes,toolbarcolor=#1B201D,closebuttoncolor=#ffffff,navigationbuttoncolor=#ffffff,closebuttoncaption=Done,zoom=no");else window.open(u,"_blank")}
-function autoFill(c){const IAB=window.cordova&&window.cordova.InAppBrowser;if(!IAB||!c||AF.on)return;
-  const f=fillPg(c.id),start=f&&Date.now()-f.at<14*864e5?f.pg+1:1;
+// Settings and helpers a fill run uses. The self-test swaps these for a simulated browser and in-memory storage,
+// so testing never touches eBay, the price book or the real run log.
+const afEnv=()=>({iab:window.cordova&&window.cordova.InAppBrowser,pages:AFPAGES,gap:AFGAP,stallMs:AFCFG.stallSeconds*1000,dogMs:15000,stallTries:AFCFG.stallTries,saveEvery:AFCFG.saveEvery,
+  save:fillSave,getState:afState,setState:afSet,logPut:afLogPut,lockTake:afLockTake,lockFree:afLockFree,pgGet:fillPg,pgSet:fillPgSet,ui:true,onEnd:null});
+function autoFill(c,opts){const E={...afEnv(),...(opts||{})},IAB=E.iab;if(!IAB||!c||(E.ui&&AF.on))return null;
+  if(!E.lockTake()){if(E.ui)toast("A daily fill is already running.");if(E.onEnd)E.onEnd({why:"overlap",pages:0,read:0});return null}const startedAt=Date.now();
+  const f=E.pgGet(c.id),start=f&&Date.now()-f.at<14*864e5?f.pg+1:1;
   const acc=new Map();let page=start,kw=false,blank=0,done=0,last=-1,timer=null,ended=false;
-  AF={on:true,c,page,pages:0,read:0,why:""};
-  const w=IAB.open(fillUrl(c,page,kw),"_blank","hidden=yes,location=yes,hideurlbar=yes,toolbarcolor=#1B201D,closebuttoncolor=#ffffff,closebuttoncaption=Stop & close,zoom=no");AF.w=w;afAwake(true);
-  // watchdog: if a page hasn't been read for 75 seconds (eBay slow, or FlipScout was paused in the background), load it again; give up after 3 tries
+  const R={on:true,c,page,pages:0,read:0,why:"",err:""};if(E.ui)AF=R;
+  const w=IAB.open(fillUrl(c,page,kw),"_blank","hidden=yes,location=yes,hideurlbar=yes,toolbarcolor=#1B201D,closebuttoncolor=#ffffff,closebuttoncaption=Stop & close,zoom=no");R.w=w;if(E.ui)afAwake(true);
+  // watchdog: if a page hasn't been read for a while (eBay slow, or FlipScout was paused in the background), load it again; give up after a few tries.
+  // A sign-in or check page is never reloaded: that stops the run straight away (below).
   let lastAt=Date.now(),tries=0;const saved=new Set();
-  const dog=setInterval(()=>{if(ended){clearInterval(dog);return}if(document.hidden||Date.now()-lastAt<75000)return;
-   if(++tries>3){finish("stuck");return}lastAt=Date.now();go2()},15000);
-  // save what's been read every 5 pages, so nothing is lost if the app is closed
-  const saveSome=()=>{const fresh=[...acc.values()].filter(x=>!saved.has(x.id));fresh.forEach(x=>saved.add(x.id));if(fresh.length)fillSave(c,fresh,"silent")};
-  const go2=()=>w.executeScript({code:"location.href="+JSON.stringify(fillUrl(c,page,kw))});
-  const finish=why=>{if(ended)return;ended=true;clearTimeout(timer);AF.why=why;try{w.close()}catch(e){}};
-  AF.stop=finish;
-  toast(`Daily fill started: ${c.name}. Keep FlipScout open for about 10 minutes.`);if(tab==="admin")render();
-  iabWatch(w,(u,got,hasBar,wait)=>{if(ended)return;
-   if(isSignIn(u)){finish("signin");return}
-   if(/captcha|challenge|splashui|interruption/i.test(u)){finish("check");return}
+  const dog=setInterval(()=>{if(ended){clearInterval(dog);return}if(document.hidden||Date.now()-lastAt<E.stallMs)return;
+   if(++tries>E.stallTries){finish("stuck");return}lastAt=Date.now();go2()},E.dogMs);
+  // save what's been read every few pages, so nothing is lost if the app is closed
+  const saveSome=()=>{const fresh=[...acc.values()].filter(x=>!saved.has(x.id));fresh.forEach(x=>saved.add(x.id));if(fresh.length)Promise.resolve(E.save(c,fresh,"silent")).catch(()=>{})};
+  const go2=()=>{if(!ended)w.executeScript({code:"location.href="+JSON.stringify(fillUrl(c,page,kw))})};
+  const finish=why=>{if(ended)return;ended=true;clearTimeout(timer);clearInterval(dog);R.why=why;try{w.close()}catch(e){}};
+  R.stop=finish;
+  if(E.ui){toast(`Daily fill started: ${c.name}. Keep FlipScout open for about 10 minutes.`);if(tab==="admin")render()}
+  iabWatch(w,(u,got,hasBar,wait,text)=>{if(ended)return;try{
+   const stop=afStopReason(u,got.length?"":text);if(stop){finish(stop);return}
    if(wait)return;
    const pm=u.match(/_pgn=(\d+)/);if(pm)page=+pm[1];
    if(!got.length){if(++blank>=6){if(!kw&&/_sacat=/.test(u)){kw=true;blank=0;go2()}else finish(done?"done":"empty")}return}
    blank=0;if(page===last)return;last=page;
-   got.forEach(x=>{if(x&&x.n&&!acc.has(x.id))acc.set(x.id,x)});done++;fillPgSet(c.id,page);lastAt=Date.now();tries=0;
-   Object.assign(AF,{page,pages:done,read:acc.size});if(tab==="admin")render();if(done%5===0&&done<AFPAGES)saveSome();
-   if(done>=AFPAGES){finish("done");return}
-   timer=setTimeout(()=>{if(ended)return;page++;go2()},AFGAP)});
-  w.addEventListener("exit",async()=>{ended=true;clearTimeout(timer);clearInterval(dog);AF.on=false;AF.w=null;afAwake(false);const st0=afState();
-   afSet({day:today(),n:afRunsToday(st0)+1,cat:c.id,name:c.name,pg:page,kw,pages:done,read:acc.size,why:AF.why||"stopped",at:Date.now()});
-   const rest=[...acc.values()].filter(x=>!saved.has(x.id));
-   if(acc.size)await fillSave(c,rest.length?rest:[],true,acc.size);
-   else toast(AF.why==="signin"?"Daily fill stopped: eBay wants you to sign in. Open Fill on any category once and sign in.":AF.why==="check"?"Daily fill stopped: eBay showed a check page. It'll try again tomorrow.":"Daily fill read nothing today.");
-   if(tab==="admin")render()})}
+   got.forEach(x=>{if(x&&x.n&&!acc.has(x.id))acc.set(x.id,x)});done++;E.pgSet(c.id,page);lastAt=Date.now();tries=0;
+   Object.assign(R,{page,pages:done,read:acc.size});if(E.ui&&tab==="admin")render();if(done%E.saveEvery===0&&done<E.pages)saveSome();
+   if(done>=E.pages){finish("done");return}
+   timer=setTimeout(()=>{if(ended)return;page++;go2()},E.gap)}catch(e){R.err=String(e&&e.message||e);finish("error")}});
+  w.addEventListener("exit",async()=>{if(R.exited)return;R.exited=true;ended=true;clearTimeout(timer);clearInterval(dog);R.on=false;R.w=null;if(E.ui)afAwake(false);E.lockFree();
+   const why=R.why||"stopped",end={start:startedAt,end:Date.now(),cat:c.name,pages:done,read:acc.size,why,err:R.err||undefined};
+   try{const st0=E.getState();
+    // after a sign-in or check page, automatic runs pause until you tap Run now
+    E.setState({day:today(),n:afRunsToday(st0)+1,cat:c.id,name:c.name,pg:page,kw,pages:done,read:acc.size,why,at:startedAt,paused:why==="signin"||why==="check"});
+    E.logPut(end);
+    const rest=[...acc.values()].filter(x=>!saved.has(x.id));
+    if(acc.size)await E.save(c,rest,true,acc.size);
+    else if(E.ui)toast(why==="signin"?"Daily fill stopped: eBay wants you to sign in. Open Fill on any category once and sign in.":why==="check"?"Daily fill stopped: eBay showed a check page. Automatic runs are paused until you tap Run now.":"Daily fill read nothing today.")}
+   catch(e){end.err=end.err||String(e&&e.message||e)}
+   if(E.onEnd)E.onEnd(end);if(E.ui&&tab==="admin")render()});
+  return R}
+/* ---------- SELF-TEST: checks the daily fill's settings, schedule, safety stop, run log and overlap lock.
+   Fill runs are simulated with a fake browser and fake eBay pages, so testing never contacts eBay and never saves prices.
+   A check only shows PASS after it has actually run and matched what was expected. ---------- */
+const STKEY="flipscout_selftest";
+// a pretend in-app browser: scn(url, n) says what eBay "shows" on the nth page load: {rows, text, url (redirect), hang}
+function afFakeIAB(scn){const W={windows:[]};W.open=url=>{const L={},on=(t,f)=>(L[t]=L[t]||[]).push(f),fire=(t,e)=>(L[t]||[]).slice().forEach(f=>{try{f(e||{})}catch(x){}});
+  let cur=url,ver=0,closed=false,navs=0,pg={hang:true};
+  const load=u=>{navs++;const r=scn(u,navs)||{};cur=r.url||u;ver++;pg=r;if(!r.hang)setTimeout(()=>{if(!closed)fire("loadstop")},5)};
+  const w={addEventListener:on,show(){},navs:()=>navs,closed:()=>closed,close(){if(closed)return;closed=true;setTimeout(()=>fire("exit"),0)},
+   executeScript({code}){if(closed)return;const m=String(code).match(/^location\.href=(".*")$/);if(m){load(JSON.parse(m[1]));return}
+    const id=(String(code).match(/id:"(q[a-z0-9]+)"/)||[])[1];if(!id)return;let data;
+    if(code.includes(PAGE_READ))data=pg.hang?{u:cur,b:false,g:{},r:[],wait:1,tx:""}:{u:cur,b:false,g:{},r:pg.rows||[],tx:pg.text||""};
+    else if(code.includes(PAGE_PROBE))data=cur+"|"+ver;else return;
+    setTimeout(()=>{if(!closed)fire("message",{data:{fs:"res",id,data}})},2)}};
+  W.windows.push(w);setTimeout(()=>load(url),0);return w};return W}
+const stRows=(pg,k)=>Array.from({length:k||10},(_,i)=>({id:`sim${pg}_${i}`,n:"Sim Console "+(i%3),p:100+i,s:3.5,d:Date.now(),c:"used"}));
+const stPg=u=>+((String(u).match(/_pgn=(\d+)/)||[])[1]||1);
+// run one simulated fill; resolves with how it ended plus what it did
+function stSim(scn,extra){return new Promise(res=>{const W=afFakeIAB(scn),saves=[],log=[];let state={};const key="flipscout_selftest_lock";
+  const o={iab:W,pages:5,gap:10,stallMs:250,dogMs:50,stallTries:1,saveEvery:2,ui:false,save:(c,rows,mode)=>{saves.push({n:rows.length,mode});return Promise.resolve()},
+   getState:()=>state,setState:x=>{state={...state,...x}},logPut:e=>log.push(e),lockTake:()=>afLockTake(key),lockFree:()=>afLockFree(key),pgGet:()=>null,pgSet:()=>{},...(extra||{})};
+  const kill=setTimeout(()=>res({why:"timeout",saves,log,state,W}),8000);
+  o.onEnd=end=>{clearTimeout(kill);setTimeout(()=>res({...end,saves,log,state,W}),150)};
+  const r=autoFill({id:"139971",name:"Self-test (simulated)"},o);if(extra&&extra.onStart)extra.onStart(r)})}
+async function afSelfTest(){const out=[],add=(area,name,status,detail,fixed)=>out.push({area,name,status,detail:detail||"",fixed:fixed||""});
+  const chk=async(area,name,fn)=>{try{const r=await fn();add(area,name,r===true||r&&r.ok?"PASS":"FAIL",r&&r.detail,r&&r.fixed)}catch(e){add(area,name,"FAIL","test crashed: "+(e&&e.message||e))}};
+  const eq=(got,want,what)=>({ok:got===want,detail:got===want?"":`${what}: got ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`});
+  // 1. settings
+  await chk("Settings","Every setting in AF_CONFIG is inside its allowed range",()=>{const b=afConfig(AF_CONFIG).bad;return b.length?{ok:false,detail:"out of range: "+b.join(", ")+". The app is using the nearest allowed value; change AF_CONFIG to fix it for good."}:true});
+  await chk("Settings","Settings in use are inside their allowed ranges",()=>{const bad=Object.keys(AF_LIMITS).filter(k=>!(AFCFG[k]>=AF_LIMITS[k][0]&&AFCFG[k]<=AF_LIMITS[k][1]));return bad.length?{ok:false,detail:bad.join(", ")}:{ok:true,detail:`${AFCFG.pagesPerRun} pages, ${AFCFG.secondsBetweenPages}s between pages, ${AFCFG.hoursBetweenRuns}h between runs, up to ${AFCFG.maxRunsPerDay} a day`}});
+  await chk("Settings","Out-of-range values are corrected",()=>{const r=afConfig({pagesPerRun:999,secondsBetweenPages:0,hoursBetweenRuns:"x",maxRunsPerDay:9});return{ok:r.cfg.pagesPerRun===30&&r.cfg.secondsBetweenPages===10&&r.cfg.hoursBetweenRuns===4&&r.cfg.maxRunsPerDay===2&&r.bad.length>=4,detail:JSON.stringify(r.cfg)}});
+  // 2. schedule
+  const H=36e5,now=Date.parse("2026-10-25T18:00:00Z"),d="2026-10-25",C=AFCFG;
+  await chk("Schedule","First ever run is due",()=>eq(afDueAt({},now,d,C),true,"due"));
+  await chk("Schedule","Turned off never runs",()=>eq(afDueAt({off:true},now,d,C),false,"due"));
+  await chk("Schedule","Paused after a check page never runs by itself",()=>eq(afDueAt({paused:true,day:"2026-10-01",at:now-99*H},now,d,C),false,"due"));
+  await chk("Schedule","Only once a day unless twice is ticked",()=>eq(afDueAt({day:d,n:1,at:now-12*H},now,d,C),false,"due"));
+  await chk("Schedule",`Twice a day waits ${C.hoursBetweenRuns}+ hours`,()=>({ok:afDueAt({day:d,n:1,at:now-1*H,twice:true},now,d,C)===false&&afDueAt({day:d,n:1,at:now-C.hoursBetweenRuns*H,twice:true},now,d,C)===true}));
+  await chk("Schedule","Never more than the daily maximum",()=>eq(afDueAt({day:d,n:C.maxRunsPerDay,at:now-20*H,twice:true},now,d,C),false,"due"));
+  await chk("Schedule","Minimum gap holds across midnight",()=>eq(afDueAt({day:"2026-10-24",n:1,at:now-1*H},now,d,C),false,"due"));
+  // 3. safety stop rules
+  for(const[u,tx,want,label]of[["https://signin.ebay.co.uk/ws/eBayISAPI.dll?SignIn","","signin","Sign-in page"],["https://www.ebay.co.uk/splashui/captcha?ap=1","","check","CAPTCHA page"],
+    ["https://www.ebay.co.uk/sch/i.html?_nkw=x","Please verify you're a human","check","Verification screen"],["https://www.ebay.co.uk/sch/i.html?_nkw=x","Access denied","check","Access restriction"],
+    ["https://www.ebay.co.uk/sch/i.html?_nkw=x","Pardon Our Interruption","check","eBay interruption page"],["https://www.ebay.co.uk/sch/i.html?_nkw=x","Too many requests","check","Rate-limit page"],
+    ["https://www.ebay.co.uk/sch/i.html?_sacat=139971&LH_Sold=1&_pgn=3","PS5 Slim Sold 24 Oct 2026 £320.00","","Normal sold page is not mistaken for a check"]])
+   await chk("Safety stop",label+(want?" is detected":""),()=>eq(afStopReason(u,tx),want,"result"));
+  // 4. simulated runs (fake browser, no eBay, nothing saved)
+  const good=(u)=>({rows:stRows(stPg(u))});
+  let r=await stSim(good);
+  await chk("Simulated run","Normal run finishes the set number of pages",()=>({ok:r.why==="done"&&r.pages===5,detail:`ended: ${r.why}, ${r.pages} pages`}));
+  await chk("Simulated run","Sales are counted with no duplicates",()=>eq(r.read,50,"sales"));
+  await chk("Simulated run","Saves part-way and at the end",()=>({ok:r.saves.some(x=>x.mode==="silent")&&r.saves.some(x=>x.mode===true)&&r.saves.reduce((a,x)=>a+x.n,0)===50,detail:r.saves.map(x=>x.n).join("+")+" rows"}));
+  await chk("Run log","Start time, finish time, outcome and page count are recorded",()=>{const e=r.log[0]||{};return{ok:r.log.length===1&&e.start>0&&e.end>=e.start&&e.why==="done"&&e.pages===5,detail:JSON.stringify({start:!!e.start,end:!!e.end,why:e.why,pages:e.pages})}});
+  await chk("Run log","Saved state is written after a run",()=>({ok:r.state.why==="done"&&r.state.pages===5&&r.state.paused===false}));
+  await chk("Overlap","Lock is released after the run",()=>{const ok=afLockTake("flipscout_selftest_lock");afLockFree("flipscout_selftest_lock");return{ok}});
+  r=await stSim((u,n)=>n===3?{url:"https://www.ebay.co.uk/splashui/captcha?ap=1&appName=orch",rows:[]}:good(u));let navs=r.W.windows[0].navs();
+  await new Promise(z=>setTimeout(z,400));
+  await chk("Safety stop","CAPTCHA mid-run stops the run at once",()=>({ok:r.why==="check"&&r.pages===2,detail:`ended: ${r.why} after ${r.pages} pages`}));
+  // the CAPTCHA was page load 3: there must be no load after it, even after waiting
+  await chk("Safety stop","No automatic retry after a CAPTCHA",()=>({ok:navs===3&&r.W.windows[0].navs()===3&&r.W.windows[0].closed(),detail:`page loads after the CAPTCHA: ${r.W.windows[0].navs()-3}`}));
+  await chk("Safety stop","Automatic runs pause after a CAPTCHA",()=>eq(r.state.paused,true,"paused"));
+  await chk("Run log","A stopped run records why it stopped",()=>eq((r.log[0]||{}).why,"check","logged outcome"));
+  r=await stSim((u,n)=>n===2?{rows:[],text:"Pardon Our Interruption. As you were browsing something about your browser made us think you were a bot."}:good(u));
+  await chk("Safety stop","Check page shown in the page text stops the run",()=>({ok:r.why==="check",detail:"ended: "+r.why}));
+  r=await stSim((u,n)=>n===2?{url:"https://signin.ebay.co.uk/ws/eBayISAPI.dll?SignIn&ru=x",rows:[]}:good(u));
+  await chk("Safety stop","Sign-in prompt stops the run",()=>({ok:r.why==="signin"&&r.state.paused===true,detail:"ended: "+r.why}));
+  r=await stSim(()=>({hang:true}));
+  await chk("Failures","A page that never loads stops safely (no endless retry)",()=>({ok:r.why==="stuck",detail:"ended: "+r.why}));
+  r=await stSim((u,n)=>n===2?{rows:[{id:"x",get n(){throw new Error("simulated read error")}}]}:good(u));
+  await chk("Failures","An error mid-run stops safely and is logged",()=>({ok:r.why==="error"&&/simulated read error/.test((r.log[0]||{}).err||""),detail:`ended: ${r.why}, error: ${(r.log[0]||{}).err||"none"}`}));
+  await chk("Failures","Lock is released after an error",()=>{const ok=afLockTake("flipscout_selftest_lock");afLockFree("flipscout_selftest_lock");return{ok}});
+  // 5. overlap: start two simulated runs at once with the same lock
+  {const slow=u=>({rows:stRows(stPg(u))});let second=null;
+   const first=stSim(slow,{gap:60,onStart:()=>{second=stSim(slow)}});const[a,b]=await Promise.all([first,new Promise(z=>setTimeout(()=>z(second),20)).then(p=>p)]);
+   await chk("Overlap","A second run can't start while one is running",()=>({ok:b.why==="overlap"&&a.why==="done",detail:`first: ${a.why}, second: ${b.why}`}))}
+  await chk("Overlap","Real lock: a fresh lock blocks a new run",()=>{const k="flipscout_selftest_lock2";afLockFree(k);const a=afLockTake(k),b=afLockTake(k);afLockFree(k);return{ok:a&&!b,detail:`first ${a}, second ${b}`}});
+  // 6. stored data: repair what can be repaired safely, then check again
+  await chk("Stored data","Daily fill state can be read",()=>{let raw=null;try{raw=localStorage.getItem(AFKEY)}catch(e){}if(raw==null)return{ok:true,detail:"none yet"};
+   try{JSON.parse(raw);return true}catch(e){try{localStorage.removeItem(AFKEY)}catch(x){}return{ok:afState()&&typeof afState()==="object",detail:"was damaged",fixed:"reset the daily fill state"}}});
+  await chk("Stored data","Run log can be read",()=>{let raw=null;try{raw=localStorage.getItem(AFLOGKEY)}catch(e){}if(raw==null)return{ok:true,detail:"empty"};
+   try{const x=JSON.parse(raw);if(Array.isArray(x))return{ok:true,detail:x.length+" runs"};throw 0}catch(e){try{localStorage.removeItem(AFLOGKEY)}catch(x){}return{ok:Array.isArray(afLog()),detail:"was damaged",fixed:"cleared the damaged run log"}}});
+  await chk("Overlap","No stale lock left by a crashed run",()=>{let l=0;try{l=+localStorage.getItem(AFLOCK_KEY)||0}catch(e){}if(!l||AF.on)return{ok:true,detail:AF.on?"a run is in progress":"no lock"};
+   afLockFree(AFLOCK_KEY);let gone=false;try{gone=!localStorage.getItem(AFLOCK_KEY)}catch(e){}return{ok:gone,detail:"a lock was left with no run going",fixed:"removed the stale lock"}});
+  // 7. phone features
+  const phone=!!(window.cordova&&window.cordova.InAppBrowser);
+  if(phone)add("Phone","In-app browser is installed","PASS");else add("Phone","In-app browser is installed","NOT TESTED","only on the phone app");
+  if(navigator.wakeLock)add("Phone","Keep-screen-on is supported","PASS");else add("Phone","Keep-screen-on is supported",phone?"FAIL":"NOT TESTED",phone?"this phone doesn't support it: keep the screen on yourself during a fill":"only on the phone app");
+  add("Live eBay","Reading real eBay sold pages","NOT TESTED","not tested on purpose, to avoid extra visits to eBay. The Run log shows how the next real run went.");
+  add("Phone","Pausing and carrying on when you switch apps","NOT TESTED","needs a person to switch apps");
+  // group the report by area, in the order areas first appear
+  const order=[...new Set(out.map(x=>x.area))];out.sort((a,b)=>order.indexOf(a.area)-order.indexOf(b.area));
+  try{localStorage.setItem(STKEY,JSON.stringify({at:Date.now(),ver:VER,res:out}))}catch(e){}
+  return out}
+const stLast=()=>{try{return JSON.parse(localStorage.getItem(STKEY)||"null")}catch(e){return null}};
+const stCount=res=>({pass:res.filter(x=>x.status==="PASS").length,fail:res.filter(x=>x.status==="FAIL").length,nt:res.filter(x=>x.status==="NOT TESTED").length,fixed:res.filter(x=>x.fixed).length});
+// plain-text report (also used by the computer test runner)
+function stReport(res){const c=stCount(res);let a="",t=`FlipScout self-test ${VER}\nPASS ${c.pass} · FAIL ${c.fail} · NOT TESTED ${c.nt}${c.fixed?` · fixed ${c.fixed}`:""}\n`;
+  res.forEach(x=>{if(x.area!==a){a=x.area;t+=`\n${a}\n`}t+=`  ${x.status.padEnd(10)} ${x.name}${x.detail?` (${x.detail})`:""}${x.fixed?` [fixed: ${x.fixed}]`:""}\n`});return t}
+function stSheet(){const L=stLast();if(!L){openSheet(`<h2 style="margin-top:0">Self-test</h2><div class="mu">Not run yet.</div><div class="btns"><button onclick="stRun()">Run self-test</button></div>`);return}
+  const c=stCount(L.res),col={PASS:"var(--ok)",FAIL:"var(--bad)","NOT TESTED":"var(--mu)"};let a="";
+  openSheet(`<h2 style="margin-top:0">Self-test</h2><div class="mu">${new Date(L.at).toLocaleString("en-GB")} · version ${esc(L.ver||"")}</div>
+   <div style="margin:8px 0;font-weight:700"><span style="color:var(--ok)">PASS ${c.pass}</span> · <span style="color:var(--bad)">FAIL ${c.fail}</span> · <span class="mu">NOT TESTED ${c.nt}</span>${c.fixed?` · fixed ${c.fixed}`:""}</div>
+   <div style="max-height:56vh;overflow:auto">${L.res.map(x=>`${x.area!==a?(a=x.area,`<div style="font-weight:700;margin-top:10px">${esc(a)}</div>`):""}<div class="li" style="padding:6px 0;font-size:14px;align-items:flex-start"><b style="color:${col[x.status]};min-width:92px">${x.status}</b><span style="flex:1;min-width:0">${esc(x.name)}${x.detail?`<br><span class="mu">${esc(x.detail)}</span>`:""}${x.fixed?`<br><span class="ok">Fixed: ${esc(x.fixed)}</span>`:""}</span></div>`).join("")}</div>
+   <div class="btns"><button onclick="stRun()">Run again</button><button class="s" onclick="closeSheet()">Done</button></div>`)}
+let STBUSY=false;async function stRun(silent){if(STBUSY)return null;STBUSY=true;if(!silent)toast("Running self-test (simulated, nothing is sent to eBay)…");let res=[];
+  try{res=await afSelfTest()}catch(e){res=[{area:"Self-test",name:"Self-test ran",status:"FAIL",detail:String(e&&e.message||e)}]}STBUSY=false;
+  if(!silent)stSheet();if(tab==="admin")render();return res}
+function stCard(){const L=stLast(),c=L&&stCount(L.res);
+  return`<div class="card"><b>Self-test</b><div class="mu">Checks the daily fill's settings, schedule, safety stop, run log and overlap lock. Fill runs are simulated, so nothing is sent to eBay. It also runs by itself after each update and before each automatic fill.</div>
+   ${L?`<div style="margin-top:8px;font-weight:700"><span class="ok">PASS ${c.pass}</span> · <span style="color:var(--bad)">FAIL ${c.fail}</span> · <span class="mu">NOT TESTED ${c.nt}</span></div><div class="mu" style="font-size:13px">${new Date(L.at).toLocaleString("en-GB")}</div>`:""}
+   <div class="btns" style="margin-top:6px"><button class="s" onclick="stRun()">Run self-test</button>${L?`<button class="s" onclick="stSheet()">See report ›</button>`:""}</div></div>`}
 function afCard(){const st=afState(),nx=afNext();
-  const why={done:"finished",stopped:"stopped by you",signin:"stopped: eBay asked you to sign in",check:"stopped: eBay showed a check page",empty:"no sold listings found",stuck:"stopped: eBay's page stopped loading"};
-  return`<div class="card"><b>Daily price fill</b><div class="mu">FlipScout reads up to ${AFPAGES} pages of one category's sold listings, about one page every 30 seconds, then saves them. A different category each run. It only runs while FlipScout is <b>on screen</b>: switching apps pauses it, and it carries on when you come back.</div>
+  const why={done:"finished",stopped:"stopped by you",signin:"stopped: eBay asked you to sign in",check:"stopped: eBay showed a check page",empty:"no sold listings found",stuck:"stopped: eBay's page stopped loading",error:"stopped: something went wrong"},log=afLog(),hm=t=>new Date(t).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
+  return`<div class="card"><b>Daily price fill</b><div class="mu">FlipScout reads up to ${AFPAGES} pages of one category's sold listings, about one page every ${AFCFG.secondsBetweenPages} seconds, then saves them. A different category each run. It only runs while FlipScout is <b>on screen</b>: switching apps pauses it, and it carries on when you come back.</div>
    ${AF.on?`<div class="li ok" style="margin-top:8px">⟳ <span>${esc(AF.c.name)}: page ${AF.pages} of ${AFPAGES} · ${fmtN(AF.read)} sales read</span></div><div class="btns" style="margin-top:6px"><button class="s" onclick="afWatch()">Watch it ›</button><button class="s" onclick="afStop()">Stop</button></div><div class="mu" style="font-size:13px">Watch it shows the eBay page it's reading. Closing that page stops the fill.</div>`
    :st.day?`<div class="mu" style="margin-top:8px">${st.day===today()?"Today":"Last run"}: ${esc(st.name||"")}, ${st.pages||0} pages, ${fmtN(st.read||0)} sales (${why[st.why]||st.why}).</div>${st.cat?`<button class="s" style="margin-top:6px" onclick="afOpenLast()">Open last page ›</button>`:""}`:""}
-   ${AF.on?"":`<div class="mu" style="margin-top:4px">Next: ${esc(nx?nx.name:"")}${afDue(st)?"":st.twice&&afRunsToday(st)<2?" (about 6 hours after the last run)":" (tomorrow)"}</div>`}
+   ${st.paused&&!AF.on?`<div class="hint warn">Automatic runs are paused because eBay asked you to sign in or showed a check page. Tap Open last page to see it. Tap Run now only when you're happy to carry on.</div>`:""}
+   ${AF.on||st.paused?"":`<div class="mu" style="margin-top:4px">Next: ${esc(nx?nx.name:"")}${afDue(st)?"":st.twice&&afRunsToday(st)<AFCFG.maxRunsPerDay?` (${AFCFG.hoursBetweenRuns}+ hours after the last run)`:" (tomorrow)"}</div>`}
    <label class="chkrow" style="min-height:44px"><input type="checkbox" ${st.off?"":"checked"} onchange="afSet({off:!this.checked});render()"><span>Run the daily fill</span></label>
-   ${st.off?"":`<label class="chkrow" style="min-height:44px"><input type="checkbox" ${st.twice?"checked":""} onchange="afSet({twice:this.checked});render()"><span>Run twice a day (6+ hours apart)</span></label>`}
-   ${AF.on||st.off?"":`<button class="s" onclick="afSet({day:''});autoFill(afNext())">Run now</button>`}
+   ${st.off?"":`<label class="chkrow" style="min-height:44px"><input type="checkbox" ${st.twice?"checked":""} onchange="afSet({twice:this.checked});render()"><span>Run twice a day (${AFCFG.hoursBetweenRuns}+ hours apart)</span></label>`}
+   ${AF.on||st.off?"":`<button class="s" onclick="afSet({day:'',paused:false});autoFill(afNext())">Run now</button>`}
+   ${log.length?`<details style="margin-top:8px"><summary class="mu" style="min-height:44px;display:flex;align-items:center;cursor:pointer">Run log (${log.length})</summary>${log.map(e=>`<div class="li" style="padding:6px 0;font-size:14px"><span style="flex:1;min-width:0">${hm(e.start)}–${new Date(e.end).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})} · ${esc(e.cat||"")}<br><span class="mu">${e.pages} pages · ${fmtN(e.read||0)} sales · ${why[e.why]||esc(e.why)}</span></span></div>`).join("")}</details>`:""}
    <div class="hint warn">This reads eBay's website automatically. eBay's rules don't allow automated access, so there is some risk to your eBay account. Turn it off any time.</div></div>`}
 function soldResult(L,x){BK.cur=L;BK.sold=x;const dt=t=>new Date(t).toLocaleDateString("en-GB",{day:"numeric",month:"short"});
   const ln=(l,v)=>`<div class="li" style="padding:6px 0"><span style="flex:1">${l}</span><span>${v}</span></div>`;
@@ -1583,7 +1743,7 @@ function finishOnb(){try{localStorage.setItem(OKEY,"1")}catch(e){}$("onb").style
 H();render();
 autoPush();
 try{if(!localStorage.getItem(OKEY))showOnb()}catch(e){}
-setTimeout(afMaybe,20000);document.addEventListener("visibilitychange",()=>{if(!document.hidden){if(AF.on)afAwake(true);setTimeout(afMaybe,5000)}});
+setTimeout(()=>{const L=stLast();if(S.set.admin&&(!L||L.ver!==VER))stRun(true)},8000);setTimeout(afMaybe,20000);document.addEventListener("visibilitychange",()=>{if(!document.hidden){if(AF.on)afAwake(true);setTimeout(afMaybe,5000)}});
 // offer to restore a cloud backup once, on a fresh install, never on every open
 (()=>{let asked=false;try{asked=!!localStorage.getItem("flipscout_restore_asked")}catch(e){}
   if(!asked&&connected()&&!S.items.length&&!S.base.length){try{localStorage.setItem("flipscout_restore_asked","1")}catch(e){}cloudCheck(true)}})();

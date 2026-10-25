@@ -214,6 +214,8 @@ const CON_BARE = /\b(console only|tablet only|unit only|handheld only|screen onl
 function consoleKey(t) {
   if (NOT_CONSOLE.test(t) && !/\b(console|with|\+|inc|includes?|bundle)\b/i.test(t.replace(NOT_CONSOLE, ""))) return null;
   if (/\b(portal|remote play|psvr|vr2|disc drive|drive only)\b/i.test(t)) return null;
+  // "Switch Accessories Bundle": accessories without the console itself
+  if (/\baccessor(?:y|ies)\b/i.test(t) && !/\bconsoles?\b/i.test(t)) return null;
   // accessories on their own (controllers, docks, cases...) are not consoles; a console listing that mentions them is fine
   if (CON_ACC.test(t) && !CON_YES.test(t)) return null;
   if (/\b(lcd|screen replacement|motherboard|housing|shell|faceplate|for parts|empty|packaging|box only|pegi|code only)\b/i.test(t)) return null;

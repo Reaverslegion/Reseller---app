@@ -1143,6 +1143,15 @@ function listingInfo(d) {
     where: [loc.city, loc.postalCode].filter(Boolean).join(" "),
   };
 }
+// in the minutes between scans, check a couple more deals are still for sale (sold Buy It Nows go quickly),
+// but only while today's eBay calls are on pace (used so far is below the share of the day gone by)
+async function spareVerify(env) {
+  const used = await quota(env), d = new Date(), dayGone = (d.getUTCHours() * 60 + d.getUTCMinutes() + 1) / 1440;
+  if (used > EBAY_DAILY * Math.min(0.8, dayGone * 0.9 + 0.05)) return 0;
+  const gone = await verifyDeals(env, 2);
+  await saveQuota(env);
+  return gone;
+}
 async function verifyDeals(env, n) {
   // checks the deals checked longest ago (deals in this scan's results already count as checked)
   const multi = await kvGet(env, "multi", null), lim = multi && multi.ok ? 20 : n;
@@ -1203,7 +1212,10 @@ export default {
     if (!env.DB) return;
     ctx.waitUntil((async () => {
       const r = await sweep(env, false).catch(() => ({}));
-      if (r && r.skipped) await closing(env).catch(() => {});
+      if (r && r.skipped) {
+        await closing(env).catch(() => {});
+        await spareVerify(env).catch(() => {});
+      }
     })());
   },
 

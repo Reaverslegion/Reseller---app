@@ -8,9 +8,9 @@
 <title>FlipScout</title>
 <script>try{var t=(JSON.parse(localStorage.getItem("resell_helper_v1")||"{}").set||{}).theme;if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
 <style>
-:root{--bg:#e6ecf4;--card:#ffffff;--card2:#e2e9f3;--tx:#08122a;--mu:#3a475f;--bd:#c3cfe1;--ac:#11703a;--acbg:#cdf5db;--ok:#11703a;--okbg:#cdf5db;--bad:#b42318;--badbg:#fcdcdc;--warn:#8a4b00;--warnbg:#ffecc7;--grad:linear-gradient(135deg,#10d98a,#a3e635);--ontx:#0b1a14;--shadow:0 1px 2px rgba(8,18,42,.10),0 6px 18px rgba(8,18,42,.09);--nav:#0D172C;--navmu:#a3b2cf;--navac:#4ade80;--navacbg:#123a2a;--navbd:#0D172C}
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#1A2640;--card:#0D172C;--card2:#1C2943;--tx:#eef2fb;--mu:#a3b2cf;--bd:#2C3B5A;--ac:#22c55e;--acbg:#123a2a;--ok:#22c55e;--okbg:#123a2a;--bad:#f87171;--badbg:#3d1d27;--warn:#fbbf24;--warnbg:#3a2f14;--shadow:0 1px 2px rgba(0,0,0,.30),0 6px 18px rgba(0,0,0,.28);--nav:#0D172C;--navmu:#a3b2cf;--navac:#22c55e;--navacbg:#123a2a;--navbd:#0D172C}}
-:root[data-theme=dark]{--bg:#1A2640;--card:#0D172C;--card2:#1C2943;--tx:#eef2fb;--mu:#a3b2cf;--bd:#2C3B5A;--ac:#22c55e;--acbg:#123a2a;--ok:#22c55e;--okbg:#123a2a;--bad:#f87171;--badbg:#3d1d27;--warn:#fbbf24;--warnbg:#3a2f14;--shadow:0 1px 2px rgba(0,0,0,.30),0 6px 18px rgba(0,0,0,.28);--nav:#0D172C;--navmu:#a3b2cf;--navac:#22c55e;--navacbg:#123a2a;--navbd:#0D172C}
+:root{--bg:#e6ecf4;--card:#ffffff;--card2:#e2e9f3;--tx:#08122a;--mu:#3a475f;--bd:#c3cfe1;--ac:#11703a;--acbg:#cdf5db;--ok:#11703a;--okbg:#cdf5db;--bad:#b42318;--badbg:#fcdcdc;--warn:#8a4b00;--warnbg:#ffecc7;--grad:linear-gradient(135deg,#10d98a,#a3e635);--ontx:#0b1a14;--btn:#15803d;--onbtn:#ffffff;--shadow:0 1px 2px rgba(8,18,42,.10),0 6px 18px rgba(8,18,42,.09);--nav:#0D172C;--navmu:#a3b2cf;--navac:#4ade80;--navacbg:#123a2a;--navbd:#0D172C}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#1A2640;--card:#0D172C;--card2:#1C2943;--tx:#eef2fb;--mu:#a3b2cf;--bd:#2C3B5A;--ac:#22c55e;--acbg:#123a2a;--ok:#22c55e;--okbg:#123a2a;--bad:#f87171;--badbg:#3d1d27;--warn:#fbbf24;--warnbg:#3a2f14;--btn:#22c55e;--onbtn:#04140a;--shadow:0 1px 2px rgba(0,0,0,.30),0 6px 18px rgba(0,0,0,.28);--nav:#0D172C;--navmu:#a3b2cf;--navac:#22c55e;--navacbg:#123a2a;--navbd:#0D172C}}
+:root[data-theme=dark]{--bg:#1A2640;--card:#0D172C;--card2:#1C2943;--tx:#eef2fb;--mu:#a3b2cf;--bd:#2C3B5A;--ac:#22c55e;--acbg:#123a2a;--ok:#22c55e;--okbg:#123a2a;--bad:#f87171;--badbg:#3d1d27;--warn:#fbbf24;--warnbg:#3a2f14;--btn:#22c55e;--onbtn:#04140a;--shadow:0 1px 2px rgba(0,0,0,.30),0 6px 18px rgba(0,0,0,.28);--nav:#0D172C;--navmu:#a3b2cf;--navac:#22c55e;--navacbg:#123a2a;--navbd:#0D172C}
 :root{color-scheme:light dark}:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
 /* Design tokens shared by both themes (colours above are the semantic colour tokens) */
 :root{--r-sm:10px;--r-md:14px;--r-lg:18px;--sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;--fs-label:12px;--fs-meta:13px;--fs-body:16px;--fs-num:19px;--fs-h:20px;--ease:150ms ease;--focus:0 0 0 3px var(--ac)}
@@ -52,7 +52,7 @@ input[type=checkbox]{width:22px;height:22px;min-height:0;padding:0;flex:none;acc
 .chkrow{display:flex;gap:12px;align-items:center;font-size:15px;cursor:pointer}
 textarea{min-height:120px;font-family:ui-monospace,Menlo,monospace;font-size:15px}
 .hint{font-size:14px;color:var(--mu);margin-top:6px}
-button{min-height:48px;padding:12px 18px;font:inherit;font-weight:700;border:0;border-radius:14px;background:var(--grad);color:var(--ontx);margin:10px 8px 0 0;cursor:pointer}
+button{min-height:48px;padding:12px 18px;font:inherit;font-weight:700;border:0;border-radius:14px;background:var(--btn);color:var(--onbtn);margin:10px 8px 0 0;cursor:pointer}
 button.sm{min-height:36px;padding:6px 12px;font-size:14px;border-radius:10px;margin:0}
 button.s{background:var(--card2);color:var(--tx);border:1px solid var(--bd)}
 button.d{background:var(--badbg);color:var(--bad)}
@@ -83,7 +83,7 @@ nav button.on .pill{background:var(--navacbg)}
 .pill{padding:3px 18px;border-radius:99px;display:grid;place-items:center}
 .empty{text-align:center;padding:28px 18px}
 .empty svg{width:48px;height:48px;color:var(--ac);margin-bottom:6px}
-.empty b{display:block;font-size:18px;margin-bottom:6px}
+.empty>b{display:block;font-size:18px;margin-bottom:6px}
 #toast{position:fixed;left:14px;right:14px;bottom:calc(80px + env(safe-area-inset-bottom));max-width:560px;margin:auto;background:#0f1b33;color:#fff;border-radius:14px;padding:12px 14px;display:none;align-items:center;gap:10px;z-index:30;box-shadow:0 6px 24px rgba(0,0,0,.3)}
 #toast span{flex:1}#toast button{margin:0;min-height:40px;padding:8px 14px;background:none;color:#4ade80}
 #ov{position:fixed;inset:0;background:rgba(5,10,20,.55);display:none;z-index:20}
@@ -289,7 +289,7 @@ function tip(k){const t=TIPS[k];openSheet(`<h2 style="margin-top:0">${t[0]}</h2>
 const ti=k=>`<button class="tip" aria-label="What is this?" onclick="event.stopPropagation();tip('${k}')">?</button>`;
 
 /* ---------- navigation ---------- */
-const TABS=[["deals","Deals","bolt"],["follow","Following","bell"],["book","Prices","chart"],["stock","Sell","stock"],["dash","Money","money"]];
+const TABS=[["deals","Deals","bolt"],["follow","Following","bell"],["stock","Sell","stock"],["dash","Money","money"]];
 /* ---------- ADMIN (hidden): tap the version 7 times in Settings. Remove before public release ---------- */
 let admN=0,admT=0;
 function admTap(){const t=Date.now();admN=t-admT<1500?admN+1:1;admT=t;if(admN>=7){admN=0;S.set.admin=!S.set.admin;save();render();toast(S.set.admin?"Admin tools on.":"Admin tools off.")}}
@@ -834,7 +834,7 @@ function dealCard(d,i){
    <div style="min-width:0"><div style="font-weight:700;line-height:1.3">${esc(d.title)}</div><div class="mu">${[d.cond,d.catName].filter(Boolean).map(esc).join(" · ")}</div>${d.matchLabel?`<div class="mu" style="margin-top:2px">vs ${esc(d.matchLabel)}</div>`:""}</div></div>
   ${sp?`<div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:8px"><div class="stat">${pp(d)}</div><div class="mu">working ones sell for ${gbp(d.workMed)}</div></div>`
    :priceRow(d)+`<div class="mu" style="margin-top:8px;font-size:var(--fs-meta)">${d.type!=="AUC"&&(d.maxItem==null||d.price<=d.maxItem)?"Sells-for price "+evShort(d):`Sells for about <b class="num-t">${gbp(d.med)}</b> (estimate) · ${evShort(d)}`}${retPct(d)!=null?` · <b class="num-t">${retPct(d)}%</b> return`:""}</div>`}
-  ${(()=>{const tg=(d.tags||[]).filter(t=>!/^\d+ bids?$|^No bids yet$/.test(t));return tagChips(tg)})()}
+  ${(()=>{const tg=(d.tags||[]).filter(t=>!/^\d+ bids?$|^No bids yet$|^Price from (category check|price book)$/.test(t));return tagChips(tg)})()}
   <div style="display:flex;gap:8px;margin-top:10px"><button class="s" style="margin:0;flex:1" onclick="event.stopPropagation();openDeal(${i})" aria-label="See full details">Details</button>${sp?"":isFollowed(d.id)?`<button class="s" style="margin:0;flex:1;color:var(--ok)" onclick="event.stopPropagation();go('follow')" aria-label="Following this deal">✓ Following</button>`:`<button style="margin:0;flex:1;padding:12px 16px" onclick="event.stopPropagation();quickFollow(${i})" aria-label="Follow this deal">Follow</button>`}<button class="s" style="margin:0;flex:1" onclick="event.stopPropagation();hideDeal(${esc(JSON.stringify(d.id))})" aria-label="Hide this deal">Hide</button></div>
   </div>`}
 const FILTERS=[["all","All"],["bin","Buy It Now"],["auc","Auctions"],["mis","Misspelt"],["spares","Spares"],["col","Collection"],["guess","Guesses"]];
@@ -849,22 +849,18 @@ function vHunt(){
   if(!h.cats.length)return`<h2>Today's deals</h2><div class="card empty">${I.bolt}<b>Pick what to hunt</b><div class="mu">Choose a few eBay categories you know, like Graphics Cards or Consoles. FlipScout checks them every few minutes and shows listings priced below what they sell for.</div><button onclick="addStarter()">Start with popular categories</button><button class="s" style="margin-top:8px" onclick="go('cats')">Choose my own</button></div>`;
   if(HD.deals===null&&!HD.busy&&!HD.err)setTimeout(loadDeals,0);
   const F2=fDeals(),base=F2[HD.filter]||F2.all,qq=HD.q.trim().toLowerCase(),list=sortDeals(qq?base.filter(d=>String(d.title).toLowerCase().includes(qq)):base),rep=HD.report||{},high=F2.all.filter(d=>d.score>=70).length,top=F2.all.reduce((t,d)=>Math.max(t,shownProfit(d)||0),0);
-  return`<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin:6px 4px 12px"><div><h2 style="margin:0">Today's deals</h2><div class="mu"><button class="link" style="margin:0;min-height:0;padding:0;font-weight:700" onclick="go('cats')">${h.cats.length} categor${h.cats.length>1?"ies":"y"} ›</button> · ${rep.at?"checked "+ago(rep.at):"not checked yet"}${S.set.admin?(h.paused?" · <span class='warn'>paused</span>":` · every ${h.interval} min`):""}</div></div>
-   ${S.set.admin?`<button style="margin:0;white-space:nowrap" onclick="huntNow()" ${HD.busy?"disabled":""}>${HD.busy?"Checking…":"Scan now"}</button>`:""}</div>
+  return`<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin:6px 4px 12px"><div><h2 style="margin:0">Today's deals</h2><div class="mu" style="font-size:14px"><button class="link" style="margin:0;min-height:0;padding:0;font-weight:700" onclick="go('cats')">${h.cats.length} categor${h.cats.length>1?"ies":"y"} ›</button> · ${rep.at?"checked "+ago(rep.at):"not checked yet"}${S.set.admin&&h.paused?" · <span class='warn'>paused</span>":""}</div></div>
+   ${S.set.admin?`<button class="s sm" style="white-space:nowrap" onclick="huntNow()" ${HD.busy?"disabled":""}>${HD.busy?"Checking…":"Scan now"}</button>`:""}</div>
   ${HD.err?`<div class="card bad" style="font-size:15px">${esc(HD.err)}</div>`:""}
-  <div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px">
-   <div class="card" style="margin:0;padding:10px 12px"><div class="mu">Deals</div><div class="stat">${F2.all.length}</div></div>
-   <div class="card" style="margin:0;padding:10px 12px"><div class="mu">Strong deals</div><div class="stat ok">${high}</div></div>
-   <div class="card" style="margin:0;padding:10px 12px"><div class="mu">Best profit</div><div class="stat ok">${gbp(top).replace(".00","")}</div></div></div>
+  ${F2.all.length?`<div style="margin:-4px 4px 10px;font-size:15px"><b>${F2.all.length} deal${F2.all.length>1?"s":""}</b>${high&&high<F2.all.length?` · ${high} strong`:""} · best <b class="ok">+${gbp(top)}</b></div>`:""}
   <div style="position:relative;margin-bottom:6px"><div id="chips" onscroll="const e=this,h=$('chipsmore');if(h)h.style.opacity=e.scrollLeft+e.clientWidth>=e.scrollWidth-4?0:1" style="display:flex;gap:8px;overflow-x:auto;padding:0 28px 6px 0">${FILTERS.filter(f=>(f[0]!=="spares"||h.types.spares)&&(f[0]!=="guess"||F2.guess.length)).map(f=>`<button class="${HD.filter===f[0]?"":"s"}" style="margin:0;min-height:40px;padding:6px 14px;border-radius:99px;white-space:nowrap;flex:none" onclick="HD.filter='${f[0]}';render()">${f[1]} ${F2[f[0]].length}</button>`).join("")}</div><div id="chipsmore" aria-hidden="true" style="position:absolute;right:0;top:0;bottom:6px;width:44px;pointer-events:none;background:linear-gradient(90deg,transparent,var(--bg) 70%);display:flex;align-items:center;justify-content:flex-end;color:var(--mu);font-size:22px;font-weight:700;transition:opacity .2s">›</div></div>
-  ${(HD.deals||[]).length?`<div style="margin:4px 0 10px"><div><label for="dq" style="margin:0 0 4px">Search deals</label><input id="dq" type="search" enterkeyhint="search" placeholder="e.g. switch, rtx" value="${esc(HD.q)}" oninput="HD.q=this.value;clearTimeout(window._dqT);window._dqT=setTimeout(()=>{render();const e=$('dq');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length)}},250)"></div>
-   <div style="display:flex;gap:8px;margin-top:8px"><div style="flex:1;min-width:0"><label for="dc" style="margin:0 0 4px">Category</label><select id="dc" onchange="setDcat(this.value)"><option value="">All categories (${(HD.deals||[]).filter(d=>!HIDE.includes(d.id)).length})</option>${(()=>{const m={},nm={};(HD.deals||[]).filter(d=>!HIDE.includes(d.id)).forEach(d=>{const k=String(d.cat||"");if(!k)return;m[k]=(m[k]||0)+1;nm[k]=nm[k]||d.catName||"Other"});
+  ${(HD.deals||[]).length?`<div style="margin:4px 0 10px"><div><input id="dq" type="search" aria-label="Search deals" enterkeyhint="search" placeholder="Search deals, e.g. rtx 3070" value="${esc(HD.q)}" oninput="HD.q=this.value;clearTimeout(window._dqT);window._dqT=setTimeout(()=>{render();const e=$('dq');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length)}},250)"></div>
+   <div style="display:flex;gap:8px;margin-top:8px"><div style="flex:1;min-width:0"><select id="dc" aria-label="Category" onchange="setDcat(this.value)"><option value="">All categories (${(HD.deals||[]).filter(d=>!HIDE.includes(d.id)).length})</option>${(()=>{const m={},nm={};(HD.deals||[]).filter(d=>!HIDE.includes(d.id)).forEach(d=>{const k=String(d.cat||"");if(!k)return;m[k]=(m[k]||0)+1;nm[k]=nm[k]||d.catName||"Other"});
      const L=H().cats.map(c=>[String(c.id),c.name]);Object.keys(m).forEach(k=>{if(!L.some(x=>x[0]===k))L.push([k,nm[k]])});
      return L.map(([k,n])=>`<option value="${esc(k)}"${HD.cat===k?" selected":""}>${esc(n)} (${m[k]||0})</option>`).join("")})()}</select></div>
-   <div style="flex:1;min-width:0"><label for="ds" style="margin:0 0 4px">Sort by</label><select id="ds" onchange="setSort(this.value)">${SORTS.map(([k,l])=>`<option value="${k}"${HD.sort===k?" selected":""}>${l}</option>`).join("")}</select></div></div></div>
+   <div style="flex:1;min-width:0"><select id="ds" aria-label="Sort by" onchange="setSort(this.value)">${SORTS.map(([k,l])=>`<option value="${k}"${HD.sort===k?" selected":""}>↕ ${l}</option>`).join("")}</select></div></div></div>
    ${qq?`<div class="hint" style="margin:0 4px 10px" role="status">Showing ${list.length} of ${base.length} for “${esc(HD.q)}” · <button class="link" style="margin:0;min-height:0;padding:0" onclick="HD.q='';render()">Clear</button></div>`:""}`:""}
   ${HD.filter==="guess"?`<div class="hint" style="margin:0 4px 10px">Guesses are priced from what sellers are <b>asking</b>, not what things actually sold for. Check sold prices before buying. No alerts for these.</div>`:""}
-  ${rep.hidden?`<div class="hint" style="margin:0 4px 10px">🛡 Scam shield hid ${rep.hidden} risky listing${rep.hidden>1?"s":""} last check.</div>`:""}
   ${(()=>{const A=list.filter(actNow).sort((a,b)=>rightNow(b)-rightNow(a)).slice(0,8);if(!A.length)return"";
     return`<section aria-label="Act now" style="margin:2px 0 12px;padding:8px 0;border-radius:14px;background:var(--warnbg);border:1.5px solid color-mix(in srgb,var(--warn) 45%,transparent)">
     <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:0 12px 6px"><div style="font-weight:800;font-size:14px">⚡ Act now</div><div class="mu" style="font-size:12px;font-weight:600">${A.length}${A.length>1?" · swipe ›":""}</div></div>
@@ -873,7 +869,7 @@ function vHunt(){
       <div style="font-weight:700;margin-top:4px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.title)}</div>
       <div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-top:2px"><span class="mu" style="font-size:12px;white-space:nowrap">${auc?"Bid":"Buy"} ${gbp(d.price)}</span><span class="ok num-t" style="font-weight:800;font-size:14px;white-space:nowrap">${rg?`${sgn(rg[0])} – ${sgn(rg[1])}`:sgn(d.profit)}</span></div></button>`}).join("")}</div>
     </section>`})()}
-  ${HD.deals===null?`<div class="card mu">Loading deals…</div>`:list.length?list.map(d=>dealCard(d,(HD.deals||[]).indexOf(d))).join("")+laterBox(qq)+whyLine(rep)
+  ${HD.deals===null?`<div class="card mu">Loading deals…</div>`:list.length?list.map(d=>dealCard(d,(HD.deals||[]).indexOf(d))).join("")+laterBox(qq)+whyLine(rep)+(rep.hidden?`<div class="hint" style="margin:0 4px 10px">Scam shield hid ${rep.hidden} risky listing${rep.hidden>1?"s":""} last check.</div>`:"")
    :qq&&base.length?`<div class="card empty"><b>No deals match “${esc(HD.q)}”</b><div class="mu">Try another word, or clear the search.</div><button class="s" onclick="HD.q='';render()">Clear search</button></div>`
    :`<div class="card empty">${I.bolt}<b>No deals right now</b><div class="mu">Real bargains are rare, so FlipScout only shows ones backed by real sold prices. It keeps checking and alerts you when one turns up.</div>${whyLine(rep)}<button class="s" onclick="go('cats')">My categories</button></div>${laterBox(qq)}`}
 `;
@@ -991,8 +987,9 @@ function aboutCard(d){const x=d.info;
    <div class="li"><span style="flex:1">Seller</span><span>${sl?`${esc(sl.name)} · ${sl.pct}% (${fmtN(sl.fb)})`:"–"}</span></div>
    <div class="li"><span style="flex:1">Returns</span><span>${x.returns==="none"?"No returns":x.returns?esc(x.returns):"–"}</span></div>
    ${x.where?`<div class="li"><span style="flex:1">Item location</span><span>${esc(x.where)}</span></div>`:""}
-   ${x.specs&&x.specs.length?`<details><summary>Item details (${x.specs.length})</summary>${x.specs.map(a=>`<div class="li"><span style="flex:1" class="mu">${esc(a[0])}</span><span style="text-align:right;max-width:60%">${esc(a[1])}</span></div>`).join("")}</details>`:""}
-   ${x.desc?`<details${x.warn&&x.warn.length?" open":""}><summary>Seller's description</summary><div style="white-space:pre-line;font-size:15px;line-height:1.5;max-height:420px;overflow:auto">${esc(x.desc)}</div></details>`:`<div class="mu" style="margin-top:8px">No description given.</div>`}</div>`}
+   ${x.desc?`<div class="mu" style="margin-top:14px;font-size:13px;font-weight:700">SELLER'S DESCRIPTION</div><div id="dsc" style="margin-top:4px;white-space:pre-line;font-size:15px;line-height:1.5;max-height:${x.desc.length>500?"220px":"none"};overflow:hidden;position:relative">${esc(x.desc)}</div>${x.desc.length>500?`<button class="s" style="width:100%;margin:8px 0 0" onclick="const e=$('dsc');e.style.maxHeight='none';this.remove()">Read full description</button>`:""}`:`<div class="mu" style="margin-top:10px">No description given.</div>`}
+   ${x.specs&&x.specs.length?`<button class="s" style="width:100%;margin:10px 0 0" onclick="specSheet()">Item details (${x.specs.length}) ›</button>`:""}</div>`}
+function specSheet(){const x=DV&&DV.info;if(!x)return;openSheet(`<h2 style="margin-top:0">Item details</h2>${x.specs.map(a=>`<div class="li"><span style="flex:1" class="mu">${esc(a[0])}</span><span style="text-align:right;max-width:60%">${esc(a[1])}</span></div>`).join("")}<button onclick="closeSheet()">Done</button>`)}
 function photoSheet(u){openSheet(`<img src="${esc(u)}" alt="" style="width:100%;max-height:70vh;object-fit:contain;border-radius:12px;background:var(--card2)"><button class="s" onclick="closeSheet()">Close</button>`)}
 function vDeal(){
   const d=DV;if(!d)return`<div class="card">That deal has gone.</div>`;
@@ -1266,7 +1263,7 @@ function bkAsk(i,v){const p=BK.list[i],el=$("bk_r"+i);if(!el||!p)return;const a=
    <div class="mu">${r.roi.toFixed(0)}% return${r.ok?"":` · you want at least ${gbp(S.rules.minProfit)}${S.rules.minRoi>0?` and ${S.rules.minRoi}%`:""}`}</div></div></div>`}
 function bookList(){const t=BK.q.toLowerCase().split(/\s+/).filter(Boolean),L=(BK.list||[]).map((p,i)=>[p,i]).filter(([p])=>t.every(w=>String(p.label||p.pkey).toLowerCase().includes(w)));
   if(BK.list===null)return`<div class="card mu">Loading…</div>`;
-  if(!BK.list.length)return`<div class="card empty">${I.chart}<b>No prices yet</b><div class="mu">Search for something above and tap Look up sold prices.</div></div>`;
+  if(!BK.list.length)return`<div class="card empty">${I.chart}<b>No prices yet</b><div class="mu">Search for something above and tap Check sold prices.</div></div>`;
   if(!L.length)return`<div class="hint" style="margin:0 4px">Nothing saved matches. Tap <b>Check sold prices</b> to check it.</div>`;
   return L.map(([p,i])=>{const m=priceMaths(p),open=BK.open===i;
     return`<div class="card" style="cursor:pointer" onclick="if(!event.target.closest('button,input,a')){BK.open=${open?-1:i};$('bk_list').innerHTML=bookList()}">
@@ -1351,7 +1348,7 @@ function vFollow(){
     ${s.ended?"":`<div class="mu" style="margin-top:4px;font-size:13px">${gap>0?`${gbp(gap)} above your max`:`${gbp(-gap)} under your max`}${f.type==="AUC"?" · put "+gbp(f.max)+" as your max bid and eBay bids for you":""}</div>`}
     <div class="btns">${s.ended?"":`<a href="${esc(ukUrl(f.url))}" target="_blank" rel="noopener"><button>${f.type==="AUC"?"Bid on eBay":"Open on eBay"}</button></a><button class="s" onclick="changeMax('${f.id}')">Change max</button>`}<button class="s" onclick="unfollow('${f.id}')">Remove</button></div></div>`};
   return`<h2>Following</h2>
-  ${connected()?`<div class="hint" style="margin:-6px 4px 12px">${H().alerts&&PUSH.registered?"You'll get an alert when one hits your price or is about to end.":"<span class='warn'>Phone alerts are off.</span> <a href='#' onclick=\"go('settings');return false\">Turn them on</a>"}</div>`:""}
+  ${connected()?`<div class="hint" style="margin:-6px 4px 12px">${H().alerts&&PUSH.registered?"You'll get an alert when one hits your price or is about to end.":"<span style='display:flex;align-items:center;justify-content:space-between;gap:10px'><span class='warn'>Phone alerts are off.</span><button class='sm' onclick=\"go('settings')\">Turn on alerts</button></span>"}</div>`:""}
   ${!connected()?`<div class="card empty">${I.bell}<b>Connect your Scan service</b><div class="mu">Following needs your Scan service. It watches listings for you and alerts you.</div><button onclick="goConnect()">Connect now</button></div>`:""}
   ${FL.err?`<div class="card bad">${esc(FL.err)}</div>`:""}
   ${FL.list===null&&connected()?`<div class="card mu">Loading…</div>`:""}

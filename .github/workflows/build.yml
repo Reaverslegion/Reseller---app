@@ -33,7 +33,7 @@ jobs:
           R=android/app/src/main/res
           mkdir -p $R/mipmap-anydpi-v26 $R/values $R/drawable $R/drawable-nodpi
           cp -r android-res/. $R/
-          echo '<resources><color name="fs_bg">#0D172C</color></resources>' > $R/values/fs_colors.xml
+          echo '<resources><color name="fs_bg">#1B201D</color></resources>' > $R/values/fs_colors.xml
           for n in ic_launcher ic_launcher_round; do
             echo '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@color/fs_bg"/><foreground android:drawable="@mipmap/fs_foreground"/></adaptive-icon>' > $R/mipmap-anydpi-v26/$n.xml
           done
@@ -53,7 +53,7 @@ jobs:
           mkdir -p $R/drawable-xxxhdpi
           cp notif-icon.png $R/drawable-xxxhdpi/ic_stat_flipscout.png
           mkdir -p $R/values
-          echo '<resources><color name="fs_accent">#22c55e</color></resources>' > $R/values/fs_notify.xml
+          echo '<resources><color name="fs_accent">#83C99A</color></resources>' > $R/values/fs_notify.xml
           sed -i 's#</application>#<meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_flipscout"/><meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/fs_accent"/><meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="deals"/></application>#' android/app/src/main/AndroidManifest.xml
           grep -c ic_stat_flipscout android/app/src/main/AndroidManifest.xml
       - name: Signing key

@@ -687,7 +687,7 @@ async function sweep(env, manual) {
             id, cat: c.id, catName: c.name, title: it.title || "", cond: it.condition || "", condId: it.conditionId || "", bucket,
             type, price, ship, bids: +it.bidCount || 0, end: it.itemEndDate ? Date.parse(it.itemEndDate) : null,
             created: it.itemCreationDate ? Date.parse(it.itemCreationDate) : null,
-            seller: it.seller ? { name: it.seller.username || "", fb: +it.seller.feedbackScore || 0, pct: parseFloat(it.seller.feedbackPercentage) || 0 } : { name: "", fb: 0, pct: 0 },
+            seller: it.seller ? { name: it.seller.username || "", fb: +it.seller.feedbackScore || 0, pct: parseFloat(it.seller.feedbackPercentage) || 0, biz: it.seller.sellerAccountType === "BUSINESS" } : { name: "", fb: 0, pct: 0 },
             loc: (it.itemLocation && it.itemLocation.country) || "", img: it.image ? it.image.imageUrl : "",
             url: "https://www.ebay.co.uk/itm/" + id, bestOffer: (it.buyingOptions || []).includes("BEST_OFFER"),
             collect, where: collect ? String((it.itemLocation && (it.itemLocation.postalCode || it.itemLocation.city)) || "").replace(/\*+/g, "").trim().slice(0, 20) : "",
@@ -831,7 +831,10 @@ async function sweep(env, manual) {
   const deals = [], spares = [], later = [];
   let hidden = 0;
   for (const s of cands) {
-    const extra = r.bpf ? bpf(s.price) : 0;
+    // eBay only charges buyers its protection fee on private sellers' items (business sellers' items have none).
+    // If eBay doesn't say which kind of seller it is, the fee is counted, to be safe.
+    const pf = !!r.bpf && !(s.seller && s.seller.biz);
+    const extra = pf ? bpf(s.price) : 0;
     if (s.bucket === "parts") {
       if (!cfg.types.spares) continue;
       const m = market(s.workKey, s.id, s.workQ || 0.5);
@@ -871,7 +874,7 @@ async function sweep(env, manual) {
       if (!s.end) continue;
       // more than 12 hours left: only "serious" auctions whose price is already well up (not 99p starts), for "Ending later"
       if (s.end - now > 12 * 3600e3 && !(s.price >= m.med * 0.6)) continue;
-      maxBid = Math.floor(((slow ? mp - r.minProfit * 0.5 : mp) - s.ship - (r.bpf ? bpf(mp) : 0)) * 100) / 100;
+      maxBid = Math.floor(((slow ? mp - r.minProfit * 0.5 : mp) - s.ship - (pf ? bpf(mp) : 0)) * 100) / 100;
       ok = maxBid > s.price;
       const h = ukHour(s.end);
       if (h >= 0 && h < 6) tags.push("Ends overnight");
@@ -914,12 +917,12 @@ async function sweep(env, manual) {
     if (m.trend === "falling") tags.push("Prices falling");
     if (score < r.minScore) continue;
     (s.type === "AUC" && s.end - now > 12 * 3600e3 ? later : deals).push({
-      ...s, kind: "deal", cost: Math.round(cost * 100) / 100, extra: Math.round(extra * 100) / 100,
+      ...s, kind: "deal", bpfOn: pf, cost: Math.round(cost * 100) / 100, extra: Math.round(extra * 100) / 100,
       profit: Math.round(profit * 100) / 100, lowProfit: Math.round(lowProfit * 100) / 100, roi: Math.round(roi),
       maxPay: Math.floor(mp * 100) / 100, maxBid,
       // the most to pay for the item itself (before postage and fee), and profit if you pay exactly that
-      maxItem: s.type === "AUC" ? maxBid : Math.floor((mp - s.ship - (r.bpf ? bpf(mp) : 0)) * 100) / 100,
-      profitAtMax: (() => { const it = s.type === "AUC" ? maxBid : Math.floor((mp - s.ship - (r.bpf ? bpf(mp) : 0)) * 100) / 100; return Math.round((m.med - sellFee(m.med, r) - out - (it + s.ship + (r.bpf ? bpf(it) : 0))) * 100) / 100; })(),
+      maxItem: s.type === "AUC" ? maxBid : Math.floor((mp - s.ship - (pf ? bpf(mp) : 0)) * 100) / 100,
+      profitAtMax: (() => { const it = s.type === "AUC" ? maxBid : Math.floor((mp - s.ship - (pf ? bpf(mp) : 0)) * 100) / 100; return Math.round((m.med - sellFee(m.med, r) - out - (it + s.ship + (pf ? bpf(it) : 0))) * 100) / 100; })(),
       med: Math.round(m.med * 100) / 100, low: Math.round(m.low * 100) / 100,
       n: m.n, src: m.src, fill: !!m.fill, bookN: m.bookN || null, score, parts: { evidence: ev, match, seller: sel, margin: mar, competition: comp, demand: dem }, tags,
       sellFee: Math.round(sellFee(m.med, r) * 100) / 100, out: Math.round(out * 100) / 100,

@@ -47,6 +47,7 @@ header{display:flex;align-items:center;gap:10px;padding:14px 16px 8px;max-width:
 .iconbtn svg{width:24px;height:24px}
 main{padding:4px 14px 14px;max-width:680px;margin:auto}
 h2{font-size:20px;margin:6px 4px 12px}
+.pt{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;flex:none;width:40px;height:40px;border:3px solid;border-radius:50%;font-weight:800;font-size:14px;line-height:1;background:var(--card)}.pt small{font-size:9px;font-weight:700;opacity:.8;margin-top:1px}
 .dcard .dhead{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px 8px;padding:7px 10px;border-radius:10px 10px 0 0!important}
 .dcard .dbody{background:var(--card);padding:12px 14px;border-radius:0 0 10px 10px!important}
 .dcard .pill{display:inline-block;background:rgba(0,0,0,.7);padding:4px 11px;font-weight:800;font-size:14px;line-height:1.25;white-space:nowrap}
@@ -1028,21 +1029,25 @@ function moneyLines(d){
    </div>`}
 // One panel answering "can I trust this?": plain checks, the score, and a way to confirm the price
 function trustCard(d){const p=d.parts||{},sel=d.seller||{},v=k=>p[k]!=null?+p[k]:null;
-  const mark=x=>x==null?`<span class="mu" style="width:22px;flex:none">•</span>`:x>=0.7?`<span class="ok" style="width:22px;flex:none;font-weight:800">✓</span>`:x>=0.4?`<span class="warn" style="width:22px;flex:none;font-weight:800">!</span>`:`<span class="bad" style="width:22px;flex:none;font-weight:800">✕</span>`;
+  // each check gets a small traffic-light circle with its points (green good, amber check it, red weak)
+  const MX=Object.fromEntries(FACTORS.map(f=>[f[0],f[2]]));
+  const mark=k=>{const x=v(k),mx=MX[k];if(x==null)return`<span class="pt" style="border-color:var(--bd);color:var(--mu)" aria-label="not scored">–</span>`;
+    const c=x>=0.7?"var(--ok)":x>=0.4?"var(--warn)":"var(--bad)",n=Math.round(Math.max(0,Math.min(1,x))*mx);
+    return`<span class="pt" style="border-color:${c};color:${c}" aria-label="${n} out of ${mx}">${n}<small>/${mx}</small></span>`};
   const srcTxt=d.src==="book"?(d.fill?`from ${d.bookN?d.bookN+" recent sales":"recent sales"} in your category check, ${ago(d.bookAt||d.lastAt)}`:`from sold prices you checked ${ago(d.bookAt||d.lastAt)}`):d.src==="sold"?`from ${d.n} sales in the last 30 days`:`a guess from ${d.n} asking prices – no sales yet`;
   const chance=(d.tags||[]).map(t=>/^(\d+ bids?|No bids yet)$/.test(t)?t.toLowerCase():TAGS[t]&&/overnight|Misspelt|Best Offer|New listing/.test(t)?tagOf(t)[0].toLowerCase():null).filter(Boolean);
   const lines=[
-   [v("evidence"),`Sells for about <b>${gbp(d.med)}</b>`,srcTxt+(d.rangeLo!=null?` · most sell for ${gbp(d.rangeLo)}–${gbp(d.rangeHi)}`:"")],
-   [v("match"),`Compared with ${esc(d.matchLabel||"similar listings")}`,"Check the listing is the same thing"],
-   [v("margin"),`If it only sells for ${gbp(d.low)}`,d.lowProfit>0?`you'd still make +${gbp(d.lowProfit)}`:"you'd make little or nothing"],
-   [v("seller"),`Seller ${sel.pct||0}% positive`,`${sel.fb||0} feedback${sel.name?" · "+esc(sel.name):""}`],
-   chance.length?[v("competition"),"Your chances",chance.join(" · ")]:null,
-   d.st!=null||d.trend?[v("demand"),"Demand",[d.st!=null?Math.round(d.st)+"% of listings sell":"",d.trend?"prices "+({falling:"dropping",rising:"rising",steady:"steady"}[d.trend]||d.trend):""].filter(Boolean).join(" · ")]:null].filter(Boolean);
+   ["evidence",`Sells for about <b>${gbp(d.med)}</b>`,srcTxt+(d.rangeLo!=null?` · most sell for ${gbp(d.rangeLo)}–${gbp(d.rangeHi)}`:"")],
+   ["match",`Compared with ${esc(d.matchLabel||"similar listings")}`,"Check the listing is the same thing"],
+   ["margin",`If it only sells for ${gbp(d.low)}`,d.lowProfit>0?`you'd still make +${gbp(d.lowProfit)}`:"you'd make little or nothing"],
+   ["seller",`Seller ${sel.pct||0}% positive`,`${sel.fb||0} feedback${sel.name?" · "+esc(sel.name):""}`],
+   chance.length?["competition","Your chances",chance.join(" · ")]:null,
+   d.st!=null||d.trend?["demand","Demand",[d.st!=null?Math.round(d.st)+"% of listings sell":"",d.trend?"prices "+({falling:"dropping",rising:"rising",steady:"steady"}[d.trend]||d.trend):""].filter(Boolean).join(" · ")]:null].filter(Boolean);
   const pts=FACTORS.filter(f=>p[f[0]]!=null).map(([k,n,max])=>{const x=Math.max(0,Math.min(1,+p[k]));return`<div style="display:flex;align-items:center;gap:10px;margin-top:8px"><span style="flex:1;font-size:14px">${n}</span><div class="meter" style="width:40%;margin:0"><i style="width:${Math.round(x*100)}%"></i></div><span class="num-t" style="width:44px;text-align:right;font-size:14px">${Math.round(x*max)}/${max}</span></div>`}).join("");
-  return`<div class="card"><div style="display:flex;align-items:center;gap:12px">${ring(d.score,true)}<div><b style="font-size:17px">${confWord(d.score)} confidence</b><div class="mu" style="font-size:14px">${d.score>=70?"Strong deal – the checks below look good.":d.score>=50?"Worth a look – check the points marked !":"Risky – read the points marked ✕"}</div></div></div>
-   <div style="margin-top:10px">${lines.map(([x,a,b])=>`<div style="display:flex;gap:6px;padding:9px 0;border-top:1px solid var(--bd)">${mark(x)}<div style="min-width:0"><div>${a}</div><div class="mu" style="font-size:13px">${b}</div></div></div>`).join("")}</div>
+  return`<div class="card"><div style="display:flex;align-items:center;gap:12px">${ring(d.score,true)}<div><b style="font-size:17px">${confWord(d.score)} confidence</b><div class="mu" style="font-size:14px">${d.score>=70?"Strong deal – the checks below look good.":d.score>=50?"Worth a look – check the amber circles":"Risky – read the red circles"}</div></div></div>
+   <div style="margin-top:10px">${lines.map(([x,a,b])=>`<div style="display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--bd)">${mark(x)}<div style="min-width:0"><div>${a}</div><div class="mu" style="font-size:13px">${b}</div></div></div>`).join("")}</div>
    ${d.look?`<button class="${d.src==="book"?"s":""}" style="width:100%;margin-top:6px" onclick="lookUp(DV.look)">${d.src==="book"?"Check sold prices again":"Check sold prices"}</button>`:""}
-   ${pts?`<details style="margin-top:8px"><summary class="mu" style="font-size:14px">Score details (${d.score}/100)</summary>${pts}<div class="hint">70+ is a strong deal and sends an alert.</div></details>`:""}</div>`}
+   ${pts?`<details style="margin-top:8px"><summary class="mu" style="font-size:14px">Score details (${d.score}/100)</summary>${pts}<div class="hint">70+ counts as a strong deal. Alerts go out at ${H().alertScore}+ (your setting).</div></details>`:""}</div>`}
 // what the seller wrote, fetched live when the deal opens: warnings, photos, notes, item details, description
 function aboutCard(d){const x=d.info;
   if(!x)return`<div class="card"><b style="font-size:17px">About the listing</b><div class="mu" style="margin-top:6px">Loading what the seller wrote…</div></div>`;

@@ -136,16 +136,27 @@ const MODS = new Set(["ti", "super", "pro", "max", "plus", "mini", "lite", "oled
 function condBucket(id) { const n = +id || 0; if (n >= 7000) return "parts"; if (n && n < 2000) return "new"; return "used"; }
 // sizes, units and generations ("32gb", "144hz", "10th") — none of them names a product on its own
 const UNIT_TOKEN = /^\d+(?:\.\d+)?(gb|tb|mb|mah|hz|khz|mhz|ghz|w|v|mm|cm|m|in|inch|inches|p|k|mp|fps|ms|rpm|pcs|pc|pack|x|g|kg|ml|l|st|nd|rd|th)$/;
+// connection/standard names ("sata3", "pcie4", "usb3", "gddr6") describe a spec, not a product
+const SPEC_TOKEN = /^(sata|pcie|gen|usb|ddr|lpddr|gddr|hdmi|dp|wifi|ip|bt|lte|nvme)\d/;
+// big no-name SSDs are a common fake-capacity scam
+const FAKE_SSD = (t) => /\b([2-9]|1\d|[2-9]\d)\s*tb\b/i.test(t) && /\b(ssd|nvme|solid state)\b/i.test(t) && !SSD_BRANDS.test(t);
+const QTY_RE = /\b(pair of|matched pair|lot of \d|set of [2-9]|(?:[2-9]\s?|\d{2,}\s)x\s(?!\d+\s?gb)|x\s?[2-9]\b|\(x[2-9]\))/i;
 function sig(title) {
   const t = String(title || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\b([a-z]{2,})\s+(\d{1,2})\b(?!\s*(gb|tb|mb|inch|in|cm|mm|pcs|pack|x)\b)/g, "$1$2").split(/\s+/).filter(Boolean);
-  const keep = t.filter((w) => (/\d/.test(w) && w.length >= 2 && !/^\d{1,2}$/.test(w) && !/^\d+(x|pcs|pc|pack)$/.test(w) && !/^x\d+$/.test(w)) || MODS.has(w));
+  // several items in one listing ("pair of", "2x", "x2"): the price is for more than one, so never compare with single items
+  if (QTY_RE.test(String(title || ""))) return "";
+  const keep = t.filter((w) => (/\d/.test(w) && w.length >= 2 && !/^\d{1,2}$/.test(w) && !/^\d+(x|pcs|pc|pack)$/.test(w) && !/^x\d+$/.test(w)
+    && !/^(uk|eu|us|size|sz)\d+(\.5)?$/.test(w)) || MODS.has(w)); // shoe sizes ("uk9") aren't model names
   // sizes and units ("32gb", "144hz", "5000mah") say nothing about which product it is: without at least one real
   // model code ("rvl001", "75192", "sm-x110"), titles can't be grouped (all "32GB" tablets were being priced together)
-  if (!keep.some((w) => /\d/.test(w) && !UNIT_TOKEN.test(w))) return "";
-  return [...new Set(keep)].sort().join(" ");
+  if (!keep.some((w) => /\d/.test(w) && !UNIT_TOKEN.test(w) && !SPEC_TOKEN.test(w))) return "";
+  // one word alone must be a real model code ("rvl001", "75192"), not a platform or short number ("ps3", "360")
+  const uniq = [...new Set(keep)];
+  if (uniq.length === 1 && !((/[a-z]/.test(uniq[0]) && uniq[0].length >= 5) || /^\d{4,}$/.test(uniq[0]))) return "";
+  return uniq.sort().join(" ");
 }
 const LAPTOP_RE = /\b(laptop|notebook|macbook|chromebook|thinkpad|elitebook|probook|latitude|ideapad|thinkbook|zenbook|vivobook|inspiron|vostro|surface laptop|galaxy book|ultrabook)\b/i;
-const NOT_A_CARD = /\b(mobile|mxm|gpu chip|gpu module|bga|laptop|notebook|desktop|tower|gaming pc|pc build|full pc|computer|ssd|hdd|ram|i[3579][\s-]?\d|ryzen|bundle|job ?lot|joblot|pair of|waterblock|water block|heatsink|backplate|fan|fans|cooler|bracket|riser|cable|box only|empty box)\b/i;
+const NOT_A_CARD = /\b(mobile|mxm|gpu chip|gpu module|bga|laptop|notebook|desktop|tower|gaming pc|pc build|full pc|computer|ssd|hdd|ram|i[3579][\s-]?\d|ryzen|bundle|job ?lot|joblot|pair of|waterblock|water block|heatsink|backplate|fans? only|replacement fans?|fans? for|cooler only|cooler for|bracket|riser|cable|box only|empty box)\b/i;
 const MULTI_VRAM = new Set(["gtx 1060", "rtx 2060", "rtx 3050", "rtx 3060", "rtx 4060 ti", "rx 470", "rx 480", "rx 570", "rx 580", "rx 5500 xt", "rx 6500 xt"]);
 function gpuChip(t) {
   let m = t.match(/\b(rtx|gtx|rx|arc)\s*-?\s*([ab]?\d{3,4})\s*(ti\s*super|super|ti|xtx|xt|gre)?(?![a-z0-9])/i);
@@ -186,6 +197,7 @@ function laptopKey(title) {
   } else if ((m = t.match(/\bi([3579])[\s-]*(\d{4,5})[a-z]{0,2}\d?\b/))) {
     // 5 digits (10210U) or 4 digits starting with 1 (1035G1, 1135G7, 1235U) = 10th gen and later; else the first digit (8250U = 8th)
     const gen = m[2].length === 5 || m[2][0] === "1" ? m[2].slice(0, 2) : m[2][0];
+    if (+gen > 15) return null; // a typo, not a real generation
     cpu = `intel-i${m[1]}-g${gen}`; cpuL = `Intel i${m[1]} ${ordinal(gen)} gen`;
   } else if ((m = t.match(/\bi([3579])\b.*?\b(\d{1,2})(?:st|nd|rd|th)\s*gen/)) || (m = t.match(/\b(\d{1,2})(?:st|nd|rd|th)\s*gen\b.*?\bi([3579])\b/))) {
     const a = /^\d{1,2}$/.test(m[1]) && /gen/.test(t.slice(t.indexOf(m[1]), t.indexOf(m[1]) + 8)) ? [m[2], m[1]] : [m[1], m[2]];
@@ -214,7 +226,7 @@ const storageOf = (t) => { let m = t.match(/\b(\d)\s*tb\b/i); if (m) return +m[1
 const stLabel = (g) => (g >= 1024 ? g / 1024 + "TB" : g + "GB");
 function phoneKey(t) {
   if (ACCESSORY.test(t)) return null;
-  const l = t.toLowerCase(); let m, model = null;
+  const l = t.toLowerCase().replace(/(\d)\s*\+/g, "$1 plus"); let m, model = null;
   if ((m = l.match(/\biphone\s*(\d{1,2}e?|se|xs|xr|x)\s*(pro\s*max|pro|plus|mini|max)?\b/))) model = "iphone " + m[1] + (m[2] ? " " + m[2].replace(/\s+/g, " ") : "");
   else if ((m = l.match(/\bgalaxy\s*(s|a|note|z\s*fold|z\s*flip|m)\s*(\d{1,3})\s*(ultra|plus|\+|fe|lite|5g)?\b/))) model = "galaxy " + m[1].replace(/\s+/g, "") + m[2] + (m[3] && m[3] !== "5g" ? " " + m[3].replace("+", "plus") : "");
   else if ((m = l.match(/\bpixel\s*(\d{1,2}a?)\s*(pro\s*xl|pro\s*fold|pro|xl|a)?\b/))) model = "pixel " + m[1] + (m[2] ? " " + m[2] : "");
@@ -237,7 +249,7 @@ function consoleKey(t) {
   const l = t.toLowerCase(); let m, k = null;
   if ((m = l.match(/\b(ps5|playstation\s*5)\b/))) k = "ps5 " + (/\bpro\b/.test(l) ? "pro" : /digital/.test(l) ? "digital" : "disc") + (/\bslim\b/.test(l) ? " slim" : "");
   else if ((m = l.match(/\b(ps4|playstation\s*4)\b/))) k = "ps4" + (/\bpro\b/.test(l) ? " pro" : /\bslim\b/.test(l) ? " slim" : "");
-  else if ((m = l.match(/\bxbox\s*series\s*(x|s)\b/))) k = "xbox series " + m[1];
+  else if ((m = l.match(/\bxbox\s*series\s*(x|s)\b/))) k = "xbox series " + m[1] + (m[1] === "x" && /\bdigital\b/.test(l) ? " digital" : "");
   else if ((m = l.match(/\bxbox\s*one\s*(x|s)?\b/))) k = "xbox one" + (m[1] ? " " + m[1] : "") + (/\b(all[\s-]*)?digital\b/.test(l) ? " digital" : "");
   else if ((m = l.match(/\bnintendo\s*switch\b|\bswitch\s*(oled|lite)\b/))) k = "switch" + (/\boled\b/.test(l) ? " oled" : /\blite\b/.test(l) ? " lite" : /\bswitch\s*2\b/.test(l) ? " 2" : "");
   else if ((m = l.match(/\bsteam\s*deck\b/))) k = "steam deck" + (/\boled\b/.test(l) ? " oled" : "") + ((m = l.match(/\b(64|256|512)\s*gb\b/)) ? " " + m[1] : "") + (/\b1\s*tb\b/.test(l) ? " 1tb" : "");
@@ -252,11 +264,13 @@ function tabletKey(t) {
   const l = t.toLowerCase(); let m;
   if (!(m = l.match(/\bipad\s*(pro|air|mini)?\b/))) return null;
   const kind = m[1] || "ipad";
-  const gen = (l.match(/\b(\d{1,2})(?:st|nd|rd|th)\s*gen/) || [])[1] || (l.match(/\bm([1-4])\b/) ? "M" + l.match(/\bm([1-4])\b/)[1] : "");
+  const gen = (l.match(/\b(\d{1,2})(?:st|nd|rd|th)\s*gen/) || [])[1] || (l.match(/\bm([1-5])\b/) ? "M" + l.match(/\bm([1-5])\b/)[1] : "")
+    || ((kind === "air" || kind === "mini") && (l.match(/\bipad\s*(?:air|mini)\s*([1-7])\b(?![.\d]|\s*(?:"|inch|in\b))/) || [])[1])
+    || ((l.match(/\b(20(?:1\d|2\d))\b/) || [])[1] || "");
   const size = (l.match(/\b(7\.9|8\.3|9\.7|10\.2|10\.5|10\.9|11|12\.9|13)\s*(?:"|''|inch|in)?/) || [])[1] || "";
   const st = storageOf(t);
   if (!gen && !size) return null;
-  return { key: `tab:${kind}|${gen}|${size}|${st || "?"}`, label: `iPad ${kind === "ipad" ? "" : kind[0].toUpperCase() + kind.slice(1) + " "}${gen ? gen + (/^\d/.test(gen) ? "th gen" : "").replace(/^(\d+)th gen$/, "$1th gen") + " " : ""}${size ? size + '" ' : ""}${st ? stLabel(st) : ""}`.trim(), match: st && gen ? 0.85 : 0.6 };
+  return { key: `tab:${kind}|${gen}|${size}|${st || "?"}`, label: `iPad ${kind === "ipad" ? "" : kind[0].toUpperCase() + kind.slice(1) + " "}${gen ? (/^\d{4}$/.test(gen) ? "(" + gen + ")" : /^\d/.test(gen) ? ordinal(gen) + " gen" : gen) + " " : ""}${size ? size + '" ' : ""}${st ? stLabel(st) : ""}`.trim(), match: st && gen ? 0.85 : 0.6 };
 }
 function cpuKey(t, catName) {
   if (!/processor|cpu/i.test(catName || "") && !/\b(processor|cpu)\b/i.test(t)) return null;
@@ -277,12 +291,15 @@ function ramKey(t, catName) {
   else if ((m = l.match(/\b(\d{1,3})\s*gb\b/))) cap = +m[1];
   if (!cap) return null;
   const sp = (m = l.match(/\b(\d{4})\s*(?:mhz|mt\/s)?\b/)) ? Math.round(+m[1] / 400) * 400 : "";
-  const so = /\b(so-?dimm|laptop)\b/.test(l) ? " sodimm" : "";
+  const so = /\b(so[- ]?dimm|laptop)\b/.test(l) ? " sodimm" : "";
   return { key: `ram:ddr${type}|${cap}|${sp}${so}`, label: `DDR${type} ${cap}GB${sp ? " ~" + sp + "MHz" : ""}${so ? " laptop" : ""} (any brand)`, match: sp ? 0.75 : 0.6 };
 }
+const SSD_BRANDS = /\b(samsung|wd|western digital|wd_black|crucial|micron|kingston|sandisk|seagate|sabrent|corsair|kioxia|toshiba|intel|solidigm|sk ?hynix|hynix|lexar|team ?group|teamgroup|pny|adata|xpg|gigabyte|aorus|msi|patriot|transcend|hp|lenovo|dell|silicon power|verbatim|integral|nextorch|orico|fanxiang|netac|hikvision|hiksemi|acer|predator|kingspec|ssstc|lite-?on|plextor|apple|biwin|lacie|g-?technology|asus|rog|thermaltake|mushkin|inland)\b/i;
 function storageKey(t, catName) {
   if (!/drive|ssd|storage|hard disk/i.test(catName || "") && !/\b(ssd|nvme|hdd|hard drive)\b/i.test(t)) return null;
-  if (/\b(laptop|desktop|pc|computer|console|ps5|ps4|xbox|enclosure|caddy|adapter)\b/i.test(t)) return null;
+  if (/\b(laptop|desktop|pc|computer|workstation|tower|raspberry|nas|console|ps5|ps4|xbox|enclosure|caddy|adapter)\b/i.test(t)) return null;
+  // 2TB+ SSDs from no known maker are often fake-capacity scams: never price them as real drives
+  if (/\b([2-9]|1\d)\s*tb\b/i.test(t) && !SSD_BRANDS.test(t)) return null;
   const l = t.toLowerCase();
   const kind = /\bnvme|m\.?2\b/.test(l) ? "nvme" : /\bssd\b/.test(l) ? "ssd" : /\bhdd|hard (disk )?drive\b/.test(l) ? "hdd" : null;
   const st = storageOf(t);
@@ -294,7 +311,7 @@ function monitorKey(t, catName) {
   if (!/monitor/i.test(catName || "") && !/\bmonitor\b/i.test(t)) return null;
   if (ACCESSORY.test(t) || /\b(arm|baby|heart|tv)\b/i.test(t)) return null;
   const l = t.toLowerCase();
-  const size = (l.match(/\b(2[0-9]|3[0-9]|4[0-9])(?:\.\d)?\s*(?:"|''|inch|in\b)/) || [])[1];
+  const size = (l.match(/(?<![\d.])(2[0-9]|3[0-9]|4[0-9])(?:\.\d+)?\s*(?:"|''|-?inch|in\b)/) || [])[1];
   if (!size) return null;
   const hz = (l.match(/\b(60|75|100|120|144|165|170|180|240|280|360)\s*hz\b/) || [])[1] || "";
   const res = /\b(4k|uhd|2160p)\b/.test(l) ? "4k" : /\b(1440p|qhd|2k|wqhd)\b/.test(l) ? "1440p" : /\b(1080p|fhd|full hd)\b/.test(l) ? "1080p" : "";
@@ -348,7 +365,8 @@ function groupOf(it, cat, catName, bucket) {
     || (fits(/phone|mobile/i) && phoneKey(title))
     || (fits(/console|video game|gaming|handheld/i) && consoleKey(title))
     || (fits(/tablet|ipad|e-?book/i) && tabletKey(title))
-    || cpuKey(title, catName) || ramKey(title, catName) || storageKey(title, catName) || monitorKey(title, catName)
+    || (fits(/processor|cpu|component|part/i) && cpuKey(title, catName)) || (fits(/memory|\bram\b|component|part/i) && ramKey(title, catName))
+    || (fits(/drive|ssd|storage|hard disk|component|part/i) && storageKey(title, catName)) || (fits(/monitor|display|component|part/i) && monitorKey(title, catName))
     || (fits(/cloth|shoe|trainer|sneaker|boot|footwear|coat|jacket|jumper|hoodie|jean|shirt|fashion|men|women|unisex|bag/i) && fashionKey(title)) || null;
   if (g) return { key: g.key + "|" + bucket, label: g.label, match: g.match };
   if (it.epid) return { key: "e" + it.epid + "|" + bucket, label: "Same eBay product", match: 1 };
@@ -473,7 +491,7 @@ async function fillPrices(env, b) {
   if (rng && cat) { covAll[cat] = cover; await kvSet(env, "fillCover", covAll); }
   for (const r of rows) {
     const t = String((r && r.n) || "").slice(0, 200), p = +r.p, id = String((r && r.id) || "").replace(/\D/g, "").slice(0, 20);
-    if (!t || !id || !(p > 0 && p < 100000) || FILL_SKIP.test(t) || MULTI_VAR.test(t)) continue;
+    if (!t || !id || !(p > 0 && p < 100000) || FILL_SKIP.test(t) || MULTI_VAR.test(t) || FAKE_SSD(t)) continue;
     if (r.c && r.c !== cond) continue; // the listing's own condition (eBay's filter sometimes drops on later pages)
     const g = groupOf({ title: t }, cat, catName, cond);
     // known kinds are matched model by model; anything else needs a strong title match or a single model code like "75192"
@@ -557,7 +575,7 @@ const SPECIAL = /\b(poseidon|water ?cooled|watercooled|water ?block|hybrid|aio|b
 // auction learning buckets: time left (day+, 2h+, 30m+, under 30m) and bids (0-2, 3+)
 const aucBucket = (mins, bids) => (mins > 1440 ? "d" : mins > 120 ? "h" : mins > 30 ? "m" : "s") + (bids > 2 ? "+" : "-");
 /* ---------------- what the hunter avoids ---------------- */
-const RISK_WORDS = /\b((?<!\bno |\bwithout |\bzero |\bany )damage|parts only|spares only|for parts|parts or not working|parts\/repair|as is|sold as seen|not tested|empty (?:retail |original |console )?(?:box|packaging|case)|packaging only|box (?:and|&) (?:inserts?|packaging|manual)|box\W{1,4}empty|empty\W{1,4}(?:box|packaging)|box only|empty box|read desc|read description|see desc|see description|please read|photo of|picture of|image of|replica|fake|not genuine|dummy|display only|case only|cover only|manual only|cable only|stand only|bundle only|no console|card only|for parts|spares|repairs?|faulty|broken|cracked|not working|untested|bios lock|icloud|activation lock|locked|blacklisted|no power|water damage|liquid damage|damaged|dented|bent pins?|burnt|burned|scorched|melted|smashed|shattered|bricked|no display|no signal|no picture|dead pixels?|artifact(?:s|ing)|artefact(?:s|ing))\b/i;
+const RISK_WORDS = /\b(no (?:hdd|ssd|ram|memory|storage|hard ?drive|screen|display|battery|motherboard)|trade bundle|bulk lot|job ?lots?|joblots?|lot of \d+|bundle of \d+|bad health|parts\/|(?<!\bno |\bwithout |\bzero |\bany )damage|parts only|spares only|for parts|parts or not working|parts\/repair|as is|sold as seen|not tested|empty (?:retail |original |console )?(?:box|packaging|case)|packaging only|box (?:and|&) (?:inserts?|packaging|manual)|box\W{1,4}empty|empty\W{1,4}(?:box|packaging)|box only|empty box|read desc|read description|see desc|see description|please read|photo of|picture of|image of|replica|fake|not genuine|dummy|display only|case only|cover only|manual only|cable only|stand only|bundle only|no console|card only|for parts|spares|repairs?|faulty|broken|cracked|not working|untested|bios lock|icloud|activation lock|locked|blacklisted|no power|water damage|liquid damage|damaged|dented|bent pins?|burnt|burned|scorched|melted|smashed|shattered|bricked|no display|no signal|no picture|dead pixels?|artifact(?:s|ing)|artefact(?:s|ing))\b/i;
 const SCAM_WORDS = /\b(empty (?:retail |original |console )?(?:box|packaging|case)|packaging only|box (?:and|&) (?:inserts?|packaging|manual)|box\W{1,4}empty|empty\W{1,4}(?:box|packaging)|read desc|read description|photo of|picture of|image of|empty box|box only|replica|fake|not genuine|contact me|message me before|whatsapp|bank transfer)\b/i;
 // "iPhone 12 Pro Max 128GB BOX": a title that ends in "box" is usually the box alone ("... with box" is fine)
 const BOX_END = /(?<!\b(?:with|w\/|and|&|\+|inc|incl|includes?|including|in|original|retail) )\bbox(?:es)?\W*$/i;
@@ -978,6 +996,7 @@ async function sweep(env, manual) {
     }
     if (RISK_WORDS.test(s.title)) { why.risky++; continue; }
     if (MULTI_VAR.test(s.title)) { why.noData++; continue; }
+    if (FAKE_SSD(s.title)) { why.risky++; continue; }
     if (BOX_END.test(s.title)) { hidden++; continue; }
     const m = market(s.pkey, s.id, s.matchQ || 0.5);
     if (!m) { why.noData++; continue; }

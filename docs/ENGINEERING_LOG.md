@@ -67,13 +67,60 @@ This is a running record of what has been checked, what was found, what was fixe
 | 26 Oct | "PARTS ONLY" card shown as a deal | Risk words covered "for parts" only | Added parts only, spares only, sold as seen, as is, not tested | `tests/filters.test.mjs` |
 | 26 Oct | Changes could be uploaded with failing tests | Tests weren't part of the upload | Every build and Scan service update runs all tests first | `build.yml`, `deploy-worker.yml` |
 
+### Matching accuracy check (26 Oct, part 1)
+
+**Method:**
+- Took 480 real live titles: 40 random ones from each of 12 categories.
+- Hand-checked what each one really is.
+- Compared that with the model FlipScout gave it.
+
+**Wrong product matches:**
+
+| | Wrong matches | Wrong rate |
+| --- | --- | --- |
+| Before the fixes | 34 of 480 | about 7% |
+| After the fixes | 0 known | — |
+
+All 480 are saved as a permanent test (`tests/real-titles.test.mjs`).
+
+**What was wrong:**
+
+| Area | Wrong match |
+| --- | --- |
+| Graphics cards | Old cards read as RAM ("GeForce 210 1GB DDR3" → "DDR3 1GB RAM"); "Dual/Triple Fan" made real cards not count as cards |
+| Consoles | Xbox Series X Digital priced as the disc model; games and the PS Portal grouped by a platform word alone ("ps3", "ps5", "360") |
+| Phones | Galaxy "S20+" priced as the S20 |
+| Tablets | iPad Air 2 mixed with Air 1, and other generations mixed |
+| Laptops | "i5-72000U" typo read as 72nd gen; laptops with no RAM, no drive or no battery treated as complete |
+| CPUs | "Pair of" / "2x" CPU listings compared with single CPUs |
+| RAM | "SO DIMM" (with a space) laptop RAM priced as desktop RAM |
+| Storage | No-name "4TB SSD" (a fake-capacity scam) priced as a real 4TB drive; job lots; "bad health" drives |
+| Monitors | "21.45 inch" read as 45 inch |
+| Desktop PCs | Whole PCs priced as their SSD ("Dell XPS 8930 … 512GB NVMe" → "16GB NVMe"); a Raspberry Pi kit as a 500GB NVMe |
+| Trainers | Shoes grouped by size alone ("UK 9") |
+
+**Coverage:** the share of usable titles that get a specific model rule (rather than the rougher title match or none).
+
+| Category | Coverage | Category | Coverage |
+| --- | --- | --- | --- |
+| SSDs | 81% | Phones | 53% |
+| CPUs | 67% | Consoles | 24% (retro consoles have no rules) |
+| Laptops | 53–63% | Tablets | 24% (Samsung tabs and Kindles have no rules) |
+| Graphics cards | 62% | Trainers | 20% |
+| Monitors | 62% | Desktop PCs | 3% |
+| RAM | 57% | | |
+
+Titles without a specific rule only get a price from an exact model-code match, so low coverage means **missed deals, not wrong ones**.
+
+**Known limit:** laptops are grouped by processor generation, RAM and storage, "any brand". Their prices vary a lot (brand, screen, condition), so laptop deals are less certain. The "must not lose money at the cheap end" rule protects buys.
+
 ---
 
 ## 4. Still open (highest priority first)
 
 | # | Priority | What | Why it matters | Plan |
 | --- | --- | --- | --- | --- |
-| 1 | High | **Matching accuracy isn't measured beyond about 15 hand-checked titles** | Wrong matches mean wrong prices, which means bad buys | Build a labelled set of about 300 real titles across categories and report the % right. Make it a test that must stay above the target |
+| 1 | Done (26 Oct) | Matching accuracy measured on 480 real titles; 34 wrong matches fixed; snapshot test added | — | Repeat for each new category before trusting it (the "not verified yet" safety net is part 2) |
 | 2 | High | **No test copy of the system.** Every change goes straight to the live Scan service | A bad change hits real deals and alerts | Separate test Scan service and database |
 | 3 | High | **Sold prices come from reading eBay's website** (manual fill), which eBay's rules don't allow | Account risk; can't be offered to other users at launch | Business decision before launch: eBay's official sold-data access (Marketplace Insights) or another lawful source |
 | 4 | Medium | Built for one person: one shared password, no accounts | Blocks other users (Stage 2) | Accounts and per-user data in Stage 2 |

@@ -38,12 +38,23 @@ jobs:
           printf 'name = "flipscout-review"\ncompatibility_date = "2024-09-23"\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "flipscout-db"\ndatabase_id = "%s"\n' "$DB" > wrangler.toml
           wrangler d1 execute flipscout-db --remote --json --command "$(cat query.sql)" > out.json
           node -e 'const r=JSON.parse(require("fs").readFileSync("out.json","utf8"));console.log("Rows returned:",(r[0]&&r[0].results||[]).length)'
-      # results are passed back as compressed notes on the run (readable through GitHub's API), not stored in the project
-      - name: Hand results back
+      # results are passed back as compressed notes on the run (readable through GitHub's API), not stored in the project.
+      # GitHub keeps 4,096 characters per note and 10 notes per step, so the result is split over up to 5 steps (about 200 KB).
+      - name: Pack results
         run: |
           node -e '
             const z=require("zlib"),fs=require("fs");
-            const b=z.gzipSync(fs.readFileSync("out.json")).toString("base64"),N=60000,parts=Math.ceil(b.length/N);
-            if(parts>10){console.log("::error::Result too big ("+parts+" parts). Narrow the query.");process.exit(1)}
-            for(let i=0;i<parts;i++)console.log("::notice title=part "+(i+1)+" of "+parts+"::"+b.slice(i*N,(i+1)*N));
+            const b=z.gzipSync(fs.readFileSync("out.json"),{level:9}).toString("base64"),N=4000,parts=Math.ceil(b.length/N);
+            if(parts>50){console.log("::error::Result too big ("+parts+" parts). Narrow the query.");process.exit(1)}
+            fs.writeFileSync("parts.json",JSON.stringify(Array.from({length:parts},(_,i)=>b.slice(i*N,(i+1)*N))));
           '
+      - name: Hand back 1
+        run: node -e 'const p=JSON.parse(require("fs").readFileSync("parts.json","utf8"));for(let i=0;i<Math.min(p.length,10);i++)console.log("::notice title=part "+(i+1)+" of "+p.length+"::"+p[i])'
+      - name: Hand back 2
+        run: node -e 'const p=JSON.parse(require("fs").readFileSync("parts.json","utf8"));for(let i=10;i<Math.min(p.length,20);i++)console.log("::notice title=part "+(i+1)+" of "+p.length+"::"+p[i])'
+      - name: Hand back 3
+        run: node -e 'const p=JSON.parse(require("fs").readFileSync("parts.json","utf8"));for(let i=20;i<Math.min(p.length,30);i++)console.log("::notice title=part "+(i+1)+" of "+p.length+"::"+p[i])'
+      - name: Hand back 4
+        run: node -e 'const p=JSON.parse(require("fs").readFileSync("parts.json","utf8"));for(let i=30;i<Math.min(p.length,40);i++)console.log("::notice title=part "+(i+1)+" of "+p.length+"::"+p[i])'
+      - name: Hand back 5
+        run: node -e 'const p=JSON.parse(require("fs").readFileSync("parts.json","utf8"));for(let i=40;i<Math.min(p.length,50);i++)console.log("::notice title=part "+(i+1)+" of "+p.length+"::"+p[i])'

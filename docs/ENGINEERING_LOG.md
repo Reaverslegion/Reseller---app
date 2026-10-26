@@ -144,6 +144,17 @@ Titles without a specific rule only get a price from an exact model-code match, 
   4. Add the titles to `tests/data`.
   5. Add the category to `VERIFIED_CATS`.
 
+## 4c. User-experience check (owner's rule, 26 Oct): done before every preview
+
+Before showing the owner anything new, walk through it as a first-time user on a phone:
+1. **Is it obvious** what each button does, without explanation?
+2. **Is it obvious it worked?** Clear confirmation, and nothing that looks finished when it isn't (lesson: the amber "Flag?" looked like a sent report).
+3. **Accidental taps:** where do thumbs rest while scrolling? Is anything destructive or one-way there?
+4. **Can it be undone?** Undo for quick actions; a way to reverse it later (e.g. Remove in Admin).
+5. **Wording:** plain, short, no jargon, and says what will happen.
+6. **Clutter:** does it add rows or text to a busy screen? Can it be smaller or hidden until needed?
+7. **Dark and light mode**, small screens, long titles.
+
 ## 5. Not verified (be honest)
 
 - Anything on a real phone: layouts, notifications, the manual fill reading eBay pages. Checked only from screenshots.

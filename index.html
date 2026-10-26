@@ -856,7 +856,7 @@ function priceRow(d,noProfit){
    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:9px 12px">
     ${cell(auc?"Current bid":"Buy it now",gbp(d.price),(auc?(d.bids?d.bids+" bid"+(d.bids>1?"s":"")+" · ":"no bids · "):"")+postNote(d))}
     ${auc||(!under&&mx!=null)?cell(midLabel,mx!=null?gbp(mx):"—",auc?"eBay bids for you up to this":bo?"offer this or less":"",CALM?'':'ok')
-      :mx!=null?cell("Most to pay",gbp(mx),"for the item, still hits your minimum profit"):cell("Sells for about",gbp0(d.med),"estimate, incl. post",CALM?'':'ok')}</div>
+      :mx!=null?cell("Max item price",gbp(mx),"before post & buyer fee"):cell("Sells for about",gbp0(d.med),"estimate, incl. post",CALM?'':'ok')}</div>
    ${noProfit?"":`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 12px;background:${good?"var(--okbg)":"var(--badbg,rgba(248,113,113,.16))"};border-top:1px solid var(--bd)">
     <span style="font-size:13px;font-weight:700" class="${good?"ok":"bad"}">Profit after fees</span>
     <span class="num-t ${good?"ok":"bad"}" style="font-weight:800;font-size:20px;white-space:nowrap">${rg?`${sgn(rg[0])} <span style="font-weight:600;opacity:.8">–</span> ${sgn(rg[1])}`:sgn(prof)}</span></div>`}</div>`}
@@ -975,7 +975,7 @@ function cardMoney(d){
    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:8px 12px">
     ${cell(auc?"Current bid":"Buy it now",gbp(d.price),auc?(d.bids?d.bids+" bid"+(d.bids>1?"s":""):"no bids yet")+" · "+postNote(d):postNote(d))}
     ${auc||(!under&&mx!=null)?cell(auc?"Your max bid":"Max offer",mx!=null?gbp(mx):"—",auc?"eBay bids for you up to this":bo?"offer this or less":"",'ok')
-      :mx!=null?cell("Most to pay",gbp(mx),"for the item, still hits your minimum profit"):cell("Sells for about",gbp0(d.med),"estimate, incl. post")}</div></div>`}
+      :mx!=null?cell("Max item price",gbp(mx),"before post & buyer fee"):cell("Sells for about",gbp0(d.med),"estimate, incl. post")}</div></div>`}
 // tap the score on a card: what the number means and how it was worked out
 function scoreSheet(i){const d=(HD.deals||[])[i];if(!d)return;
   const ev=d.src==="book"?`Saved price: sells for about ${gbp(d.med)} incl. postage. Saved ${ago(d.bookAt)}`:d.src==="sold"?`${d.n} sold prices in the last 30 days`:`${d.n} asking prices (no sales recorded yet, so it scores lower)`;

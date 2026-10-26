@@ -723,6 +723,21 @@ async function sweep(env, manual) {
     await D.prepare("DELETE FROM deals WHERE data LIKE '%\"pkey\":\"con:%'").run();
     await kvSet(env, "fix2", true);
   }
+  // 0d. one-off (26 Oct 2026, owner approved): delete price groups made by old matching mistakes —
+  // "similar title" groups keyed only by a size or generation ("32gb", "10th") and laptops misread as "1th gen"
+  if (!(await kvGet(env, "fix3", false))) {
+    const rows = await D.prepare("SELECT pkey FROM prices WHERE pkey LIKE 't%' OR pkey LIKE 'lap:intel-%-g1|%'").all();
+    const bad = (rows.results || []).map((r) => r.pkey).filter((k) => k.startsWith("lap:") ||
+      !k.replace(/^t\d*:/, "").replace(/\|[^|]*$/, "").split(" ").some((w) => /\d/.test(w) && !UNIT_TOKEN.test(w)));
+    for (let i = 0; i < bad.length; i += 45) {
+      const part = bad.slice(i, i + 45), q = part.map(() => "?").join(",");
+      await D.batch([D.prepare(`DELETE FROM prices WHERE pkey IN (${q})`).bind(...part), D.prepare(`DELETE FROM fillsales WHERE pkey IN (${q})`).bind(...part)]);
+    }
+    const fc = await kvGet(env, "fillCats", {}), gone = new Set(bad);
+    for (const c in fc) for (const k in (fc[c].k || {})) if (gone.has(k)) delete fc[c].k[k];
+    await kvSet(env, "fillCats", fc);
+    await kvSet(env, "fix3", { at: now, deleted: bad });
+  }
   // 1. auctions that have ended become sold prices (only if they had bids)
   // (the free database allows 5 million rows read a day, so every query here must use an index)
   await D.batch([

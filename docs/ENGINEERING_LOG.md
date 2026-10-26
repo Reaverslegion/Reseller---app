@@ -130,6 +130,20 @@ Titles without a specific rule only get a price from an exact model-code match, 
 | 8 | Low | Old wrong rows still in the price list (size-only groups, "1th gen", "10th") | Shown in the price list, but no longer used for deals | Delete them. **Needs owner approval** (changes live data) |
 | 9 | Note | Minimum profit is set to £5 | Smaller than the usual uncertainty in a sell price | Owner's business choice. Mentioned |
 
+## 4b. Safeguards in place (26 Oct)
+
+- **Tests before every upload:** `tests/run-all.mjs` runs before every build and every Scan service deploy. Any failure stops the upload. There are 10 test files, including 480 real titles.
+- **"Not verified yet":** only categories in `VERIFIED_CATS` (worker.js), which must have hand-checked titles in `tests/data`, can score High or send alerts. Any other category is capped at Medium, tagged, and never alerted.
+- **⚑ Flag:** one tap hides a wrong deal for that user and stores a server-side snapshot in the `flags` table. Admin shows the list and a 7-day flag rate.
+  - **Process:** check flags each session, fix the cause, add the title to the tests.
+- **Read-only review job:** for checking live data during development. Remove before launch.
+- **New category process:**
+  1. The owner fills its prices.
+  2. Check about 50 real titles.
+  3. Fix the rules.
+  4. Add the titles to `tests/data`.
+  5. Add the category to `VERIFIED_CATS`.
+
 ## 5. Not verified (be honest)
 
 - Anything on a real phone: layouts, notifications, the manual fill reading eBay pages. Checked only from screenshots.

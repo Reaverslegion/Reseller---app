@@ -1,0 +1,45 @@
+# READ-ONLY review of the live Scan service database, for checking real deals and prices during development.
+# Only queries that read (SELECT / WITH) are allowed; anything that could change data is refused before it runs.
+# Results are saved as a private download on the run and deleted after 1 day. Remove this file before launch.
+name: Review live data (read-only)
+on:
+  workflow_dispatch:
+    inputs:
+      sql:
+        description: "A read-only query (SELECT ...)"
+        required: true
+permissions:
+  contents: read
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Refuse anything that isn't read-only
+        env:
+          SQL: ${{ inputs.sql }}
+        run: |
+          node -e '
+            const q = process.env.SQL.trim().replace(/;\s*$/, "");
+            if (!/^(select|with)\b/i.test(q)) { console.error("Only SELECT or WITH queries are allowed."); process.exit(1); }
+            if (/;/.test(q)) { console.error("One query only."); process.exit(1); }
+            if (/\b(insert|update|delete|drop|alter|create|replace|pragma|attach|detach|vacuum|reindex|truncate)\b/i.test(q.replace(/'"'"'[^'"'"']*'"'"'/g, ""))) { console.error("That query could change data, so it was refused."); process.exit(1); }
+            require("fs").writeFileSync("query.sql", q);
+            console.log("Query accepted (read-only).");
+          '
+      - name: Run it on the live database
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npm i -g wrangler@3 >/dev/null 2>&1
+          DB=$(wrangler d1 list --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const i=s.search(/^\[/m);const a=i<0?[]:JSON.parse(s.slice(i));const n=a.find(x=>(x.name||"")==="flipscout-db");console.log(n?(n.uuid||n.id):"")})')
+          test -n "$DB"
+          printf 'name = "flipscout-review"\ncompatibility_date = "2024-09-23"\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "flipscout-db"\ndatabase_id = "%s"\n' "$DB" > wrangler.toml
+          wrangler d1 execute flipscout-db --remote --json --command "$(cat query.sql)" > out.json
+          node -e 'const r=JSON.parse(require("fs").readFileSync("out.json","utf8"));console.log("Rows returned:",(r[0]&&r[0].results||[]).length)'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: review
+          path: out.json
+          retention-days: 1

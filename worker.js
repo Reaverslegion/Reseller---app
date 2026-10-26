@@ -613,7 +613,8 @@ const DEFAULT_RULES = { cheap: true, maxSpend: 0, minProfit: 20, minRoi: 0, sell
 function cleanConfig(c) {
   c = c || {};
   return {
-    cats: Array.isArray(c.cats) ? c.cats.filter((x) => x && /^\d+$/.test(String(x.id))).slice(0, 15).map((x) => ({ id: String(x.id), name: String(x.name || "").slice(0, 80) })) : [],
+    // off: kept in your list but not searched, so eBay calls go to the categories you've ticked
+    cats: Array.isArray(c.cats) ? c.cats.filter((x) => x && /^\d+$/.test(String(x.id))).slice(0, 15).map((x) => ({ id: String(x.id), name: String(x.name || "").slice(0, 80), off: !!x.off })) : [],
     rules: (() => { const r = { ...DEFAULT_RULES, ...(c.rules || {}) }; r.maxSpend = Math.max(0, Math.min(100000, +r.maxSpend || 0)); return r; })(),
     types: { bin: true, auction: true, misspelt: true, spares: false, ...(c.types || {}) },
     region: c.region === "any" ? "any" : "uk",
@@ -666,7 +667,9 @@ function paceSkip(used, now, cats, interval, sinceLast) {
 }
 async function sweep(env, manual) {
   await schema(env);
-  const cfg = cleanConfig(await kvGet(env, "config", null));
+  const cfg0 = cleanConfig(await kvGet(env, "config", null));
+  // only the ticked categories are searched (all of them if none are ticked)
+  const on = cfg0.cats.filter((c) => !c.off), cfg = { ...cfg0, cats: on.length ? on : cfg0.cats };
   const now = Date.now();
   const last = await kvGet(env, "lastRun", 0);
   if (!manual) {
@@ -759,13 +762,18 @@ async function sweep(env, manual) {
   const seen = [];
   for (const c of cats) {
     const calls = [];
-    if (cfg.types.bin || cfg.types.misspelt || cfg.types.spares) calls.push(["BIN", "buyingOptions:{FIXED_PRICE}", "newlyListed", 100]);
-    if (cfg.types.auction || cfg.types.spares) calls.push(["AUC", "buyingOptions:{AUCTION}", "endingSoonest", 50]);
+    // fewer categories ticked = each one searched deeper: 1–2 categories get up to 400 newest Buy It Nows and 200 ending auctions
+    const deep = cfg.cats.length <= 2 ? 2 : cfg.cats.length <= 4 ? 1 : 0;
+    if (cfg.types.bin || cfg.types.misspelt || cfg.types.spares) {
+      calls.push(["BIN", "buyingOptions:{FIXED_PRICE}", "newlyListed", deep ? 200 : 100, 0]);
+      if (deep === 2) calls.push(["BIN", "buyingOptions:{FIXED_PRICE}", "newlyListed", 200, 200]);
+    }
+    if (cfg.types.auction || cfg.types.spares) calls.push(["AUC", "buyingOptions:{AUCTION}", "endingSoonest", [50, 100, 200][deep], 0]);
     // every other scan: newly listed auctions too, for "Ending later" (high-start auctions days away)
-    if (cfg.types.auction && (manual || Math.floor(now / 600000) % 2 === 0)) calls.push(["AUC", "buyingOptions:{AUCTION}", "newlyListed", 50]);
-    for (const [type, f, sort, lim] of calls) {
+    if (cfg.types.auction && (manual || Math.floor(now / 600000) % 2 === 0)) calls.push(["AUC", "buyingOptions:{AUCTION}", "newlyListed", deep === 2 ? 100 : 50, 0]);
+    for (const [type, f, sort, lim, off] of calls) {
       try {
-        const d = await ebay(env, `/buy/browse/v1/item_summary/search?category_ids=${c.id}&limit=${lim}&sort=${sort}&filter=${encodeURIComponent([...base, f].join(","))}`);
+        const d = await ebay(env, `/buy/browse/v1/item_summary/search?category_ids=${c.id}&limit=${lim}${off ? "&offset=" + off : ""}&sort=${sort}&filter=${encodeURIComponent([...base, f].join(","))}`);
         for (const it of d.itemSummaries || []) {
           const id = it.legacyItemId || String(it.itemId || "").split("|")[1];
           if (!id) continue;
@@ -844,7 +852,7 @@ async function sweep(env, manual) {
   // 3b. also re-judge recent live listings from these categories that weren't in this run's results.
   // As sold history grows, listings we couldn't price yesterday can become deals today.
   const seenIds = new Set(ids);
-  const why = { noData: 0, risky: 0, fair: 0 }, close = [];
+  const why = { noData: 0, risky: 0, fair: 0, over: 0, lowScore: 0 }, close = [];
   const cands = seen.filter((s) => !s.learn);
   {
     const rowsAll = [];
@@ -944,7 +952,7 @@ async function sweep(env, manual) {
     if (m.spread > 0.9 && (s.matchQ || 0.5) < 0.8) { why.noData++; continue; } // prices all over the place: not confident
     const cost = s.price + s.ship + extra;
     // over your "most I'll spend on one item" (total incl. postage and buyer fee; for auctions, today's bid + postage)
-    if (r.maxSpend > 0 && (s.type === "AUC" ? s.price + s.ship : cost) > r.maxSpend) continue;
+    if (r.maxSpend > 0 && (s.type === "AUC" ? s.price + s.ship : cost) > r.maxSpend) { why.over++; continue; }
     if (cost < m.med * 0.4 && (s.seller.fb < 5 || s.seller.pct < 95 || SCAM_WORDS.test(s.title))) { hidden++; continue; }
     if (SCAM_WORDS.test(s.title)) { hidden++; continue; }
     // a Buy It Now at under a fifth of what it sells for is almost always a box, a photo, a code or a scam
@@ -952,7 +960,7 @@ async function sweep(env, manual) {
     const ri = m.post != null ? { ...r, post: m.post } : r; // postage out for this product, from the price book
     // the most to pay in total, never above your spending limit (so max bids and max offers stay under it too)
     const mp = r.maxSpend > 0 ? Math.min(maxPay(m.med, m.low, ri), r.maxSpend) : maxPay(m.med, m.low, ri);
-    if (mp <= 0) continue;
+    if (mp <= 0) { why.fair++; continue; }
     const out = ri.post + ri.pack;
     const profit = m.med - sellFee(m.med, r) - out - cost;
     const lowProfit = m.low - sellFee(m.low, r) - out - cost;
@@ -1014,7 +1022,7 @@ async function sweep(env, manual) {
     if (SPECIAL.test(s.title)) tags.push("Special version");
     if (slow) tags.push("Slow seller");
     if (m.trend === "falling") tags.push("Prices falling");
-    if (score < r.minScore) continue;
+    if (score < r.minScore) { why.lowScore++; continue; }
     (s.type === "AUC" && s.end - now > 12 * 3600e3 ? later : deals).push({
       ...s, kind: "deal", bpfOn: pf, cost: Math.round(cost * 100) / 100, extra: Math.round(extra * 100) / 100,
       profit: Math.round(profit * 100) / 100, lowProfit: Math.round(lowProfit * 100) / 100, roi: Math.round(roi),
@@ -1033,6 +1041,13 @@ async function sweep(env, manual) {
   }
   report.hidden = hidden;
   report.why = { ...why, judged: cands.length };
+  // today's running totals, so the app can explain "why only N deals?" over the whole day, not just one check
+  try {
+    const wd = await kvGet(env, "whyDay", null), t = wd && wd.d === today() ? wd : { d: today(), scans: 0, judged: 0, noData: 0, risky: 0, fair: 0, over: 0, lowScore: 0, hidden: 0, deals: 0 };
+    t.scans++; t.judged += cands.length; t.hidden += hidden; t.deals += deals.length;
+    for (const k of Object.keys(why)) t[k] = (t[k] || 0) + why[k];
+    await kvSet(env, "whyDay", t);
+  } catch (e) {}
   // ending later: cheap high-start auctions with days left. Shown with a Follow button, never alerted
   try {
     const keep = new Set(cands.map((s) => s.id)), mk = (d) => ({ id: d.id, collect: d.collect, where: d.where, title: d.title, img: d.img, url: d.url, cond: d.cond, cat: d.cat, catName: d.catName, type: "AUC",
@@ -1390,7 +1405,7 @@ export default {
           const deals = (rows.results || []).map((r) => ({ ...JSON.parse(r.data), found: r.created }));
           const lc = await kvGet(env, "learnCats", { cats: [] });
           const cnt = (await kvGet(env, "learnedCounts", null)) || (await refreshLearned(env));
-          return json({ deals, report: await kvGet(env, "lastReport", null), learned: cnt.byCat, close: await kvGet(env, "close", []), later: await kvGet(env, "later", []), aucLearn: await kvGet(env, "aucLearn", {}), learning: { cats: lc.cats.length, sales: cnt.total }, lastCrash: await kvGet(env, "lastCrash", null) });
+          return json({ deals, report: await kvGet(env, "lastReport", null), learned: cnt.byCat, close: await kvGet(env, "close", []), later: await kvGet(env, "later", []), aucLearn: await kvGet(env, "aucLearn", {}), learning: { cats: lc.cats.length, sales: cnt.total }, lastCrash: await kvGet(env, "lastCrash", null), whyDay: await kvGet(env, "whyDay", null) });
         }
         if (P("check")) {
           const id = String(P("check")).replace(/\D/g, "");
@@ -1432,7 +1447,9 @@ export default {
         if (P("prices")) {
           await ensureSrc(env);
           const rows = await env.DB.prepare("SELECT pkey, label, q, avg, st, post, trend, at, src, n, lo, hi, spd, sdays, sn, act, act_at FROM prices ORDER BY at DESC LIMIT 3000").all();
-          return json({ prices: (rows.results || []).map((r) => ({ ...r, url: lookupUrl(r.q || ""), fresh: Date.now() - r.at < BOOK_DAYS * DAY, speed: speedOf(r, Date.now()) })) });
+          const fc = await kvGet(env, "fillCats", {}), catOf = {};
+          for (const c in fc) for (const k in (fc[c].k || {})) if (!catOf[k]) catOf[k] = fc[c].name || "";
+          return json({ prices: (rows.results || []).map((r) => ({ ...r, cat: catOf[r.pkey] || "", url: lookupUrl(r.q || ""), fresh: Date.now() - r.at < BOOK_DAYS * DAY, speed: speedOf(r, Date.now()) })) });
         }
         if (P("unprice")) {
           await env.DB.prepare("DELETE FROM prices WHERE pkey=?").bind(String(P("unprice"))).run();

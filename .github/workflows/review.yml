@@ -38,8 +38,12 @@ jobs:
           printf 'name = "flipscout-review"\ncompatibility_date = "2024-09-23"\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "flipscout-db"\ndatabase_id = "%s"\n' "$DB" > wrangler.toml
           wrangler d1 execute flipscout-db --remote --json --command "$(cat query.sql)" > out.json
           node -e 'const r=JSON.parse(require("fs").readFileSync("out.json","utf8"));console.log("Rows returned:",(r[0]&&r[0].results||[]).length)'
-      - uses: actions/upload-artifact@v4
-        with:
-          name: review
-          path: out.json
-          retention-days: 1
+      # results are passed back as compressed notes on the run (readable through GitHub's API), not stored in the project
+      - name: Hand results back
+        run: |
+          node -e '
+            const z=require("zlib"),fs=require("fs");
+            const b=z.gzipSync(fs.readFileSync("out.json")).toString("base64"),N=60000,parts=Math.ceil(b.length/N);
+            if(parts>10){console.log("::error::Result too big ("+parts+" parts). Narrow the query.");process.exit(1)}
+            for(let i=0;i<parts;i++)console.log("::notice title=part "+(i+1)+" of "+parts+"::"+b.slice(i*N,(i+1)*N));
+          '

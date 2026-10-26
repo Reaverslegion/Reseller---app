@@ -619,7 +619,8 @@ function cleanConfig(c) {
     types: { bin: true, auction: true, misspelt: true, spares: false, ...(c.types || {}) },
     region: c.region === "any" ? "any" : "uk",
     alerts: c.alerts !== false,
-    interval: [5, 10, 15, 30, 60].includes(+c.interval) ? +c.interval : 10,
+    // 0 = automatic: every 5 minutes when 1–2 categories are ticked (deep search), every 10 otherwise
+    interval: [0, 5, 10, 15, 30, 60].includes(+c.interval) ? +c.interval : 0,
     paused: !!c.paused,
     // quiet hours: no phone alerts between these UK hours (e.g. 23 to 7). Hunting carries on
     quiet: c.quiet && c.quiet.on ? { on: true, from: Math.max(0, Math.min(23, +c.quiet.from || 0)), to: Math.max(0, Math.min(23, +c.quiet.to || 0)) } : { on: false, from: 23, to: 7 },
@@ -657,6 +658,8 @@ async function weeklyExport(env) {
   const old = (list.keys || []).map((k) => k.name).sort().slice(0, -4);
   for (const k of old) await env.BACKUP.delete(k);
 }
+// automatic scan timing: a focused search (1–2 categories) is cheap in eBay calls, so it can run every 5 minutes
+const autoInterval = (ticked) => (ticked <= 2 ? 5 : 10);
 // should this scheduled scan wait, to keep eBay calls within the day? used = calls so far today, sinceLast = ms since last scan
 function paceSkip(used, now, cats, interval, sinceLast) {
   const left = EBAY_DAILY * 0.97 - used, d = new Date(now), minsLeft = 1440 - (d.getUTCHours() * 60 + d.getUTCMinutes()), perScan = Math.min(cats, 8) * 3 + 10;
@@ -670,6 +673,7 @@ async function sweep(env, manual) {
   const cfg0 = cleanConfig(await kvGet(env, "config", null));
   // only the ticked categories are searched (all of them if none are ticked)
   const on = cfg0.cats.filter((c) => !c.off), cfg = { ...cfg0, cats: on.length ? on : cfg0.cats };
+  if (!cfg.interval) cfg.interval = autoInterval(cfg.cats.length);
   const now = Date.now();
   const last = await kvGet(env, "lastRun", 0);
   if (!manual) {
@@ -1041,6 +1045,7 @@ async function sweep(env, manual) {
   }
   report.hidden = hidden;
   report.why = { ...why, judged: cands.length };
+  report.seen = seen.length;
   // today's running totals, so the app can explain "why only N deals?" over the whole day, not just one check
   try {
     const wd = await kvGet(env, "whyDay", null), t = wd && wd.d === today() ? wd : { d: today(), scans: 0, judged: 0, noData: 0, risky: 0, fair: 0, over: 0, lowScore: 0, hidden: 0, deals: 0 };

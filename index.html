@@ -26,7 +26,7 @@ button,.card[role=button]{transition:transform var(--ease),opacity var(--ease)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 html,body{background:var(--bg)}
 body{margin:0;color:var(--tx);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:calc(84px + env(safe-area-inset-bottom))}
-header{display:flex;align-items:center;gap:10px;padding:14px 16px 8px;max-width:680px;margin:auto}
+header{display:flex;align-items:center;gap:10px;padding:8px 16px 4px;max-width:680px;margin:auto}
 /* light mode: navy brand bar behind the logo (the logo's colours are made for navy) */
 .brandbar{background:var(--brandbar,transparent)}
 #pick{position:fixed;inset:0;z-index:60}.pk-bg{position:absolute;inset:0;background:rgba(5,10,25,.55)}
@@ -354,7 +354,7 @@ function vAdmin(){if(!S.set.admin)return`<div class="card">Admin tools are off.<
   const seen=new Set();ADMC=[...STARTER.map(([id,name])=>({id,name})),...H().cats].filter(c=>!seen.has(c.id)&&seen.add(c.id));
   return`<h2>Admin tools</h2><div class="mu" style="margin:-6px 4px 12px">Hidden from customers. Tap the version in Menu 7 times to hide it again.</div>
   ${connected()?`<div class="card"><b>Scan service</b><div class="mu">How often FlipScout searches eBay. Every search uses some of eBay's 5,000 daily calls.</div>
-   <label for="hi">Check every</label><select id="hi" onchange="H().interval=+this.value;save();pushConfig()">${[5,10,15,30,60].map(m=>`<option value="${m}"${H().interval===m?" selected":""}>${m} minutes</option>`).join("")}</select>
+   <label for="hi">Check every</label><select id="hi" onchange="H().interval=+this.value;save();pushConfig()">${[0,5,10,15,30,60].map(m=>`<option value="${m}"${(+H().interval||0)===m?" selected":""}>${m?m+" minutes":"Automatic (5 min focused, 10 min otherwise)"}</option>`).join("")}</select>
    <label class="chkrow" style="min-height:44px"><input type="checkbox" ${H().paused?"checked":""} onchange="H().paused=this.checked;save();pushConfig();render()"><span>Pause hunting (stops all searches and followed-listing checks)</span></label>
    <button onclick="huntNow()" ${HD.busy?"disabled":""}>${HD.busy?"Checking…":"Scan now"}</button>
    ${HD.crash&&Date.now()-HD.crash.at<48*36e5?`<div class="hint warn">Last problem, ${ago(HD.crash.at)} (${esc(HD.crash.where||"scan")}): ${esc(HD.crash.msg||"")}</div>`:""}</div>${connCard()}
@@ -807,7 +807,7 @@ function vScan(){
 }
 
 /* ---------- HUNTING (Today's Deals, Following, My categories, alerts) ---------- */
-const HDEF={cats:[],types:{bin:true,auction:true,misspelt:true,spares:false},alerts:false,interval:10,alertScore:70,minScore:40,post:5,pack:1,bpf:true,paused:false,quiet:{on:false,from:23,to:7}};
+const HDEF={cats:[],types:{bin:true,auction:true,misspelt:true,spares:false},alerts:false,interval:0,alertScore:70,minScore:40,post:5,pack:1,bpf:true,paused:false,quiet:{on:false,from:23,to:7}};
 let HD={cat:(()=>{try{const v=localStorage.getItem("flipscout_dcat")||"";return/^\d+$/.test(v)?v:""}catch(e){return""}})(),deals:null,report:null,learned:[],busy:false,err:"",filter:"all",at:0,q:"",sort:(()=>{try{const v=localStorage.getItem("flipscout_sort");return!v||(v==="score"&&!localStorage.getItem("flipscout_sort2"))?"now":v}catch(e){return"now"}})()},FL={list:null,busy:false,err:""},DV=null;
 const H=()=>{S.hunt={...HDEF,...(S.hunt||{}),types:{...HDEF.types,...((S.hunt||{}).types||{})}};return S.hunt};
 const api=(q,body)=>kfetch(S.set.url,S.set.key,q,body!==undefined?{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(body)}:{}).then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok||d.error)throw new Error(d.error||("error "+r.status));return d});
@@ -905,6 +905,7 @@ function urgency(d){const now=Date.now();if(d.type==="AUC"&&d.end){const m=(d.en
 function rightNow(d){const p=likelyProfit(d),mx=d.maxItem!=null?d.maxItem:d.maxBid,win=d.type==="AUC"&&mx!=null&&likelyEnd(d)>mx?0.35:1;return Math.max(0,p)*(0.4+0.6*(d.score||50)/100)*urgency(d)*win}
 // deals that turned up since you last looked get a "New" mark (remembered on this phone)
 try{["flipscout_autofill","flipscout_autofill_log","flipscout_autofill_lock","flipscout_selftest"].forEach(k=>localStorage.removeItem(k))}catch(e){}
+try{if(!localStorage.getItem("flipscout_auto_iv")){localStorage.setItem("flipscout_auto_iv","1");if(S&&S.hunt){S.hunt.interval=0;setTimeout(()=>{try{save();pushConfig()}catch(e){}},3000)}}}catch(e){}
 const SEENKEY="flipscout_seen_at";let SEENPREV=(()=>{try{return +localStorage.getItem(SEENKEY)||0}catch(e){return 0}})(),SEENSAVED=false;
 const isNew=d=>SEENPREV>0&&(d.found||0)>SEENPREV;
 function markSeen(){if(SEENSAVED)return;SEENSAVED=true;try{localStorage.setItem(SEENKEY,String(Date.now()))}catch(e){}}
@@ -999,10 +1000,12 @@ function vHunt(){
   if(!h.cats.length)return`<h2>Today's deals</h2><div class="card empty">${I.bolt}<b>Pick what to hunt</b><div class="mu">Choose a few eBay categories you know, like Graphics Cards or Consoles. FlipScout checks them every few minutes and shows listings priced below what they sell for.</div><button onclick="addStarter()">Start with popular categories</button><button class="s" style="margin-top:8px" onclick="go('cats')">Choose my own</button></div>`;
   if(HD.deals===null&&!HD.busy&&!HD.err)setTimeout(loadDeals,0);
   const F2=fDeals(),base=F2[HD.filter]||F2.all,qq=HD.q.trim().toLowerCase(),list=sortDeals(qq?base.filter(d=>String(d.title).toLowerCase().includes(qq)):base),rep=HD.report||{},high=F2.all.filter(d=>d.score>=70).length,top=F2.all.reduce((t,d)=>Math.max(t,shownProfit(d)||0),0);
-  return`<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin:6px 4px 12px"><div><h2 style="margin:0">Today's deals</h2><div class="mu" style="font-size:14px"><button class="link" style="margin:0;min-height:0;padding:0;font-weight:700" onclick="go('cats')">${h.cats.length} categor${h.cats.length>1?"ies":"y"} ›</button> · ${rep.at?"checked "+ago(rep.at):"not checked yet"}${S.set.admin&&h.paused?" · <span class='warn'>paused</span>":""}</div></div>
-   ${S.set.admin?`<button class="s sm" style="white-space:nowrap" onclick="huntNow()" ${HD.busy?"disabled":""}>${HD.busy?"Checking…":"Scan now"}</button>`:""}</div>
+  // one compact line: the count and best profit, when it last scanned, and Scan now (categories live in the Searching box below)
+  return`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 4px 10px"><div style="min-width:0">
+   <div style="font-size:16px">${F2.all.length?`<b>${F2.all.length} deal${F2.all.length>1?"s":""}</b>${(()=>{const k=F2.all.filter(isNew).length;return k?` · <b class="newtx">${k} new</b>`:""})()} · <span style="white-space:nowrap">best <b class="ok">+${gbp(top)}</b></span>`:`<b>Today's deals</b>`}</div>
+   <div class="mu" style="font-size:13px">${rep.at?"Scanned "+ago(rep.at)+(rep.seen?` · ${fmtN(rep.seen)} listings`:""):"Not scanned yet"}${S.set.admin&&h.paused?" · <span class='warn'>paused</span>":""}</div></div>
+   ${S.set.admin?`<button class="s sm" style="white-space:nowrap;flex:none" onclick="huntNow()" ${HD.busy?"disabled":""}>${HD.busy?"Checking…":"Scan now"}</button>`:""}</div>
   ${HD.err?`<div class="card bad" style="font-size:15px">${esc(HD.err)}</div>`:""}
-  ${F2.all.length?`<div style="margin:-4px 4px 10px;font-size:15px"><b>${F2.all.length} deal${F2.all.length>1?"s":""}</b>${(()=>{const k=F2.all.filter(isNew).length;return k?` · <b class="newtx">${k} new</b>`:""})()}${high&&high<F2.all.length?` · ${high} strong`:""} · <span style="white-space:nowrap">best <b class="ok">+${gbp(top)}</b></span></div>`:""}
   <div style="position:relative;margin-bottom:6px"><div id="chips" onscroll="const e=this,h=$('chipsmore');if(h)h.style.opacity=e.scrollLeft+e.clientWidth>=e.scrollWidth-4?0:1" style="display:flex;gap:8px;overflow-x:auto;padding:0 28px 6px 0">${FILTERS.filter(f=>(f[0]!=="spares"||h.types.spares)&&(f[0]!=="guess"||F2.guess.length)).map(f=>`<button class="${HD.filter===f[0]?"":"s"}" style="margin:0;min-height:36px;padding:4px 13px;border-radius:99px;white-space:nowrap;flex:none;font-size:15px" onclick="HD.filter='${f[0]}';render()">${f[1]} ${F2[f[0]].length}</button>`).join("")}</div><div id="chipsmore" aria-hidden="true" style="position:absolute;right:0;top:0;bottom:6px;width:44px;pointer-events:none;background:linear-gradient(90deg,transparent,var(--bg) 70%);display:flex;align-items:center;justify-content:flex-end;color:var(--mu);font-size:22px;font-weight:700;transition:opacity .2s">›</div></div>
   <div class="tbar">${spendRow()}${scanRow()}</div>${(HD.deals||[]).length?`<div class="dctl" style="margin:0 0 10px">${HD.sOpen||HD.q?`<div style="margin-bottom:6px"><input id="dq" type="search" aria-label="Search deals" enterkeyhint="search" placeholder="Search deals, e.g. rtx 3070" value="${esc(HD.q)}" oninput="HD.q=this.value;clearTimeout(window._dqT);window._dqT=setTimeout(()=>{render();const e=$('dq');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length)}},250)"></div>`:""}
    <div style="display:flex;gap:8px"><div style="flex:1;min-width:0"><select id="dc" aria-label="Category" onchange="setDcat(this.value)"><option value="">All (${(HD.deals||[]).filter(d=>!HIDE.includes(d.id)&&paysOff(d)).length})</option>${(()=>{const m={},nm={};(HD.deals||[]).filter(d=>!HIDE.includes(d.id)&&paysOff(d)).forEach(d=>{const k=String(d.cat||"");if(!k)return;m[k]=(m[k]||0)+1;nm[k]=nm[k]||d.catName||"Other"});

@@ -969,7 +969,7 @@ function dealCard(d,i){
    <div class="mu" style="font-size:13px">${d.src==="book"?(d.fill?`From ${d.bookN?fmtN(d.bookN)+" sales":"your category check"}`:"From sold prices you checked"):d.src==="sold"?`From ${d.n} sale${d.n===1?"":"s"} in 30 days`:`<span class="warn">Guess from ${d.n} asking prices, no sales yet</span>`} · estimate</div></div>`}
   ${sp?"":speedLine(d)}
   ${(()=>{const tg=(d.tags||[]).filter(t=>!/^\d+ bids?$|^No bids yet$|^Price from (category check|price book)$/.test(t));return tagChips(tg)})()}
-  <div style="display:flex;gap:8px;margin-top:10px">${btn("s dbtn","Details",`openDeal(${i})`,"See full details")}${sp?"":isFollowed(d.id)?btn("s dbtn","✓ Following","go('follow')","Following this deal","color:var(--ok)"):btn("dbtn","Follow",`quickFollow(${i})`,"Follow this deal and get an alert")}${btn("s dbtn quiet","Hide",`hideDeal(${esc(JSON.stringify(d.id))})`,"Hide this deal")}${btn("s dbtn quiet flagb","⚑",`flagTap(this,${esc(JSON.stringify(d.id))})`,"Flag this deal as wrong (tap twice)","min-width:48px;padding:6px 12px")}</div>
+  <div style="display:flex;gap:8px;margin-top:10px">${btn("s dbtn","Details",`openDeal(${i})`,"See full details")}${sp?"":isFollowed(d.id)?btn("s dbtn","✓ Following","go('follow')","Following this deal","color:var(--ok)"):btn("dbtn","Follow",`quickFollow(${i})`,"Follow this deal and get an alert")}${btn("s dbtn quiet","Hide",`hideDeal(${esc(JSON.stringify(d.id))})`,"Hide this deal")}${btn("s dbtn quiet flagb","⚑",`flagAsk(${esc(JSON.stringify(d.id))})`,"Flag this deal as wrong","min-width:48px;padding:6px 12px")}</div>
   </div></div>`}
 // The money on a deal card, most important first: estimated profit, then what you pay and what it sells for.
 // Profit = typical sale price − eBay selling fee − your postage out and packing − (price + postage in + buyer protection fee, if switched on)
@@ -999,19 +999,16 @@ let HIDE=(()=>{try{return JSON.parse(localStorage.getItem("flipscout_hidden")||"
 addEventListener("scroll",()=>{const b=$("totop");if(b)b.classList.toggle("on",scrollY>900&&!document.querySelector(".actbar"))},{passive:true});
 /* ---------- FLAG: one tap tells FlipScout it got a deal wrong. Hidden for this user only; a snapshot goes to the Scan service ---------- */
 let FLT=null;
-function flagDeal(id,fromPage){HIDE=[id,...HIDE.filter(x=>x!==id)].slice(0,500);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}
-  api("flag=1",{id}).catch(()=>{});
+function flagDeal(id,fromPage,why){HIDE=[id,...HIDE.filter(x=>x!==id)].slice(0,500);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}
+  api("flag=1",{id,reason:why||null}).catch(()=>{});$("flagbar").style.display="none";
   if(fromPage&&tab==="deal"){prev.pop();tab="deals";render.restore=true}render();
-  const b=$("flagbar"),R=[["model","Wrong model"],["price","Bad price"],["faulty","Faulty / parts"],["scam","Scam / fake"]],q=JSON.stringify(id).replace(/"/g,"&quot;");
-  b.innerHTML=`<div>⚑ Flagged, thanks. Hidden for you. What was wrong? <span style="opacity:.7">(optional)</span></div><div class="fr">${R.map(([k,l])=>`<button onclick="flagWhy(${q},'${k}')">${l}</button>`).join("")}<button class="u" onclick="flagUndo(${q})">Undo</button></div>`;
-  b.style.display="block";clearTimeout(FLT);FLT=setTimeout(()=>{b.style.display="none"},9000)}
-// two taps to flag from the list, so a thumb scrolling past can't flag by accident
-function flagTap(el,id){if(el.dataset.armed){clearTimeout(el._t);flagDeal(id);return}
-  el.dataset.armed="1";el.textContent="Flag?";el.style.color="var(--warn)";el.style.borderColor="var(--warn)";
-  el._t=setTimeout(()=>{delete el.dataset.armed;el.textContent="⚑";el.style.color="";el.style.borderColor=""},3000)}
+  toast("⚑ Flagged, thanks. Hidden for you.","Undo",()=>flagUndo(id))}
+// tapping ⚑ asks what's wrong; choosing a reason IS the flag (an accidental tap just shows the question, Cancel closes it)
+function flagAsk(id,fromPage){const b=$("flagbar"),q=JSON.stringify(id).replace(/"/g,"&quot;"),R=[["model","Wrong model"],["price","Bad price"],["faulty","Faulty / parts"],["scam","Scam / fake"],["other","Something else"]];
+  b.innerHTML=`<div style="font-weight:700">⚑ What's wrong with this deal?</div><div style="color:rgba(255,255,255,.7);font-size:13px">It'll be hidden for you and sent to be checked.</div><div class="fr">${R.map(([k,l])=>`<button onclick="flagDeal(${q},${fromPage?1:0},'${k}')">${l}</button>`).join("")}<button class="u" onclick="$('flagbar').style.display='none'">Cancel</button></div>`;
+  b.style.display="block";clearTimeout(FLT);FLT=setTimeout(()=>{b.style.display="none"},15000)}
 function unflagAdmin(id){HIDE=HIDE.filter(x=>x!==id);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}
   if(FLAGS&&FLAGS.flags)FLAGS.flags=FLAGS.flags.filter(x=>x.id!==id);api("unflag="+encodeURIComponent(id)).catch(()=>{});toast("Flag removed. The deal is back in your list if it's still live.");render()}
-function flagWhy(id,why){api("flag=1",{id,reason:why}).catch(()=>{});$("flagbar").style.display="none";toast("Thanks. That helps fix it.")}
 function flagUndo(id){HIDE=HIDE.filter(x=>x!==id);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}api("unflag="+encodeURIComponent(id)).catch(()=>{});$("flagbar").style.display="none";render()}
 function hideDeal(id){HIDE=[id,...HIDE.filter(x=>x!==id)].slice(0,500);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}render();toast("Hidden.","Undo",()=>{HIDE=HIDE.filter(x=>x!==id);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}render()})}
 // listings are "AUC" (auction) or "BIN" (Buy It Now); older or outside data may say FIXED, FIXED_PRICE or AUCTION
@@ -1241,7 +1238,7 @@ function vDeal(){
   return head+`<div class="card"><b style="font-size:17px">The money</b>
    ${priceRow(d,1)}${moneyLines(d)}</div>
   ${speedCard(d)}${trustCard(d)}${aboutCard(d)}
-  <div class="hint" style="margin:0 4px 90px">Always read the listing before you pay.<br><button class="link" style="margin:8px 0 0;min-height:44px;padding:0;color:var(--mu)" onclick="flagDeal(${esc(JSON.stringify(d.id))},1)">⚑ Flag this deal: something about it is wrong</button></div>
+  <div class="hint" style="margin:0 4px 90px">Always read the listing before you pay.<br><button class="link" style="margin:8px 0 0;min-height:44px;padding:0;color:var(--mu)" onclick="flagAsk(${esc(JSON.stringify(d.id))},1)">⚑ Flag this deal: something about it is wrong</button></div>
   <div class="actbar"><a href="${esc(ukUrl(d.url))}" target="_blank" rel="noopener" style="flex:1.6;display:flex"><button style="margin:0;flex:1">${d.type==="AUC"?"Bid on eBay":"Buy on eBay · "+gbp(d.price+d.ship)}</button></a>${isFollowed(d.id)?`<button class="s" style="margin:0;flex:1;color:var(--ok)" onclick="go('follow')">✓ Following</button>`:`<button class="s" style="margin:0;flex:1" onclick="followSheet()">Follow</button>`}</div>`;
 }
 /* ---------- PRICES (price book + the old Check, in one place) ---------- */

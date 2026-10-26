@@ -932,7 +932,7 @@ const TAGS={"New listing":["Just listed","Listed in the last hour, so few people
  "Price from price book":["✓ You checked this price","The sells-for price comes from eBay sold prices you checked and saved."],
  "Special version":["Special version – check prices","Water-cooled, blower, low-profile, mini, OEM and similar versions can sell for more or less than the standard model. Check sold prices for this exact version before buying."],
  "Price from category check":["✓ From your category check","The sells-for price comes from recent eBay sales collected when you filled prices for this category."],
- "Slow seller":["Slow to sell","These don't sell often, so it may take a while to resell."],
+ "Slow seller":["Slow to sell","These don't sell often, so it may take a while to resell."],"Few sales behind the price":["Few sales","The sell price comes from fewer than 10 sales, so it's less certain. Check sold prices before buying."],
  "Prices falling":["Prices dropping","Sold prices for this have been going down lately."]};
 const tagOf=t=>TAGS[t]||(/^Ships from /.test(t)?[t,"The item is posted from outside the UK, so delivery may be slow and you may pay import charges."]:[t,""]);
 function tagSheet(t){const[l,m]=tagOf(t);openSheet(`<h2 style="margin-top:0">${esc(l)}</h2><div style="font-size:16px">${esc(m)}</div><div class="btns"><button onclick="closeSheet()">Got it</button></div>`)}

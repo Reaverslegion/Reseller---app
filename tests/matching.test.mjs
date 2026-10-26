@@ -34,6 +34,8 @@ t("a size alone never groups different products (all '32GB' tablets were priced 
   assert.equal(key("Samsung Galaxy Tab a 32GB Black", ...TAB), null);
   assert.equal(key("Nintendo Wii U 32GB Black Console Only PAL Tested Reads Discs", ...CON), null);
   assert.equal(key("Xteink X3 White 16GB with Crosspoint Firmware", ...TAB), null);
+  // "10th gen" alone was grouping Kindles with every other 10th-generation product
+  assert.equal(key("Kindle paper white 10th gen", ...TAB), null);
 });
 t("risky and multi-size listings are kept out", () => {
   assert.ok(W.RISK_WORDS.test("Samsung Galaxy A40 - 64GB - Unlocked - fully working with small damage"));

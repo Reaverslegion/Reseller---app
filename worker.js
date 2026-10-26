@@ -134,7 +134,8 @@ function maxPay(med, low, r) {
 /* ---------------- grouping comparable items (by spec, not brand) ---------------- */
 const MODS = new Set(["ti", "super", "pro", "max", "plus", "mini", "lite", "oled", "xl", "ultra", "slim", "air", "se", "disc", "digital", "fe"]);
 function condBucket(id) { const n = +id || 0; if (n >= 7000) return "parts"; if (n && n < 2000) return "new"; return "used"; }
-const UNIT_TOKEN = /^\d+(?:\.\d+)?(gb|tb|mb|mah|hz|khz|mhz|ghz|w|v|mm|cm|m|in|inch|inches|p|k|mp|fps|ms|rpm|pcs|pc|pack|x|g|kg|ml|l)$/;
+// sizes, units and generations ("32gb", "144hz", "10th") — none of them names a product on its own
+const UNIT_TOKEN = /^\d+(?:\.\d+)?(gb|tb|mb|mah|hz|khz|mhz|ghz|w|v|mm|cm|m|in|inch|inches|p|k|mp|fps|ms|rpm|pcs|pc|pack|x|g|kg|ml|l|st|nd|rd|th)$/;
 function sig(title) {
   const t = String(title || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\b([a-z]{2,})\s+(\d{1,2})\b(?!\s*(gb|tb|mb|inch|in|cm|mm|pcs|pack|x)\b)/g, "$1$2").split(/\s+/).filter(Boolean);
   const keep = t.filter((w) => (/\d/.test(w) && w.length >= 2 && !/^\d{1,2}$/.test(w) && !/^\d+(x|pcs|pc|pack)$/.test(w) && !/^x\d+$/.test(w)) || MODS.has(w));
@@ -920,6 +921,8 @@ async function sweep(env, manual) {
       const post = b.post != null ? b.post : null;
       const med = b.avg + (post || 0); // what buyers pay in total, like our own sold prices
       let ev = now - b.at < 7 * DAY ? 1 : 0.85; // fresher is better
+      // more sales behind the price = more trust: 5 sales is a hint, 30+ is solid evidence
+      const bn = b.n || 0; ev *= bn >= 30 ? 1 : bn >= 15 ? 0.9 : bn >= 10 ? 0.8 : 0.6;
       if (sold.length >= 3) { const off = Math.abs(median(sold) - med) / med; ev *= off < 0.15 ? 1 : off < 0.3 ? 0.85 : 0.65; } // agrees with what we've seen sell?
       // the cheap end: the real 25th percentile when the fill recorded it (its "sells for" is already careful), else 15% under
       let low = b.lo != null ? Math.min(b.lo + (post || 0), med) : med * 0.85;
@@ -1035,6 +1038,7 @@ async function sweep(env, manual) {
     let score = Math.round(25 * ev + 20 * match + 15 * sel + 20 * mar + 10 * comp + 10 * dem);
     if (m.src === "asking") { score = Math.min(score, r.alertScore - 1, 69); tags.push("Price not confirmed by sales"); }
     if (m.src === "book") tags.push(m.fill ? "Price from category check" : "Price from price book");
+    if (m.src === "book" && m.bookN && m.bookN < 10) tags.push("Few sales behind the price");
     if (SPECIAL.test(s.title)) tags.push("Special version");
     if (slow) tags.push("Slow seller");
     if (m.trend === "falling") tags.push("Prices falling");

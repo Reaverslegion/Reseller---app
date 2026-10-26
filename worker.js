@@ -636,6 +636,23 @@ async function closing(env) {
 }
 
 /* ---------------- the hunt ---------------- */
+// Categories whose product matching has been checked by hand on real titles (see docs/ENGINEERING_LOG.md).
+// Deals from any other category are shown as "Not verified yet": scored no higher than Medium and never alerted,
+// until a sample of its titles has been checked and the category is added here with the date.
+const VERIFIED_CATS = {
+  "27386": "2026-10-26", // Graphics/Video Cards
+  "139971": "2026-10-26", // Video Game Consoles
+  "9355": "2026-10-26", // Mobile & Smart Phones
+  "171485": "2026-10-26", // Tablets & eBook Readers
+  "177": "2026-10-26", // PC Laptops & Netbooks
+  "175672": "2026-10-26", // Laptops & Netbooks
+  "179": "2026-10-26", // PC Desktops & All-in-Ones
+  "164": "2026-10-26", // CPUs/Processors
+  "170083": "2026-10-26", // Memory (RAM)
+  "175669": "2026-10-26", // Solid State Drives
+  "80053": "2026-10-26", // Monitors
+  "15709": "2026-10-26", // Trainers
+};
 const DEFAULT_RULES = { cheap: true, maxSpend: 0, minProfit: 20, minRoi: 0, seller: "business", feePct: 12.8, feeFixed: 0.4, post: 5, pack: 1, bpf: true, alertScore: 70, minScore: 40 };
 function cleanConfig(c) {
   c = c || {};
@@ -1071,6 +1088,8 @@ async function sweep(env, manual) {
       : speed && speed.band ? ({ fast: 1, normal: 0.7, slow: 0.35, none: 0.6 })[speed.band] : 0.6;
     let score = Math.round(25 * ev + 20 * match + 15 * sel + 20 * mar + 10 * comp + 10 * dem);
     if (m.src === "asking") { score = Math.min(score, r.alertScore - 1, 69); tags.push("Price not confirmed by sales"); }
+    const verified = !!VERIFIED_CATS[String(s.cat)];
+    if (!verified) { score = Math.min(score, r.alertScore - 1, 69); tags.push("Not verified yet"); }
     if (m.src === "book") tags.push(m.fill ? "Price from category check" : "Price from price book");
     if (m.src === "book" && m.bookN && m.bookN < 10) tags.push("Few sales behind the price");
     if (SPECIAL.test(s.title)) tags.push("Special version");
@@ -1193,7 +1212,7 @@ async function sweep(env, manual) {
     const rows = await D.prepare("SELECT id, data FROM deals WHERE notified=0 AND score>=? ORDER BY score DESC LIMIT 5").bind(r.alertScore).all();
     for (const row of rows.results || []) {
       const d = JSON.parse(row.data);
-      if (d.kind !== "deal") continue;
+      if (d.kind !== "deal" || !VERIFIED_CATS[String(d.cat)]) continue; // never alert on unchecked categories
       const v = await checkLive(env, d.id);
       if (!v.live) continue; // sold or ended since we found it: no alert
       const msg = d.type === "AUC"
@@ -1460,7 +1479,7 @@ export default {
           const deals = (rows.results || []).map((r) => ({ ...JSON.parse(r.data), found: r.created }));
           const lc = await kvGet(env, "learnCats", { cats: [] });
           const cnt = (await kvGet(env, "learnedCounts", null)) || (await refreshLearned(env));
-          return json({ deals, report: await kvGet(env, "lastReport", null), learned: cnt.byCat, close: await kvGet(env, "close", []), later: await kvGet(env, "later", []), aucLearn: await kvGet(env, "aucLearn", {}), learning: { cats: lc.cats.length, sales: cnt.total }, lastCrash: await kvGet(env, "lastCrash", null), whyDay: await kvGet(env, "whyDay", null) });
+          return json({ deals, report: await kvGet(env, "lastReport", null), learned: cnt.byCat, close: await kvGet(env, "close", []), later: await kvGet(env, "later", []), aucLearn: await kvGet(env, "aucLearn", {}), learning: { cats: lc.cats.length, sales: cnt.total }, lastCrash: await kvGet(env, "lastCrash", null), whyDay: await kvGet(env, "whyDay", null), verified: Object.keys(VERIFIED_CATS) });
         }
         if (P("check")) {
           const id = String(P("check")).replace(/\D/g, "");

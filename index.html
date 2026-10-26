@@ -819,7 +819,7 @@ function pushConfig(now){clearTimeout(pcT);const go_=async()=>{if(!connected())r
   catch(e){toast("Couldn't save hunting settings: "+errText(e))}};
   if(now)return go_();pcT=setTimeout(go_,800)}
 async function loadDeals(){if(!connected()||HD.busy)return;HD.busy=true;HD.err="";
-  try{const d=await api("deals=1");HD.deals=(d.deals||[]).map(normType);HD.report=d.report;HD.learned=d.learned||[];HD.close=d.close||[];HD.later=(d.later||[]).map(normType);HD.aucLearn=d.aucLearn||{};HD.learning=d.learning||null;HD.crash=d.lastCrash||null;HD.whyDay=d.whyDay||null;HD.at=Date.now();markSeen()}catch(e){HD.err=errText(e)}
+  try{const d=await api("deals=1");HD.deals=(d.deals||[]).map(normType);HD.report=d.report;HD.learned=d.learned||[];HD.close=d.close||[];HD.later=(d.later||[]).map(normType);HD.aucLearn=d.aucLearn||{};HD.learning=d.learning||null;HD.crash=d.lastCrash||null;HD.whyDay=d.whyDay||null;HD.verified=d.verified||null;HD.at=Date.now();markSeen()}catch(e){HD.err=errText(e)}
   HD.busy=false;if(FL.list==null)loadFollows();if(tab==="deals"||tab==="cats")render()}
 async function huntNow(){if(HD.busy)return;if(!H().cats.length){go("cats");toast("Pick some categories first.");return}
   HD.busy=true;render();
@@ -932,11 +932,11 @@ const TAGS={"New listing":["Just listed","Listed in the last hour, so few people
  "Price from price book":["✓ You checked this price","The sells-for price comes from eBay sold prices you checked and saved."],
  "Special version":["Special version – check prices","Water-cooled, blower, low-profile, mini, OEM and similar versions can sell for more or less than the standard model. Check sold prices for this exact version before buying."],
  "Price from category check":["✓ From your category check","The sells-for price comes from recent eBay sales collected when you filled prices for this category."],
- "Slow seller":["Slow to sell","These don't sell often, so it may take a while to resell."],"Few sales behind the price":["Few sales","The sell price comes from fewer than 10 sales, so it's less certain. Check sold prices before buying."],
+ "Slow seller":["Slow to sell","These don't sell often, so it may take a while to resell."],"Not verified yet":["Not verified yet","FlipScout hasn't yet been checked on how well it recognises products in this category. Make sure it's the same model and check sold prices before buying. No alerts for these."],"Few sales behind the price":["Few sales","The sell price comes from fewer than 10 sales, so it's less certain. Check sold prices before buying."],
  "Prices falling":["Prices dropping","Sold prices for this have been going down lately."]};
 const tagOf=t=>TAGS[t]||(/^Ships from /.test(t)?[t,"The item is posted from outside the UK, so delivery may be slow and you may pay import charges."]:[t,""]);
 function tagSheet(t){const[l,m]=tagOf(t);openSheet(`<h2 style="margin-top:0">${esc(l)}</h2><div style="font-size:16px">${esc(m)}</div><div class="btns"><button onclick="closeSheet()">Got it</button></div>`)}
-const tagChips=tg=>tg.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">${tg.map(t=>`<button class="chip${/^Price from (price book|category check)$/.test(t)?" ok":/^Price not|^Prices falling|^Slow|^Ships|^Special/.test(t)?" warn":""}" style="margin:0;min-height:32px;cursor:pointer" onclick="event.stopPropagation();tagSheet(${esc(JSON.stringify(t))})">${esc(tagOf(t)[0])} ⓘ</button>`).join("")}</div>`:"";
+const tagChips=tg=>tg.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">${tg.map(t=>`<button class="chip${/^Price from (price book|category check)$/.test(t)?" ok":/^Price not|^Prices falling|^Slow|^Ships|^Special|^Not verified|^Few sales/.test(t)?" warn":""}" style="margin:0;min-height:32px;cursor:pointer" onclick="event.stopPropagation();tagSheet(${esc(JSON.stringify(t))})">${esc(tagOf(t)[0])} ⓘ</button>`).join("")}</div>`:"";
 function dealCard(d,i){
   const sp=d.kind==="spares",auc=d.type==="AUC";
   const hc=sp||auc?"var(--hdA)":"var(--hdB)",ht=sp||auc?"var(--onhdA)":"var(--onhdB)";
@@ -1057,8 +1057,8 @@ function scanRow(){const C=H().cats;if(!C.length)return"";const on=C.filter(c=>!
   return`<button class="tpill" onclick="scanSheet()" aria-label="Choose which categories to search"><small>Searching</small><span>${L.length===1?`<b>${esc(L[0].name)}</b>`:`<b>${L.length}</b> of ${C.length} categories`}</span></button>`}
 function scanSheet(){const C=H().cats;
   openSheet(`<h2 style="margin-top:0">What to search</h2><div class="mu">Tick the categories you want FlipScout to search. Fewer ticked means each one is searched deeper (up to 400 of the newest Buy It Nows when you tick 1 or 2), using the same eBay calls.</div>
-   <div style="margin-top:8px">${C.map((c,i)=>`<label class="chkrow" style="min-height:44px"><input type="checkbox" ${c.off?"":"checked"} onchange="scanTick(${i},this.checked)"><span>${esc(c.name)}</span></label>`).join("")}</div>
-   <div class="hint">Unticked categories stay in your list, so you can tick them again any time.</div>
+   <div style="margin-top:8px">${C.map((c,i)=>`<label class="chkrow" style="min-height:44px"><input type="checkbox" ${c.off?"":"checked"} onchange="scanTick(${i},this.checked)"><span>${esc(c.name)}${HD.verified&&!HD.verified.includes(String(c.id))?` <span class="warn" style="font-size:13px;font-weight:700">· not verified yet</span>`:""}</span></label>`).join("")}</div>
+   <div class="hint">Unticked categories stay in your list, so you can tick them again any time.${HD.verified&&C.some(c=>!HD.verified.includes(String(c.id)))?" <b>Not verified yet</b> means FlipScout's product matching hasn't been checked for that category: its deals show a warning, score no higher than Medium and never send alerts.":""}</div>
    <div class="btns"><button onclick="closeSheet();render()">Done</button></div>`)}
 function scanTick(i,on){const C=H().cats;if(!C[i])return;C[i].off=!on;if(C.every(c=>c.off)){C[i].off=false;toast("Keep at least one ticked.");scanSheet();return}save();pushConfig();toast("Saved. Takes effect on the next check.")}
 function spendSheet(){const m=+S.rules.maxPrice||0;

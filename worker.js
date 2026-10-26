@@ -134,13 +134,17 @@ function maxPay(med, low, r) {
 /* ---------------- grouping comparable items (by spec, not brand) ---------------- */
 const MODS = new Set(["ti", "super", "pro", "max", "plus", "mini", "lite", "oled", "xl", "ultra", "slim", "air", "se", "disc", "digital", "fe"]);
 function condBucket(id) { const n = +id || 0; if (n >= 7000) return "parts"; if (n && n < 2000) return "new"; return "used"; }
+const UNIT_TOKEN = /^\d+(?:\.\d+)?(gb|tb|mb|mah|hz|khz|mhz|ghz|w|v|mm|cm|m|in|inch|inches|p|k|mp|fps|ms|rpm|pcs|pc|pack|x|g|kg|ml|l)$/;
 function sig(title) {
   const t = String(title || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\b([a-z]{2,})\s+(\d{1,2})\b(?!\s*(gb|tb|mb|inch|in|cm|mm|pcs|pack|x)\b)/g, "$1$2").split(/\s+/).filter(Boolean);
   const keep = t.filter((w) => (/\d/.test(w) && w.length >= 2 && !/^\d{1,2}$/.test(w) && !/^\d+(x|pcs|pc|pack)$/.test(w) && !/^x\d+$/.test(w)) || MODS.has(w));
+  // sizes and units ("32gb", "144hz", "5000mah") say nothing about which product it is: without at least one real
+  // model code ("rvl001", "75192", "sm-x110"), titles can't be grouped (all "32GB" tablets were being priced together)
+  if (!keep.some((w) => /\d/.test(w) && !UNIT_TOKEN.test(w))) return "";
   return [...new Set(keep)].sort().join(" ");
 }
 const LAPTOP_RE = /\b(laptop|notebook|macbook|chromebook|thinkpad|elitebook|probook|latitude|ideapad|thinkbook|zenbook|vivobook|inspiron|vostro|surface laptop|galaxy book|ultrabook)\b/i;
-const NOT_A_CARD = /\b(laptop|notebook|desktop|tower|gaming pc|pc build|full pc|computer|ssd|hdd|ram|i[3579][\s-]?\d|ryzen|bundle|job ?lot|joblot|pair of|waterblock|water block|heatsink|backplate|fan|fans|cooler|bracket|riser|cable|box only|empty box)\b/i;
+const NOT_A_CARD = /\b(mobile|mxm|gpu chip|gpu module|bga|laptop|notebook|desktop|tower|gaming pc|pc build|full pc|computer|ssd|hdd|ram|i[3579][\s-]?\d|ryzen|bundle|job ?lot|joblot|pair of|waterblock|water block|heatsink|backplate|fan|fans|cooler|bracket|riser|cable|box only|empty box)\b/i;
 const MULTI_VRAM = new Set(["gtx 1060", "rtx 2060", "rtx 3050", "rtx 3060", "rtx 4060 ti", "rx 470", "rx 480", "rx 570", "rx 580", "rx 5500 xt", "rx 6500 xt"]);
 function gpuChip(t) {
   let m = t.match(/\b(rtx|gtx|rx|arc)\s*-?\s*([ab]?\d{3,4})\s*(ti\s*super|super|ti|xtx|xt|gre)?(?![a-z0-9])/i);
@@ -168,6 +172,7 @@ function gpuKey(title) {
   }
   return { key: "gpu:" + key, label: label + " (any brand)", match: 0.85 };
 }
+const ordinal = (n) => { n = +n; const s = n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th"; return n + s; };
 function laptopKey(title) {
   const t = String(title || "").toLowerCase();
   let cpu = null, cpuL = "";
@@ -178,11 +183,12 @@ function laptopKey(title) {
     if (m) { cpu = `apple-${kind}-m${m[1]}${m[2] ? "-" + m[2] : ""}`; cpuL = `MacBook ${kind === "mb" ? "" : kind === "pro" ? "Pro " : "Air "}M${m[1]}${m[2] ? " " + m[2][0].toUpperCase() + m[2].slice(1) : ""}`; }
     else { m = t.match(/\b(20[01]\d|202[0-4])\b/); cpu = `apple-${kind}-intel${m ? "-" + m[1] : ""}`; cpuL = `MacBook ${kind === "pro" ? "Pro " : kind === "air" ? "Air " : ""}Intel${m ? " " + m[1] : ""}`; }
   } else if ((m = t.match(/\bi([3579])[\s-]*(\d{4,5})[a-z]{0,2}\d?\b/))) {
-    const gen = m[2].length === 5 ? m[2].slice(0, 2) : m[2][0];
-    cpu = `intel-i${m[1]}-g${gen}`; cpuL = `Intel i${m[1]} ${gen}th gen`;
+    // 5 digits (10210U) or 4 digits starting with 1 (1035G1, 1135G7, 1235U) = 10th gen and later; else the first digit (8250U = 8th)
+    const gen = m[2].length === 5 || m[2][0] === "1" ? m[2].slice(0, 2) : m[2][0];
+    cpu = `intel-i${m[1]}-g${gen}`; cpuL = `Intel i${m[1]} ${ordinal(gen)} gen`;
   } else if ((m = t.match(/\bi([3579])\b.*?\b(\d{1,2})(?:st|nd|rd|th)\s*gen/)) || (m = t.match(/\b(\d{1,2})(?:st|nd|rd|th)\s*gen\b.*?\bi([3579])\b/))) {
     const a = /^\d{1,2}$/.test(m[1]) && /gen/.test(t.slice(t.indexOf(m[1]), t.indexOf(m[1]) + 8)) ? [m[2], m[1]] : [m[1], m[2]];
-    cpu = `intel-i${a[0]}-g${a[1]}`; cpuL = `Intel i${a[0]} ${a[1]}th gen`;
+    cpu = `intel-i${a[0]}-g${a[1]}`; cpuL = `Intel i${a[0]} ${ordinal(a[1])} gen`;
   } else if ((m = t.match(/\bcore\s*ultra\s*([579])\b/))) {
     cpu = `intel-ultra${m[1]}`; cpuL = `Intel Core Ultra ${m[1]}`;
   } else if ((m = t.match(/\bryzen\s*([3579])\s*(?:pro\s*)?(\d)\d{3}[a-z]{0,2}\b/))) {
@@ -218,7 +224,7 @@ function phoneKey(t) {
 const NOT_CONSOLE = /\b(portal|remote play|vr2?|psvr2?|camera|headset|pulse|dualsense edge|charging station|disc drive|drive only|media remote|cover plates?|vertical stand|cooling|games?|game bundle only|steelbook|amiibo|gift card|voucher|membership|subscription|ps plus|game pass|pegi|code only|(?:download|digital|game) code|code in (?:a )?box|cartridge|cart only|disc only|game card)\b/i;
 const CON_ACC = /\b(controllers?|joy[- ]?cons?|gamepads?|dualsense|dualshock|grips?|docks?|charg(?:er|ers|ing)|cables?|cases?|covers?|skins?|stands?|headsets?|faceplates?|shells?|screen protectors?|tempered glass|memory cards?|sd cards?|carry(?:ing)? (?:bag|case)|power (?:supply|adapter)|psu|fans?|cooling|replacement|thumb ?sticks?|joysticks?|buttons?)\b/i;
 const CON_YES = /\b(console|system|handheld|bundle|with|inc|includes?|including|boxed|complete|\+)(?=\W|$)/i;
-const CON_BARE = /\b(console only|tablet only|unit only|handheld only|screen only|system only|main unit|no (?:joy[- ]?cons?|controllers?|pads?|dock|charger|cables?|leads?|power (?:lead|cable|supply))|without (?:joy[- ]?cons?|controllers?|pads?|dock|charger|cables?|leads?))\b/i;
+const CON_BARE = /\b(switch tablet|console only|tablet only|unit only|handheld only|screen only|system only|main unit|no (?:joy[- ]?cons?|controllers?|pads?|dock|charger|cables?|leads?|power (?:lead|cable|supply))|without (?:joy[- ]?cons?|controllers?|pads?|dock|charger|cables?|leads?))\b/i;
 function consoleKey(t) {
   if (NOT_CONSOLE.test(t) && !/\b(console|with|\+|inc|includes?|bundle)\b/i.test(t.replace(NOT_CONSOLE, ""))) return null;
   if (/\b(portal|remote play|psvr|vr2|disc drive|drive only)\b/i.test(t)) return null;
@@ -231,7 +237,7 @@ function consoleKey(t) {
   if ((m = l.match(/\b(ps5|playstation\s*5)\b/))) k = "ps5 " + (/\bpro\b/.test(l) ? "pro" : /digital/.test(l) ? "digital" : "disc") + (/\bslim\b/.test(l) ? " slim" : "");
   else if ((m = l.match(/\b(ps4|playstation\s*4)\b/))) k = "ps4" + (/\bpro\b/.test(l) ? " pro" : /\bslim\b/.test(l) ? " slim" : "");
   else if ((m = l.match(/\bxbox\s*series\s*(x|s)\b/))) k = "xbox series " + m[1];
-  else if ((m = l.match(/\bxbox\s*one\s*(x|s)?\b/))) k = "xbox one" + (m[1] ? " " + m[1] : "");
+  else if ((m = l.match(/\bxbox\s*one\s*(x|s)?\b/))) k = "xbox one" + (m[1] ? " " + m[1] : "") + (/\b(all[\s-]*)?digital\b/.test(l) ? " digital" : "");
   else if ((m = l.match(/\bnintendo\s*switch\b|\bswitch\s*(oled|lite)\b/))) k = "switch" + (/\boled\b/.test(l) ? " oled" : /\blite\b/.test(l) ? " lite" : /\bswitch\s*2\b/.test(l) ? " 2" : "");
   else if ((m = l.match(/\bsteam\s*deck\b/))) k = "steam deck" + (/\boled\b/.test(l) ? " oled" : "") + ((m = l.match(/\b(64|256|512)\s*gb\b/)) ? " " + m[1] : "") + (/\b1\s*tb\b/.test(l) ? " 1tb" : "");
   if (!k) return null;
@@ -407,6 +413,8 @@ let srcReady = false;
 async function ensureSrc(env) { if (srcReady) return; for (const c of ["src TEXT", "n INTEGER", "lo REAL", "hi REAL", "spd REAL", "sdays REAL", "sn INTEGER", "act INTEGER", "act_at INTEGER"]) { try { await env.DB.prepare("ALTER TABLE prices ADD COLUMN " + c).run(); } catch (e) {} } srcReady = true; }
 // a careful "sells for": the lower-middle sale price (40th percentile), from the last 30 days when there are 5+ sales, else 90 days
 const pctl = (a, f) => { const s = [...a].sort((x, y) => x - y); if (!s.length) return null; const i = (s.length - 1) * f, lo = Math.floor(i); return s[lo] + (s[Math.min(s.length - 1, lo + 1)] - s[lo]) * (i - lo); };
+// one listing offering several sizes ("500GB 1TB 2TB 4TB"): the price shown is for one of them, we can't tell which
+const MULTI_VAR = /\b\d+(?:\.\d+)?\s?(?:gb|tb)\s*[\/,|&+-]?\s*\d+(?:\.\d+)?\s?(?:gb|tb)\s*[\/,|&+-]?\s*\d+(?:\.\d+)?\s?(?:gb|tb)\b/i;
 const FILL_SKIP = /\b(faulty|spares|repairs?|broken|for parts|parts only|job ?lot|joblot|bundle|empty box|box only|untested|read desc|read description|see desc|see description|please read|not working|cracked|icloud locked)\b/i;
 /* ---------------- sell speed ----------------
    eBay's sold pages show the day each item sold, not how long it was listed. So speed is estimated from
@@ -464,7 +472,7 @@ async function fillPrices(env, b) {
   if (rng && cat) { covAll[cat] = cover; await kvSet(env, "fillCover", covAll); }
   for (const r of rows) {
     const t = String((r && r.n) || "").slice(0, 200), p = +r.p, id = String((r && r.id) || "").replace(/\D/g, "").slice(0, 20);
-    if (!t || !id || !(p > 0 && p < 100000) || FILL_SKIP.test(t)) continue;
+    if (!t || !id || !(p > 0 && p < 100000) || FILL_SKIP.test(t) || MULTI_VAR.test(t)) continue;
     if (r.c && r.c !== cond) continue; // the listing's own condition (eBay's filter sometimes drops on later pages)
     const g = groupOf({ title: t }, cat, catName, cond);
     // known kinds are matched model by model; anything else needs a strong title match or a single model code like "75192"
@@ -548,7 +556,7 @@ const SPECIAL = /\b(poseidon|water ?cooled|watercooled|water ?block|hybrid|aio|b
 // auction learning buckets: time left (day+, 2h+, 30m+, under 30m) and bids (0-2, 3+)
 const aucBucket = (mins, bids) => (mins > 1440 ? "d" : mins > 120 ? "h" : mins > 30 ? "m" : "s") + (bids > 2 ? "+" : "-");
 /* ---------------- what the hunter avoids ---------------- */
-const RISK_WORDS = /\b(parts only|spares only|for parts|parts or not working|parts\/repair|as is|sold as seen|not tested|empty (?:retail |original |console )?(?:box|packaging|case)|packaging only|box (?:and|&) (?:inserts?|packaging|manual)|box\W{1,4}empty|empty\W{1,4}(?:box|packaging)|box only|empty box|read desc|read description|see desc|see description|please read|photo of|picture of|image of|replica|fake|not genuine|dummy|display only|case only|cover only|manual only|cable only|stand only|bundle only|no console|card only|for parts|spares|repairs?|faulty|broken|cracked|not working|untested|bios lock|icloud|activation lock|locked|blacklisted|no power|water damage|liquid damage|damaged|dented|bent pins?|burnt|burned|scorched|melted|smashed|shattered|bricked|no display|no signal|no picture|dead pixels?|artifact(?:s|ing)|artefact(?:s|ing))\b/i;
+const RISK_WORDS = /\b((?<!\bno |\bwithout |\bzero |\bany )damage|parts only|spares only|for parts|parts or not working|parts\/repair|as is|sold as seen|not tested|empty (?:retail |original |console )?(?:box|packaging|case)|packaging only|box (?:and|&) (?:inserts?|packaging|manual)|box\W{1,4}empty|empty\W{1,4}(?:box|packaging)|box only|empty box|read desc|read description|see desc|see description|please read|photo of|picture of|image of|replica|fake|not genuine|dummy|display only|case only|cover only|manual only|cable only|stand only|bundle only|no console|card only|for parts|spares|repairs?|faulty|broken|cracked|not working|untested|bios lock|icloud|activation lock|locked|blacklisted|no power|water damage|liquid damage|damaged|dented|bent pins?|burnt|burned|scorched|melted|smashed|shattered|bricked|no display|no signal|no picture|dead pixels?|artifact(?:s|ing)|artefact(?:s|ing))\b/i;
 const SCAM_WORDS = /\b(empty (?:retail |original |console )?(?:box|packaging|case)|packaging only|box (?:and|&) (?:inserts?|packaging|manual)|box\W{1,4}empty|empty\W{1,4}(?:box|packaging)|read desc|read description|photo of|picture of|image of|empty box|box only|replica|fake|not genuine|contact me|message me before|whatsapp|bank transfer)\b/i;
 // "iPhone 12 Pro Max 128GB BOX": a title that ends in "box" is usually the box alone ("... with box" is fine)
 const BOX_END = /(?<!\b(?:with|w\/|and|&|\+|inc|incl|includes?|including|in|original|retail) )\bbox(?:es)?\W*$/i;
@@ -917,7 +925,8 @@ async function sweep(env, manual) {
       let low = b.lo != null ? Math.min(b.lo + (post || 0), med) : med * 0.85;
       if (b.trend === "falling") low = Math.min(low, med * 0.8);
       if (b.st != null && b.st < 25) low = Math.min(low, med * 0.8); // slow sellers: plan for a lower price
-      return { med, low, n: sold.length, src: "book", fill: b.src === "fill", bookN: b.n || null, spread: 0.15, ev, st: b.st, post, trend: b.trend, at: b.at, lo: b.lo != null ? b.lo + (post || 0) : null, hi: b.hi != null ? b.hi + (post || 0) : null, lastAt: b.at, row: b };
+      const bs = b.lo != null && b.hi != null && b.avg > 0 ? (b.hi - b.lo) / b.avg : 0.15;
+      return { med, low, n: sold.length, src: "book", fill: b.src === "fill", bookN: b.n || null, spread: bs, ev, st: b.st, post, trend: b.trend, at: b.at, lo: b.lo != null ? b.lo + (post || 0) : null, hi: b.hi != null ? b.hi + (post || 0) : null, lastAt: b.at, row: b };
     }
     if (sold.length >= needSold) {
       const med = median(sold), low = pct(sold, 0.25), iqr = pct(sold, 0.75) - low;
@@ -950,10 +959,13 @@ async function sweep(env, manual) {
       continue;
     }
     if (RISK_WORDS.test(s.title)) { why.risky++; continue; }
+    if (MULTI_VAR.test(s.title)) { why.noData++; continue; }
     if (BOX_END.test(s.title)) { hidden++; continue; }
     const m = market(s.pkey, s.id, s.matchQ || 0.5);
     if (!m) { why.noData++; continue; }
     if (m.spread > 0.9 && (s.matchQ || 0.5) < 0.8) { why.noData++; continue; } // prices all over the place: not confident
+    // a loose match (similar title, not a known model) needs tight, consistent prices to be trusted
+    if ((s.matchQ || 0.5) < 0.6 && m.spread > 0.5) { why.noData++; continue; }
     const cost = s.price + s.ship + extra;
     // over your "most I'll spend on one item" (total incl. postage and buyer fee; for auctions, today's bid + postage)
     if (r.maxSpend > 0 && (s.type === "AUC" ? s.price + s.ship : cost) > r.maxSpend) { why.over++; continue; }

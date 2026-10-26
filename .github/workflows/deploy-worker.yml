@@ -12,6 +12,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Run all tests (nothing is uploaded if any fail)
+        run: node tests/run-all.mjs
       - name: Deploy worker with backup, hunting database and 5-minute schedule
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

@@ -158,7 +158,7 @@ function sig(title) {
   return uniq.sort().join(" ");
 }
 const LAPTOP_RE = /\b(laptop|notebook|macbook|chromebook|thinkpad|elitebook|probook|latitude|ideapad|thinkbook|zenbook|vivobook|inspiron|vostro|surface laptop|galaxy book|ultrabook)\b/i;
-const NOT_A_CARD = /\b(mobile|mxm|gpu chip|gpu module|bga|laptop|notebook|desktop|tower|gaming pc|pc build|full pc|computer|ssd|hdd|ram|i[3579][\s-]?\d|ryzen|bundle|job ?lot|joblot|pair of|waterblock|water block|heatsink|backplate|fans? only|replacement fans?|fans? for|cooler only|cooler for|bracket|riser|cable|box only|empty box)\b/i;
+const NOT_A_CARD = /\b(mobile|mxm|gpu chip|gpu module|bga|laptop|notebook|desktop|tower|gaming pc|pc build|full pc|computer|ssd|hdd|ram|i[3579][\s-]?\d|ryzen|bundle|job ?lot|joblot|pair of|waterblock|water block|heatsink|backplate|heat ?sinks?|fans? only|fun only|replacement fans?|fans? for|cooler only|cooler for|gaming ?pro cooler|bracket|riser|cable|box only|empty box)\b/i;
 const MULTI_VRAM = new Set(["gtx 1060", "rtx 2060", "rtx 3050", "rtx 3060", "rtx 4060 ti", "rx 470", "rx 480", "rx 570", "rx 580", "rx 5500 xt", "rx 6500 xt"]);
 function gpuChip(t) {
   let m = t.match(/\b(rtx|gtx|rx|arc)\s*-?\s*([ab]?\d{3,4})\s*(ti\s*super|super|ti|xtx|xt|gre)?(?![a-z0-9])/i);
@@ -921,9 +921,14 @@ async function sweep(env, manual) {
   const cands = seen.filter((s) => !s.learn);
   {
     const rowsAll = [];
-    for (const c of cats) {
-      const rr = await D.prepare("SELECT id, data, status, end_at, last_seen FROM listings WHERE cat=? AND first_seen>? ORDER BY first_seen DESC LIMIT 150").bind(c.id, now - DAY).all();
-      for (const x of rr.results || []) if (x.status === "live" && x.data && x.last_seen > now - DAY && (!x.end_at || x.end_at > now + 5 * 60000)) rowsAll.push(x);
+    // when your rules or categories change, look back 3 days so listings skipped under the old rules get a second look
+    // (e.g. raising the spending limit from £200 to £500 brings back cards between the two); otherwise the last day
+    const sig = JSON.stringify([r, cfg.cats.map((c) => c.id)]), wide = sig !== (await kvGet(env, "rulesSig", ""));
+    report.rejudged = wide ? "wide" : "normal";
+    const back = wide ? 3 * DAY : DAY, lim = wide ? 1000 : 300;
+    for (const c of (wide ? cfg.cats : cats)) {
+      const rr = await D.prepare("SELECT id, data, status, end_at, last_seen FROM listings WHERE cat=? AND first_seen>? ORDER BY first_seen DESC LIMIT ?").bind(c.id, now - back, lim).all();
+      for (const x of rr.results || []) if (x.status === "live" && x.data && x.last_seen > now - back && (!x.end_at || x.end_at > now + 5 * 60000)) rowsAll.push(x);
     }
     // every deal already on the list is judged again too, so new rules and new prices reach it straight away
     // (an auction listed days ago and ending tonight isn't in the newest or ending-soonest results yet)
@@ -1231,6 +1236,8 @@ async function sweep(env, manual) {
   await saveQuota(env);
   report.ebayToday = await quota(env);
   await kvSet(env, "lastReport", { at: now, ...report, cats: cats.map((c) => c.name) });
+  // remember the rules this scan used: a change triggers the 3-day second look on the next scan
+  await kvSet(env, "rulesSig", JSON.stringify([r, cfg.cats.map((c) => c.id)]));
   return report;
 }
 

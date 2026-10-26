@@ -102,6 +102,8 @@ async function schema(env) {
     D.prepare("CREATE TABLE IF NOT EXISTS deals (id TEXT PRIMARY KEY, data TEXT, score INTEGER, created INTEGER, expires INTEGER, notified INTEGER DEFAULT 0)"),
     D.prepare("CREATE INDEX IF NOT EXISTS de_exp ON deals(expires)"),
     D.prepare("CREATE TABLE IF NOT EXISTS follows (id TEXT PRIMARY KEY, data TEXT, max REAL, created INTEGER, alerted TEXT)"),
+    // deals a user flagged as wrong (wrong model, bad price, faulty, scam): a snapshot of the deal as it was shown, for fixing the cause
+    D.prepare("CREATE TABLE IF NOT EXISTS flags (deal_id TEXT PRIMARY KEY, reason TEXT, data TEXT, at INTEGER)"),
     // price book: values users read off eBay's research page and type in, one row per product group
     D.prepare("CREATE TABLE IF NOT EXISTS fillsales (pkey TEXT PRIMARY KEY, data TEXT, at INTEGER)"),
     D.prepare("CREATE TABLE IF NOT EXISTS prices (pkey TEXT PRIMARY KEY, label TEXT, q TEXT, avg REAL, st REAL, post REAL, trend TEXT, at INTEGER)"),
@@ -1180,6 +1182,9 @@ async function sweep(env, manual) {
     ).bind(d.id, JSON.stringify(d), d.score || 0, now, d.type === "AUC" && d.end ? d.end : now + DAY));
     for (let i = 0; i < st.length; i += 50) await D.batch(st.slice(i, i + 50));
     report.newDeals = all.filter((d) => !existing[d.id]).length;
+    // new deals per day (last 8 days), so Admin can show what share of deals get flagged
+    try { const nd = await kvGet(env, "newDealsDay", {}), dd = today(); nd[dd] = (nd[dd] || 0) + report.newDeals;
+      for (const k of Object.keys(nd)) if (Date.parse(k) < now - 8 * DAY) delete nd[k]; await kvSet(env, "newDealsDay", nd); } catch (e) {}
   }
   // listings we just judged that are no longer deals (price went up, bids passed our max): take them off the list
   {
@@ -1442,7 +1447,7 @@ export default {
     // the app sends the key in a header; older app versions put it in the address, which still works
     if (!env.APP_KEY || !sameKey(request.headers.get("X-FlipScout-Key") || P("key"), env.APP_KEY)) return json({ error: "wrong key" }, 401);
     // hourly limits on the calls that use eBay or write a lot, far above normal use, so a leaked key can't run up your eBay calls
-    const lim = P("q") ? ["search", 300] : P("check") ? ["check", 300] : P("fill") ? ["fill", 120] : P("suggest") ? ["suggest", 300] : null;
+    const lim = P("q") ? ["search", 300] : P("check") ? ["check", 300] : P("fill") ? ["fill", 120] : P("suggest") ? ["suggest", 300] : P("flag") ? ["flag", 200] : null;
     if (lim && env.DB) {
       try {
         await schema(env);
@@ -1455,7 +1460,7 @@ export default {
     }
 
     // ---- hunting (needs the database) ----
-    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "test", "device", "check", "price", "prices", "unprice", "needs", "lookfor", "fill", "fillstats"].some((k) => u.searchParams.has(k));
+    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "flag", "unflag", "flags", "test", "device", "check", "price", "prices", "unprice", "needs", "lookfor", "fill", "fillstats"].some((k) => u.searchParams.has(k));
     if (huntCall) {
       if (!env.DB) return json({ error: "hunting database not set up yet" }, 501);
       try {
@@ -1559,6 +1564,28 @@ export default {
             img: /^https:\/\//.test(String(b.img || "")) ? String(b.img).slice(0, 400) : "", cond: String(b.cond || "").slice(0, 40), med: +b.med || null };
           await env.DB.prepare("INSERT INTO follows (id,data,max,created,alerted) VALUES (?,?,?,?,NULL) ON CONFLICT(id) DO UPDATE SET max=excluded.max, alerted=NULL").bind(id, JSON.stringify(data), max, Date.now()).run();
           return json({ ok: true });
+        }
+        if (P("flag") && request.method === "POST") {
+          // one tap on Flag: keep a snapshot of the deal exactly as the Scan service judged it (taken here, not sent by the phone)
+          const b = JSON.parse(await request.text()), id = String(b.id || "").replace(/\D/g, "").slice(0, 20);
+          if (!id) return json({ error: "need a deal" }, 400);
+          const reason = ["model", "price", "faulty", "scam", "other"].includes(b.reason) ? b.reason : null;
+          const ex = await env.DB.prepare("SELECT deal_id FROM flags WHERE deal_id=?").bind(id).first();
+          if (ex) { if (reason) await env.DB.prepare("UPDATE flags SET reason=? WHERE deal_id=?").bind(reason, id).run(); return json({ ok: true }); }
+          const d = await env.DB.prepare("SELECT data FROM deals WHERE id=?").bind(id).first() || await env.DB.prepare("SELECT data FROM listings WHERE id=?").bind(id).first();
+          await env.DB.prepare("INSERT INTO flags (deal_id, reason, data, at) VALUES (?,?,?,?)").bind(id, reason, d && d.data ? d.data : null, Date.now()).run();
+          return json({ ok: true });
+        }
+        if (P("unflag")) {
+          await env.DB.prepare("DELETE FROM flags WHERE deal_id=?").bind(String(P("unflag")).replace(/\D/g, "")).run();
+          return json({ ok: true });
+        }
+        if (P("flags")) {
+          const rows = await env.DB.prepare("SELECT deal_id, reason, data, at FROM flags WHERE at>? ORDER BY at DESC LIMIT 100").bind(Date.now() - 30 * DAY).all();
+          const list = (rows.results || []).map((r) => { let d = {}; try { d = JSON.parse(r.data || "{}"); } catch (e) {}
+            return { id: r.deal_id, reason: r.reason, at: r.at, title: d.title || "", matchLabel: d.matchLabel || "", price: d.price, ship: d.ship, med: d.med, profit: d.profit, cat: d.catName || "", url: d.url || "" }; });
+          const week = Date.now() - 7 * DAY, nd = await kvGet(env, "newDealsDay", {});
+          return json({ flags: list, week: { flagged: list.filter((x) => x.at > week).length, deals: Object.entries(nd).filter(([k]) => Date.parse(k) >= week - DAY).reduce((a, [, v]) => a + v, 0) } });
         }
         if (P("unfollow")) {
           await env.DB.prepare("DELETE FROM follows WHERE id=?").bind(String(P("unfollow")).replace(/\D/g, "")).run();

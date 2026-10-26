@@ -130,6 +130,11 @@ nav button.on .pill{background:var(--navacbg)}
 .empty{text-align:center;padding:28px 18px}
 .empty svg{width:48px;height:48px;color:var(--ac);margin-bottom:6px}
 .empty>b{display:block;font-size:18px;margin-bottom:6px}
+#flagbar{position:fixed;left:14px;right:14px;bottom:calc(80px + env(safe-area-inset-bottom));max-width:560px;margin:auto;background:#0f1b33;color:#fff;border-radius:14px;padding:12px 14px;display:none;z-index:31;box-shadow:0 6px 24px rgba(0,0,0,.3);font-size:15px}
+#flagbar .fr{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+#flagbar button{margin:0;min-height:36px;padding:4px 12px;border-radius:99px;font-size:14px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.25);color:#fff}
+#flagbar button.u{background:transparent;border-color:transparent;color:#9fe0b4;font-weight:700}
+.flagb{flex:0 0 auto!important}
 #toast{position:fixed;left:14px;right:14px;bottom:calc(80px + env(safe-area-inset-bottom));max-width:560px;margin:auto;background:#0f1b33;color:#fff;border-radius:14px;padding:12px 14px;display:none;align-items:center;gap:10px;z-index:30;box-shadow:0 6px 24px rgba(0,0,0,.3)}
 #toast span{flex:1}#toast button{margin:0;min-height:40px;padding:8px 14px;background:none;color:#4ade80}
 #ov{position:fixed;inset:0;background:rgba(5,10,20,.55);display:none;z-index:20}
@@ -165,6 +170,7 @@ a{color:inherit;text-decoration:none}
 <main id="app"></main>
 <nav id="nav"></nav><button id="totop" aria-label="Back to top" onclick="window.scrollTo({top:0,behavior:'smooth'})"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
 <div id="toast"><span id="tmsg"></span><button id="tbtn"></button></div>
+<div id="flagbar" role="status"></div>
 <div id="ov" onclick="closeSheet()"></div>
 <div id="sheet"></div><div id="pick" style="display:none"></div>
 <div id="onb"></div>
@@ -346,6 +352,12 @@ const TABS=[["deals","Deals","bolt"],["follow","Following","bell"],["settings","
 let admN=0,admT=0;
 function admTap(){const t=Date.now();admN=t-admT<1500?admN+1:1;admT=t;if(admN>=7){admN=0;S.set.admin=!S.set.admin;save();render();toast(S.set.admin?"Admin tools on.":"Admin tools off.")}}
 let ADMC=[],ADMS=null;
+let FLAGS=null;async function loadFlags(){try{FLAGS=await api("flags=1")}catch(e){FLAGS={flags:[],err:errText(e)}}if(tab==="admin")render()}
+const FWHY={model:"wrong model",price:"bad price",faulty:"faulty / parts",scam:"scam / fake",other:"other"};
+function flagCard(){if(FLAGS===null){FLAGS=undefined;setTimeout(loadFlags,0)}const F=FLAGS||{},L=F.flags||[],w=F.week||{};
+  return`<div class="card"><b>Flagged deals</b><div class="mu">Deals someone marked as wrong with ⚑ Flag. Each one is checked, the cause fixed, and the title added to the tests.</div>
+   ${w.deals?`<div style="margin-top:8px;font-weight:700">${fmtN(w.flagged)} of ${fmtN(w.deals)} deals flagged in the last 7 days (${(w.flagged/w.deals*100).toFixed(1)}%)</div>`:""}
+   ${L.length?L.slice(0,15).map(x=>`<div class="li" style="padding:7px 0;font-size:14px;align-items:flex-start"><span style="flex:1;min-width:0">${esc(x.title||"(deal no longer saved)")}<br><span class="mu">${x.reason?`<b class="warn">${FWHY[x.reason]||esc(x.reason)}</b> · `:""}${x.matchLabel?"priced as "+esc(x.matchLabel)+" · ":""}${x.med?"sells ~"+gbp0(x.med)+" · ":""}${ago(x.at)}</span></span></div>`).join(""):`<div class="mu" style="margin-top:6px">${FLAGS===undefined?"Loading…":"Nothing flagged yet."}</div>`}</div>`}
 let SPDCHK=null;async function loadFillStats(){try{const a=await api("fillstats=1");ADMS=a.stats||{};SPDCHK=a.speedCheck||null}catch(e){ADMS=ADMS||{}}if(tab==="admin")render()}
 const fmtN=n=>Number(n||0).toLocaleString("en-GB");
 function fillPicked(){if(!CAT.a||!CT||!CT[CAT.a]){toast('Pick a category first.');return}fillCat({id:CAT.a,name:CT[CAT.a].n})}
@@ -358,6 +370,7 @@ function vAdmin(){if(!S.set.admin)return`<div class="card">Admin tools are off.<
    <label class="chkrow" style="min-height:44px"><input type="checkbox" ${H().paused?"checked":""} onchange="H().paused=this.checked;save();pushConfig();render()"><span>Pause hunting (stops all searches and followed-listing checks)</span></label>
    <button onclick="huntNow()" ${HD.busy?"disabled":""}>${HD.busy?"Checking…":"Scan now"}</button>
    ${HD.crash&&Date.now()-HD.crash.at<48*36e5?`<div class="hint warn">Last problem, ${ago(HD.crash.at)} (${esc(HD.crash.where||"scan")}): ${esc(HD.crash.msg||"")}</div>`:""}</div>${connCard()}
+  ${flagCard()}
   <div class="card"><b>Price list</b><div class="mu">Every model FlipScout has a price for: how many sold, what it sells for and how fast.</div><button onclick="go('plist')">Open price list ›</button></div>
   <div class="card"><b>Sell speed self-check</b><div class="mu">Each time you fill a category again, FlipScout checks whether each model's sales rate held up (within ±50%). This measures the sales rate behind the speed estimate. Only you see this.</div>
    <div style="margin-top:8px;font-weight:700">${SPDCHK&&SPDCHK.n?`${fmtN(SPDCHK.hit)} of ${fmtN(SPDCHK.n)} checks held up (${Math.round(SPDCHK.hit/SPDCHK.n*100)}%)`:"No checks yet"}</div>
@@ -956,7 +969,7 @@ function dealCard(d,i){
    <div class="mu" style="font-size:13px">${d.src==="book"?(d.fill?`From ${d.bookN?fmtN(d.bookN)+" sales":"your category check"}`:"From sold prices you checked"):d.src==="sold"?`From ${d.n} sale${d.n===1?"":"s"} in 30 days`:`<span class="warn">Guess from ${d.n} asking prices, no sales yet</span>`} · estimate</div></div>`}
   ${sp?"":speedLine(d)}
   ${(()=>{const tg=(d.tags||[]).filter(t=>!/^\d+ bids?$|^No bids yet$|^Price from (category check|price book)$/.test(t));return tagChips(tg)})()}
-  <div style="display:flex;gap:8px;margin-top:10px">${btn("s dbtn","Details",`openDeal(${i})`,"See full details")}${sp?"":isFollowed(d.id)?btn("s dbtn","✓ Following","go('follow')","Following this deal","color:var(--ok)"):btn("dbtn","Follow",`quickFollow(${i})`,"Follow this deal and get an alert")}${btn("s dbtn quiet","Hide",`hideDeal(${esc(JSON.stringify(d.id))})`,"Hide this deal")}</div>
+  <div style="display:flex;gap:8px;margin-top:10px">${btn("s dbtn","Details",`openDeal(${i})`,"See full details")}${sp?"":isFollowed(d.id)?btn("s dbtn","✓ Following","go('follow')","Following this deal","color:var(--ok)"):btn("dbtn","Follow",`quickFollow(${i})`,"Follow this deal and get an alert")}${btn("s dbtn quiet","Hide",`hideDeal(${esc(JSON.stringify(d.id))})`,"Hide this deal")}${btn("s dbtn quiet flagb","⚑ Flag",`flagDeal(${esc(JSON.stringify(d.id))})`,"Flag: FlipScout got this deal wrong")}</div>
   </div></div>`}
 // The money on a deal card, most important first: estimated profit, then what you pay and what it sells for.
 // Profit = typical sale price − eBay selling fee − your postage out and packing − (price + postage in + buyer protection fee, if switched on)
@@ -984,6 +997,16 @@ const FILTERS=[["all","All"],["bin","Buy It Now"],["auc","Auctions"],["mis","Mis
 // Deals priced only from asking prices (what sellers want, not what things sold for) are kept apart as "Guesses"
 let HIDE=(()=>{try{return JSON.parse(localStorage.getItem("flipscout_hidden")||"[]")}catch(e){return[]}})();
 addEventListener("scroll",()=>{const b=$("totop");if(b)b.classList.toggle("on",scrollY>900&&!document.querySelector(".actbar"))},{passive:true});
+/* ---------- FLAG: one tap tells FlipScout it got a deal wrong. Hidden for this user only; a snapshot goes to the Scan service ---------- */
+let FLT=null;
+function flagDeal(id,fromPage){HIDE=[id,...HIDE.filter(x=>x!==id)].slice(0,500);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}
+  api("flag=1",{id}).catch(()=>{});
+  if(fromPage&&tab==="deal"){prev.pop();tab="deals";render.restore=true}render();
+  const b=$("flagbar"),R=[["model","Wrong model"],["price","Bad price"],["faulty","Faulty / parts"],["scam","Scam / fake"]],q=JSON.stringify(id).replace(/"/g,"&quot;");
+  b.innerHTML=`<div>⚑ Flagged, thanks. Hidden for you. What was wrong? <span style="opacity:.7">(optional)</span></div><div class="fr">${R.map(([k,l])=>`<button onclick="flagWhy(${q},'${k}')">${l}</button>`).join("")}<button class="u" onclick="flagUndo(${q})">Undo</button></div>`;
+  b.style.display="block";clearTimeout(FLT);FLT=setTimeout(()=>{b.style.display="none"},9000)}
+function flagWhy(id,why){api("flag=1",{id,reason:why}).catch(()=>{});$("flagbar").style.display="none";toast("Thanks. That helps fix it.")}
+function flagUndo(id){HIDE=HIDE.filter(x=>x!==id);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}api("unflag="+encodeURIComponent(id)).catch(()=>{});$("flagbar").style.display="none";render()}
 function hideDeal(id){HIDE=[id,...HIDE.filter(x=>x!==id)].slice(0,500);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}render();toast("Hidden.","Undo",()=>{HIDE=HIDE.filter(x=>x!==id);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}render()})}
 // listings are "AUC" (auction) or "BIN" (Buy It Now); older or outside data may say FIXED, FIXED_PRICE or AUCTION
 const normType=d=>(d.type=/^AUC/i.test(String(d.type||""))?"AUC":"BIN",d);
@@ -1212,7 +1235,7 @@ function vDeal(){
   return head+`<div class="card"><b style="font-size:17px">The money</b>
    ${priceRow(d,1)}${moneyLines(d)}</div>
   ${speedCard(d)}${trustCard(d)}${aboutCard(d)}
-  <div class="hint" style="margin:0 4px 90px">Always read the listing before you pay.</div>
+  <div class="hint" style="margin:0 4px 90px">Always read the listing before you pay.<br><button class="link" style="margin:8px 0 0;min-height:44px;padding:0;color:var(--mu)" onclick="flagDeal(${esc(JSON.stringify(d.id))},1)">⚑ Flag this deal: something about it is wrong</button></div>
   <div class="actbar"><a href="${esc(ukUrl(d.url))}" target="_blank" rel="noopener" style="flex:1.6;display:flex"><button style="margin:0;flex:1">${d.type==="AUC"?"Bid on eBay":"Buy on eBay · "+gbp(d.price+d.ship)}</button></a>${isFollowed(d.id)?`<button class="s" style="margin:0;flex:1;color:var(--ok)" onclick="go('follow')">✓ Following</button>`:`<button class="s" style="margin:0;flex:1" onclick="followSheet()">Follow</button>`}</div>`;
 }
 /* ---------- PRICES (price book + the old Check, in one place) ---------- */

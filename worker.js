@@ -108,6 +108,14 @@ async function schema(env) {
     D.prepare("CREATE TABLE IF NOT EXISTS fillsales (pkey TEXT PRIMARY KEY, data TEXT, at INTEGER)"),
     D.prepare("CREATE TABLE IF NOT EXISTS prices (pkey TEXT PRIMARY KEY, label TEXT, q TEXT, avg REAL, st REAL, post REAL, trend TEXT, at INTEGER)"),
   ]);
+  // deal diary: what FlipScout predicted the first time it showed each deal. Never updated, so it can be checked later against what really sold.
+  // Separate from the batch above so a problem here can never stop the main tables being set up.
+  try {
+    await D.batch([
+      D.prepare(`CREATE TABLE IF NOT EXISTS ${DIARY_COLS.table} (${DIARY_COLS.cols.map((c, i) => c + (i ? "" : " TEXT PRIMARY KEY")).join(", ")})`),
+      D.prepare(`CREATE INDEX IF NOT EXISTS dl_at ON ${DIARY_COLS.table}(at)`),
+    ]);
+  } catch (e) { /* diary is optional */ }
   for (const sql of ["ALTER TABLE listings ADD COLUMN data TEXT", "ALTER TABLE deals ADD COLUMN checked INTEGER DEFAULT 0"]) {
     try { await D.prepare(sql).run(); } catch (e) { /* column already there */ }
   }
@@ -119,6 +127,17 @@ async function kvGet(env, k, def) {
 }
 async function kvSet(env, k, v) {
   await env.DB.prepare("INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(k, JSON.stringify(v)).run();
+}
+
+/* ---------------- deal diary ---------------- */
+// One row per deal, written once (the first time it's shown). Outcomes are matched later by item id
+// against sales (auctions), fillsales (sold pages) and listings, so nothing here ever needs updating.
+const DIARY_COLS = { table: "deal_log", cols: ["id", "at", "cat", "pkey", "type", "cond", "title", "price", "ship", "cost", "med", "low", "lo", "hi", "src", "n", "book_n", "profit", "low_profit", "max_pay", "max_bid", "score", "end_at", "biz"] };
+function diaryRow(d, now) {
+  const n = (v) => (v == null || !isFinite(+v) ? null : +v);
+  return [String(d.id), now, String(d.cat || ""), d.pkey || null, d.type || null, d.bucket || null, String(d.title || "").slice(0, 200),
+    n(d.price), n(d.ship), n(d.cost), n(d.med), n(d.low), n(d.rangeLo), n(d.rangeHi), d.src || null, n(d.n), n(d.bookN),
+    n(d.profit), n(d.lowProfit), n(d.maxPay), n(d.maxBid), n(d.score), n(d.end), d.seller && d.seller.biz ? 1 : 0];
 }
 
 /* ---------------- money maths ---------------- */
@@ -1187,6 +1206,11 @@ async function sweep(env, manual) {
     ).bind(d.id, JSON.stringify(d), d.score || 0, now, d.type === "AUC" && d.end ? d.end : now + DAY));
     for (let i = 0; i < st.length; i += 50) await D.batch(st.slice(i, i + 50));
     report.newDeals = all.filter((d) => !existing[d.id]).length;
+    // deal diary: first sighting of each deal only (best effort: a diary problem never stops the hunt)
+    try {
+      const ins = deals.filter((d) => !existing[d.id]).map((d) => D.prepare(`INSERT OR IGNORE INTO ${DIARY_COLS.table} (${DIARY_COLS.cols.join(",")}) VALUES (${DIARY_COLS.cols.map(() => "?").join(",")})`).bind(...diaryRow(d, now)));
+      for (let i = 0; i < ins.length; i += 50) await D.batch(ins.slice(i, i + 50));
+    } catch (e) { report.errors.push("deal diary: " + e.message); }
     // new deals per day (last 8 days), so Admin can show what share of deals get flagged
     try { const nd = await kvGet(env, "newDealsDay", {}), dd = today(); nd[dd] = (nd[dd] || 0) + report.newDeals;
       for (const k of Object.keys(nd)) if (Date.parse(k) < now - 8 * DAY) delete nd[k]; await kvSet(env, "newDealsDay", nd); } catch (e) {}

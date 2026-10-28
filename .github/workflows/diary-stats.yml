@@ -10,7 +10,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           npm i -g wrangler@3 >/dev/null 2>&1
-          q() { echo "=== $1"; wrangler d1 execute flipscout-db --remote --json --command "$2" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const i=s.search(/^\[/m);const a=JSON.parse(s.slice(i));for(const r of a[0].results)console.log(JSON.stringify(r))})'; }
+          q() { wrangler d1 execute flipscout-db --remote --json --command "$2" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const i=s.search(/^\[/m);const a=JSON.parse(s.slice(i));for(const r of a[0].results)console.log("::notice title="+process.argv[1]+"::"+JSON.stringify(r))})' "$1"; }
           q range "SELECT COUNT(*) n, MIN(at) first, MAX(at) last FROM deal_log"
           q perday "SELECT date(at/1000,'unixepoch') d, COUNT(*) n, SUM(score>=50) n50, SUM(profit>=5 AND profit<20) b5, SUM(profit>=20 AND profit<50) b20, SUM(profit>=50 AND profit<100) b50, SUM(profit>=100) b100, ROUND(AVG(profit),1) avgp, ROUND(SUM(profit)) sump, ROUND(SUM(CASE WHEN score>=50 THEN profit ELSE 0 END)) sump50 FROM deal_log GROUP BY d ORDER BY d"
           q bytype "SELECT type, COUNT(*) n, SUM(score>=70) strong, SUM(score>=50 AND score<70) fair, SUM(score<50) risky, ROUND(AVG(profit),1) avgp, ROUND(AVG(price+ship),1) avgcost FROM deal_log GROUP BY type"

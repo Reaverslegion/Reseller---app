@@ -4,7 +4,7 @@ import fs from "node:fs";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 const src = fs.readFileSync(new URL("../worker.js", import.meta.url), "utf8").replace(/export default\s*\{[\s\S]*$/, "");
-const W = new Function(src + "\nreturn { schema, seenAdd, markSold, sellStats, kvGet, kvSet, DAY };")();
+const W = new Function(src + "\nreturn { schema, seenAdd, markSold, sellStats, kvGet, kvSet, DAY, coverRuns, coverOf, rebuildCover };")();
 // a tiny stand-in for Cloudflare D1 (prepare/bind/run/all/first/batch)
 const db = new DatabaseSync(":memory:");
 const stmt = (sql, args = []) => ({ bind: (...a) => stmt(sql, a), run: async () => { db.prepare(sql).run(...args); return {}; },
@@ -41,5 +41,36 @@ await t("days to sell per model; ended-unsold only counted when that day's sold 
 });
 await t("a sold listing seen again by a scan stays sold", async () => {
   assert.match(src, /status=CASE WHEN listings\.status IN \('gone','sold'\) THEN listings\.status ELSE 'live' END/);
+});
+await t("days read in full ignore stray old sales (one March sale made months look read)", async () => {
+  const day = (k) => Math.floor(now / DAY) * DAY - k * DAY + 3600e3, ds = [];
+  for (let k = 0; k <= 5; k++) for (let i = 0; i < 100; i++) ds.push(day(k));   // 6 busy days read today
+  ds.push(day(20), day(21), day(45), day(200));                                  // strays from multi-unit listings
+  const r = W.coverOf(ds.map((d) => ({ d })), now);
+  assert.ok(r[0] >= day(5), "range must start within the busy days, not at a stray: " + new Date(r[0]).toISOString());
+  // two separate fills with unread days between them are two ranges, not one
+  const two = [...ds]; for (let k = 10; k <= 13; k++) for (let i = 0; i < 100; i++) two.push(day(k));
+  assert.equal(W.coverRuns(two, now).length, 2);
+});
+await t("one-off rebuild: coverage from saved sale dates, then each model's sales rate; raw sales untouched", async () => {
+  const day = (k) => Math.floor(now / DAY) * DAY - k * DAY + 3600e3, sales = [];
+  for (let k = 0; k <= 6; k++) for (let i = 0; i < 30; i++) sales.push([String(5000 + k * 100 + i), 150 + i, 5, day(k)]);
+  sales.push(["9999", 150, 5, day(150)]); // a stray
+  await W.seenAdd(env, sales.map((x) => [x[0], "27386", x[1] + x[2], x[3]]));
+  db.prepare("INSERT INTO fillsales (pkey,data,at) VALUES (?,?,?)").run("gpu:rtx 4060|used", JSON.stringify(sales.slice(0, 70).concat([sales[sales.length - 1]])), now);
+  db.prepare("INSERT INTO prices (pkey,label,q,avg,st,post,trend,at) VALUES (?,?,?,?,?,?,?,?)").run("gpu:rtx 4060|used", "RTX 4060", "", 160, null, 5, "steady", now);
+  for (const c of ["src TEXT", "n INTEGER", "lo REAL", "hi REAL", "spd REAL", "sdays REAL", "sn INTEGER", "act INTEGER", "act_at INTEGER"]) try { db.exec("ALTER TABLE prices ADD COLUMN " + c); } catch (e) {}
+  db.prepare("UPDATE prices SET src='fill' WHERE pkey='gpu:rtx 4060|used'").run();
+  await W.kvSet(env, "fillCats", { "27386": { name: "GPUs", k: { "gpu:rtx 4060|used": [71, 1] } } });
+  await W.kvSet(env, "spdCheck", { n: 27, hit: 1 });
+  const before = db.prepare("SELECT COUNT(*) c FROM fillseen").get().c;
+  const r = await W.rebuildCover(env, now);
+  const cov = (await W.kvGet(env, "fillCover", {}))["27386"];
+  assert.ok(cov.length === 1 && cov[0][0] >= day(6), JSON.stringify(cov));
+  const p = db.prepare("SELECT spd, sn, sdays FROM prices WHERE pkey='gpu:rtx 4060|used'").get();
+  assert.ok(p.sn > 0 && p.sdays <= 7, JSON.stringify(p));
+  assert.equal((await W.kvGet(env, "spdCheck", {})).n, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) c FROM fillseen").get().c, before);
+  assert.equal(r.models, 1);
 });
 console.log(`\n${n} checks passed`);

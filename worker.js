@@ -481,11 +481,29 @@ const coverDays = (list, since, until) => (list || []).reduce((a, r) => a + Math
 const covered = (list, from, to) => to <= from ? inCover(list, to) : coverDays(list, from, to) >= ((to - from) / DAY) * 0.95;
 const inCover = (list, t) => (list || []).some((r) => t >= r[0] && t < r[1]);
 // the range a fill's rows prove was read in full: from the day after the oldest sale (that day was only partly read) to the end of the newest day
+// Sold pages run newest first, so the sales read form one unbroken run of days. eBay mixes in a few stray old
+// dates (multi-unit listings show their first sale), which once stretched "read in full" back by months. So only
+// "busy" days count: days with at least 15% of a typical day's sales (and at least 2). A run is busy days with
+// at most one quiet day between them.
 function coverOf(rows, now) {
-  const ds = rows.map((r) => +(r && r.d)).filter((d) => d > now - 400 * DAY && d <= now + DAY);
-  if (ds.length < 20) return null;
-  const from = Math.min(...ds) + DAY, to = Math.min(now, Math.max(...ds) + DAY);
-  return to > from ? [from, to] : null;
+  const r = coverRuns(rows.map((x) => +(x && x.d)), now);
+  return r.length ? r[r.length - 1] : null; // the run that reaches the newest sale
+}
+// every run of 20+ sales → [from, to] (the oldest day of a run was only partly read, so it starts the day after)
+function coverRuns(dates, now) {
+  const per = new Map();
+  for (const d of dates) if (d > now - 400 * DAY && d <= now + DAY) { const k = Math.floor(d / DAY); per.set(k, (per.get(k) || 0) + 1); }
+  if (!per.size) return [];
+  const counts = [...per.values()].sort((a, c) => a - c), ref = counts[Math.floor(counts.length * 0.75)];
+  const busy = [...per.entries()].filter(([, n]) => n >= Math.max(2, ref * 0.15)).sort((a, c) => a[0] - c[0]), out = [];
+  let i = 0;
+  while (i < busy.length) {
+    let j = i, n = busy[i][1];
+    while (j + 1 < busy.length && busy[j + 1][0] - busy[j][0] <= 2) { j++; n += busy[j][1]; }
+    if (n >= 20) { const from = (busy[i][0] + 1) * DAY, to = Math.min(now, (busy[j][0] + 1) * DAY); if (to > from) out.push([from, to]); }
+    i = j + 1;
+  }
+  return out;
 }
 // sales per day for one model, from its sales [id, price, post, soldAt] inside covered days of the last 30
 function salesRate(list, cover, now) {
@@ -595,6 +613,34 @@ async function fillPrices(env, b) {
   let tracked = null;
   try { await seenAdd(env, seenRows); tracked = await markSold(env, seenRows); await sellStats(env); } catch (err) {}
   return { read: rows.length, fresh, models: groups.size, saved: saved.length, few, kept, top: saved.slice(0, 40), stats, tracked };
+}
+
+// rebuild fill coverage from every sale date read (fillseen), then each fill-priced model's sales rate
+async function rebuildCover(env, now) {
+  const D = env.DB, cover = {}, before = await kvGet(env, "fillCover", {});
+  const cats = await D.prepare("SELECT DISTINCT cat FROM fillseen WHERE cat <> ''").all();
+  for (const { cat } of cats.results || []) {
+    const q = await D.prepare("SELECT at FROM fillseen WHERE cat=? AND at IS NOT NULL").bind(cat).all();
+    let list = [];
+    for (const r of coverRuns((q.results || []).map((x) => x.at), now)) list = coverAdd(list, r[0], r[1], now);
+    cover[cat] = list;
+  }
+  await kvSet(env, "fillCover", cover);
+  await kvSet(env, "fillCoverOld", before); // kept so the change can be compared or undone
+  const fc = await kvGet(env, "fillCats", {}), catOf = {};
+  for (const c in fc) for (const k in (fc[c].k || {})) if (!catOf[k]) catOf[k] = c;
+  const rows = await D.prepare("SELECT f.pkey, f.data FROM fillsales f JOIN prices p ON p.pkey = f.pkey WHERE p.src='fill'").all(), up = [];
+  for (const r of rows.results || []) {
+    let list = []; try { list = JSON.parse(r.data); } catch (e) { continue; }
+    const m = median(list.map((x) => x[1])), keep = list.filter((x) => x[1] >= m * 0.5 && x[1] <= m * 1.5);
+    const rt = salesRate(keep, cover[catOf[r.pkey]], now);
+    up.push(D.prepare("UPDATE prices SET spd=?, sdays=?, sn=? WHERE pkey=?").bind(rt.spd, rt.sdays, rt.sn, r.pkey));
+  }
+  for (let i = 0; i < up.length; i += 50) await D.batch(up.slice(i, i + 50));
+  // the speed self-check so far measured the old, wrong ranges: start it again
+  await kvSet(env, "spdCheck", { n: 0, hit: 0, restarted: now });
+  try { await sellStats(env); } catch (e) {}
+  return { cats: Object.keys(cover).length, models: up.length };
 }
 
 /* ---------------- how long listings take to sell ---------------- */
@@ -937,6 +983,11 @@ async function sweep(env, manual) {
     for (const c in fc) for (const k in (fc[c].k || {})) if (gone.has(k)) delete fc[c].k[k];
     await kvSet(env, "fillCats", fc);
     await kvSet(env, "fix3", { at: now, deleted: bad });
+  }
+  // 0f. one-off (29 Oct 2026, owner approved): rebuild each category's "days read in full" from the saved sale dates
+  // with the stray-date rule, then recalculate every model's sales rate. Raw sales are not touched.
+  if ((await kvGet(env, "seen1", false)) && !(await kvGet(env, "cover2", false))) {
+    try { await kvSet(env, "cover2", { at: now, ...(await rebuildCover(env, now)) }); } catch (e) { report.errors.push("cover2: " + e.message); }
   }
   // 0e. one-off (29 Oct 2026): fill sales saved before the "already saved" check existed go into fillseen too,
   // then listings seen for sale are matched against them (adds rows only; never changes or deletes existing data)

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 let src = fs.readFileSync(new URL("../worker.js", import.meta.url), "utf8").replace(/export default\s*\{[\s\S]*$/, "");
 src = src.replace("async function ebay(env, path) {", "async function ebay(env, path) { return globalThis.FAKE_EBAY(path);\n}\nasync function ebayReal(env, path) {");
-const W = new Function(src + "\nreturn { schema, checkLive };")();
+const W = new Function(src + "\nreturn { schema, checkLive, descFaults, MIN_SALES };")();
 const db = new DatabaseSync(":memory:");
 const stmt = (sql, args = []) => ({ bind: (...a) => stmt(sql, a), run: async () => ({ meta: { changes: Number(db.prepare(sql).run(...args).changes) } }),
   all: async () => ({ results: db.prepare(sql).all(...args) }), first: async () => db.prepare(sql).get(...args) || null });
@@ -39,4 +39,19 @@ await t("rejected listings keep a reason (rules code records it)", async () => {
   assert.match(src, /whyId\[s\.id\] = "over"/); assert.match(src, /"rules: " \+ \(whyId\[id\]/);
   assert.match(src, /INSERT OR REPLACE INTO deal_out \(id, at, why, price, title\) SELECT id, \$\{now\}, 'expired'/);
 });
+await t("faults written only in the description are found; denied ones aren't (live laptop deal, 29 Oct)", async () => {
+  assert.deepEqual(W.descFaults("Battery does not hold the charge, tested , factory reset done.\nPlease note , requires a new battery - No charger included"),
+    ["battery does not hold the charge", "requires a new battery", "no charger"]);
+  assert.deepEqual(W.descFaults("Great condition, not cracked, no water damage, comes with charger"), []);
+  assert.deepEqual(W.descFaults("iCloud locked, sold for parts"), ["icloud locked"]);
+});
+await t("a deal whose description shows a fault is tagged, scored 49 at most, and reported (so no alert)", async () => {
+  addDeal("4", { type: "BIN", price: 59.99, ship: 0, maxPay: 120, score: 78, tags: [] });
+  globalThis.FAKE_EBAY = () => ({ buyingOptions: ["FIXED_PRICE"], price: { value: "59.99" }, description: "<p>Battery does not hold the charge</p><p>No charger included</p>" });
+  const r = await W.checkLive(env, "4");
+  assert.ok(r.live && r.fault.length === 2);
+  const d = JSON.parse(db.prepare("SELECT data FROM deals WHERE id='4'").get().data);
+  assert.equal(d.score, 49); assert.ok(d.tags.includes("Fault in description"));
+});
+await t("deals need 8+ sales behind the price", async () => { assert.equal(W.MIN_SALES, 8); assert.match(src, /< MIN_SALES\) \{ why\.noData\+\+/); });
 console.log(`\n${n} checks passed`);

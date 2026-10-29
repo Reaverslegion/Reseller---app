@@ -948,11 +948,11 @@ const TAGS={"New listing":["Just listed","Listed in the last hour, so few people
  "Price from price book":["✓ You checked this price","The sells-for price comes from eBay sold prices you checked and saved."],
  "Special version":["Special version – check prices","Water-cooled, blower, low-profile, mini, OEM and similar versions can sell for more or less than the standard model. Check sold prices for this exact version before buying."],
  "Price from category check":["✓ From your category check","The sells-for price comes from recent eBay sales collected when you filled prices for this category."],
- "Slow seller":["Slow to sell","These don't sell often, so it may take a while to resell."],"Very cheap":["Very cheap: check it's genuine","Under 60% of what this model usually sells for. That's often the wrong item, a hidden fault, a locked phone or a scam. Read the description and check the photos before buying."],"Not verified yet":["Not verified yet","FlipScout hasn't yet been checked on how well it recognises products in this category. Make sure it's the same model and check sold prices before buying. No alerts for these."],"Few sales behind the price":["Few sales","The sell price comes from fewer than 10 sales, so it's less certain. Check sold prices before buying."],
+ "Slow seller":["Slow to sell","These don't sell often, so it may take a while to resell."],"Fault in description":["Fault in description","The seller's description mentions a fault (battery, charger, screen, lock or damage). It will likely sell for much less than a working one. Read it before buying."],"Very cheap":["Very cheap: check it's genuine","Under 60% of what this model usually sells for. That's often the wrong item, a hidden fault, a locked phone or a scam. Read the description and check the photos before buying."],"Not verified yet":["Not verified yet","FlipScout hasn't yet been checked on how well it recognises products in this category. Make sure it's the same model and check sold prices before buying. No alerts for these."],"Few sales behind the price":["Few sales","The sell price comes from fewer than 10 sales, so it's less certain. Check sold prices before buying."],
  "Prices falling":["Prices dropping","Sold prices for this have been going down lately."]};
 const tagOf=t=>TAGS[t]||(/^Ships from /.test(t)?[t,"The item is posted from outside the UK, so delivery may be slow and you may pay import charges."]:[t,""]);
 function tagSheet(t){const[l,m]=tagOf(t);openSheet(`<h2 style="margin-top:0">${esc(l)}</h2><div style="font-size:16px">${esc(m)}</div><div class="btns"><button onclick="closeSheet()">Got it</button></div>`)}
-const tagChips=tg=>tg.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">${tg.map(t=>`<button class="chip${/^Price from (price book|category check)$/.test(t)?" ok":/^Price not|^Prices falling|^Slow|^Ships|^Special|^Not verified|^Few sales|^Very cheap/.test(t)?" warn":""}" style="margin:0;min-height:32px;cursor:pointer" onclick="event.stopPropagation();tagSheet(${esc(JSON.stringify(t))})">${esc(tagOf(t)[0])} ⓘ</button>`).join("")}</div>`:"";
+const tagChips=tg=>tg.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">${tg.map(t=>`<button class="chip${/^Price from (price book|category check)$/.test(t)?" ok":/^Price not|^Prices falling|^Slow|^Ships|^Special|^Not verified|^Few sales|^Very cheap|^Fault/.test(t)?" warn":""}" style="margin:0;min-height:32px;cursor:pointer" onclick="event.stopPropagation();tagSheet(${esc(JSON.stringify(t))})">${esc(tagOf(t)[0])} ⓘ</button>`).join("")}</div>`:"";
 function dealCard(d,i){
   const sp=d.kind==="spares",auc=d.type==="AUC";
   const hc=sp||auc?"var(--hdA)":"var(--hdB)",ht=sp||auc?"var(--onhdA)":"var(--onhdB)";
@@ -1015,7 +1015,10 @@ function unflagAdmin(id){HIDE=HIDE.filter(x=>x!==id);try{localStorage.setItem("f
 function flagUndo(id){HIDE=HIDE.filter(x=>x!==id);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}api("unflag="+encodeURIComponent(id)).catch(()=>{});$("flagbar").style.display="none";render()}
 function hideDeal(id){HIDE=[id,...HIDE.filter(x=>x!==id)].slice(0,500);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}render();toast("Hidden.","Undo",()=>{HIDE=HIDE.filter(x=>x!==id);try{localStorage.setItem("flipscout_hidden",JSON.stringify(HIDE))}catch(e){}render()})}
 // listings are "AUC" (auction) or "BIN" (Buy It Now); older or outside data may say FIXED, FIXED_PRICE or AUCTION
-const normType=d=>(d.type=/^AUC/i.test(String(d.type||""))?"AUC":"BIN",d);
+const normType=d=>{d.type=/^AUC/i.test(String(d.type||""))?"AUC":"BIN";const m=+S.rules.maxPrice||0;
+  // a deal found under a higher spend limit: never suggest bidding or paying past today's limit
+  if(m>0&&d.type==="AUC"&&d.maxBid!=null){const c=Math.floor((m-(d.ship||0))*100)/100;if(d.maxBid>c){d.maxBid=c;if(d.maxItem!=null)d.maxItem=Math.min(d.maxItem,c)}}
+  return d};
 const isGuess=d=>d.kind!=="spares"&&d.src==="asking";
 // safety net: never list a deal that wouldn't make money (the hunter already requires your minimum profit;
 // this catches one whose price went up since the last check)
@@ -1128,7 +1131,7 @@ function reprice(d){const bf=dBpf(d)?bpfA(d.price):0;d.cost=Math.round((d.price+
   d.tags=(d.tags||[]).map(t=>/^(\d+ bids?|No bids yet)$/.test(t)?(d.bids?d.bids+" bid"+(d.bids>1?"s":""):"No bids yet"):t);
   const mx=d.maxItem!=null?d.maxItem:d.maxBid;if(mx!=null&&d.price>mx)d.gone="dear"}
 function openDeal(i){DV=(HD.deals||[])[i];if(!DV)return;const d=DV;d.live=undefined;go("deal");
-  api("check="+d.id).then(r=>{d.live=r.live;if(r.info)d.info=r.info;
+  api("check="+d.id).then(r=>{d.live=r.live;if(r.info)d.info=r.info;else if(!d.info)d.info={err:1};if(r.fault){d.faults=r.fault;if(!(d.tags||[]).includes("Fault in description"))d.tags=[...(d.tags||[]),"Fault in description"]}
     if(!r.live||r.tooDear){d.gone=r.live?"dear":"ended";HD.deals=(HD.deals||[]).filter(x=>x.id!==d.id)}
     else if(r.price!=null&&Math.abs(r.price+r.ship-(d.price+d.ship))>0.009){d.changed=d.type==="AUC"?"bid":"price";d.price=r.price;d.ship=r.ship;if(r.bids!=null)d.bids=r.bids;reprice(d);if(d.gone)HD.deals=(HD.deals||[]).filter(x=>x.id!==d.id)}
     if(tab==="deal"&&DV===d)render()}).catch(()=>{d.live=true;d.info=d.info||{err:1};if(tab==="deal"&&DV===d)render()})}

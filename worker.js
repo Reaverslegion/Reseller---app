@@ -715,6 +715,14 @@ const SCAM_WORDS = /\b(empty (?:retail |original |console )?(?:box|packaging|cas
 // "iPhone 12 Pro Max 128GB BOX": a title that ends in "box" is usually the box alone ("... with box" is fine)
 const BOX_END = /(?<!\b(?:with|w\/|and|&|\+|inc|incl|includes?|including|in|original|retail) )\bbox(?:es)?\W*$/i;
 const RISK_G = new RegExp(RISK_WORDS.source, "gi");
+// faults sellers only mention in the description (titles look fine): battery, charger, screen, locks, damage
+const DESC_FAULT = /\b(battery (?:does(?:n'?t| not)|won'?t|will not|doesn'?t|wont) (?:hold|charge|last)(?: (?:a |the )?charge)?|(?:needs?|requires?|will need) (?:a )?(?:new|replacement) (?:battery|screen|charger|keyboard|hinge|motherboard)|no (?:charger|power|display|signal|sound|wifi|touch)|not charging|won'?t (?:turn|switch|power|boot) on|does(?:n'?t| not) (?:turn|switch|power|boot) on|dead pixels?|lines? (?:on|across) (?:the )?screen|screen (?:burn|bleed)|cracked|smashed|i ?cloud lock(?:ed)?|activation lock(?:ed)?|bios (?:lock(?:ed)?|password)|password locked|blacklisted|(?:water|liquid) damage(?:d)?)\b/gi;
+// fault phrases in a description, skipping ones the seller denies ("not cracked", "no water damage")
+function descFaults(text) {
+  const t = String(text || ""), out = new Set();
+  for (const m of t.matchAll(DESC_FAULT)) if (!/\b(no|not|never|isn'?t|without|zero)\s+$/i.test(t.slice(Math.max(0, m.index - 12), m.index))) out.add(m[0].toLowerCase());
+  return [...out].slice(0, 6);
+}
 const MISSPELT = /\b(nvidea|nvida|nvdia|geforse|gefroce|playstaion|playsation|plastation|playstatio|nintedo|nintndo|nitendo|xobx|xbxo|iphne|iphome|ipohne|samsng|samsumg|sumsung|macbok|mackbook|macbbok|thinkpda|lenova|lenvo|hewlet|cannon eos|nikkon|dysen|delonghi|de longhi|airpod pro|sonos|bose|playstation 4 pro|ps4 pro|ps5 disc|xbox seris|xbox sereis|apple watc|ipda|ipadd|gopro hreo|go pro|dyosn|kitchen aid|lego technic)\b/i;
 const MIS_ONLY = /\b(nvidea|nvida|nvdia|geforse|gefroce|playstaion|playsation|plastation|playstatio|nintedo|nintndo|nitendo|xobx|xbxo|iphne|iphome|ipohne|samsng|samsumg|sumsung|macbok|mackbook|macbbok|thinkpda|lenova|lenvo|hewlet|nikkon|dysen|xbox seris|xbox sereis|apple watc|ipda|ipadd|gopro hreo|dyosn)\b/i;
 
@@ -776,6 +784,8 @@ async function closing(env) {
 // until a sample of its titles has been checked and the category is added here with the date.
 // a Buy It Now under this share of the usual sold price is tagged "Very cheap" (see the deal scoring)
 const VERY_CHEAP = 0.6;
+// a price needs at least this many sales behind it before anything can be a deal
+const MIN_SALES = 8;
 const VERIFIED_CATS = {
   "27386": "2026-10-26", // Graphics/Video Cards
   "139971": "2026-10-26", // Video Game Consoles
@@ -1224,6 +1234,8 @@ async function sweep(env, manual) {
     if (BOX_END.test(s.title)) { hidden++; whyId[s.id] = "scam shield"; continue; }
     const m = market(s.pkey, s.id, s.matchQ || 0.5);
     if (!m) { why.noData++; whyId[s.id] = "noData"; continue; }
+    // prices from fewer than 8 sales were often wrong (5–9 sales: 37% within 10% in the 29 Oct accuracy test)
+    if ((m.src === "book" ? m.bookN || m.n : m.n) < MIN_SALES) { why.noData++; whyId[s.id] = "under " + MIN_SALES + " sales"; continue; }
     if (m.spread > 0.9 && (s.matchQ || 0.5) < 0.8) { why.noData++; whyId[s.id] = "noData"; continue; } // prices all over the place: not confident
     // a loose match (similar title, not a known model) needs tight, consistent prices to be trusted
     if ((s.matchQ || 0.5) < 0.6 && m.spread > 0.5) { why.noData++; whyId[s.id] = "noData"; continue; }
@@ -1434,6 +1446,7 @@ async function sweep(env, manual) {
       const d = JSON.parse(row.data);
       if (d.kind !== "deal" || !VERIFIED_CATS[String(d.cat)]) continue; // never alert on unchecked categories
       const v = await checkLive(env, d.id);
+      if (v.fault) continue; // the description mentions a fault: no alert
       if (!v.live) continue; // sold or ended since we found it: no alert
       const msg = d.type === "AUC"
         ? `Bid up to £${d.maxBid.toFixed(2)} (now £${d.price.toFixed(2)}). Score ${d.score}.`
@@ -1556,7 +1569,10 @@ async function checkLive(env, id, pre, full) {
     const tooDear = deal.kind === "deal" && (deal.type === "AUC" ? out.price >= (deal.maxBid || 0) : out.price + out.ship > (deal.maxPay || 0));
     if (tooDear) { try { await dealOut(env, [id], () => (deal.type === "AUC" ? "bid passed max bid" : "price went up")); } catch (e) {} await D.prepare("DELETE FROM deals WHERE id=?").bind(id).run(); return { ...out, live: true, tooDear: true }; }
     Object.assign(deal, { price: out.price, ship: out.ship, bids: out.bids, end: out.end || deal.end });
-    await D.prepare("UPDATE deals SET data=?, checked=? WHERE id=?").bind(JSON.stringify(deal), now, id).run();
+    // the description says it's faulty: keep it visible (with the words) but never above 49 and never alerted
+    const f = descFaults(String(d.conditionDescription || "") + "\n" + plainText(d.description || d.shortDescription));
+    if (f.length) { out.fault = f; deal.faults = f; deal.score = Math.min(deal.score || 0, 49); if (!(deal.tags || []).includes("Fault in description")) deal.tags = [...(deal.tags || []), "Fault in description"]; }
+    await D.prepare("UPDATE deals SET data=?, score=?, checked=? WHERE id=?").bind(JSON.stringify(deal), deal.score || 0, now, id).run();
   } else if (row) {
     await D.prepare("UPDATE deals SET checked=? WHERE id=?").bind(now, id).run();
   }
@@ -1571,7 +1587,7 @@ function plainText(h) {
 function listingInfo(d) {
   const desc = plainText(d.description || d.shortDescription).slice(0, 4000);
   const note = String(d.conditionDescription || "").slice(0, 600);
-  const words = [...new Set(((note + "\n" + desc).match(RISK_G) || []).map((w) => w.toLowerCase()))].slice(0, 6);
+  const words = [...new Set([...((note + "\n" + desc).match(RISK_G) || []).map((w) => w.toLowerCase()), ...descFaults(note + "\n" + desc)])].slice(0, 6);
   const rt = d.returnTerms || {}, sl = d.seller || {}, loc = d.itemLocation || {};
   return {
     desc, note, warn: words,

@@ -118,6 +118,7 @@ async function schema(env) {
   } catch (e) { /* diary is optional */ }
   // every sold item a fill has read (matched to a model or not), by eBay item number: tells the next fill which sales are
   // already saved, and is matched against listings FlipScout saw for sale to learn how long they took to sell
+  try { await D.prepare("CREATE TABLE IF NOT EXISTS deal_out (id TEXT PRIMARY KEY, at INTEGER, why TEXT, price REAL, title TEXT)").run(); } catch (e) {}
   try { await D.prepare("CREATE TABLE IF NOT EXISTS fillseen (id TEXT PRIMARY KEY, cat TEXT, price REAL, at INTEGER)").run(); } catch (e) {}
   for (const sql of ["ALTER TABLE listings ADD COLUMN data TEXT", "ALTER TABLE deals ADD COLUMN checked INTEGER DEFAULT 0",
     "ALTER TABLE listings ADD COLUMN sold_at INTEGER", "ALTER TABLE listings ADD COLUMN sold_price REAL", "ALTER TABLE listings ADD COLUMN ended_at INTEGER", "ALTER TABLE listings ADD COLUMN ended_from INTEGER"]) {
@@ -648,6 +649,14 @@ async function rebuildCover(env, now) {
   return { cats: Object.keys(cover).length, models: up.length };
 }
 
+// why deals left the list (sold out, ended, price up, rules), so a missing deal can always be traced
+async function dealOut(env, ids, why) {
+  const q = await env.DB.prepare(`SELECT id, data FROM deals WHERE id IN (${ids.map(() => "?").join(",")})`).bind(...ids).all(), now = Date.now();
+  const st = (q.results || []).map((r) => { let x = {}; try { x = JSON.parse(r.data); } catch (e) {}
+    return env.DB.prepare("INSERT OR REPLACE INTO deal_out (id, at, why, price, title) VALUES (?,?,?,?,?)").bind(r.id, now, String(why(r.id)).slice(0, 60), x.price ?? null, String(x.title || "").slice(0, 120)); });
+  if (st.length) await env.DB.batch(st);
+}
+
 /* ---------------- how long listings take to sell ---------------- */
 // rows: [itemId, cat, price incl. post, soldAt]
 async function seenAdd(env, rows) {
@@ -846,7 +855,7 @@ function paceSkip(used, now, cats, interval, sinceLast) {
 // a few calls per scan, about every 3 days per category. Each listing's last_seen is refreshed, so when a pass is
 // complete, Buy It Now listings it didn't find have ended (sold or withdrawn: the sold pages from a fill tell which).
 // eBay returns at most 10,000 results per search, so a category with more is split into price bands.
-const STOCK_CALLS = 5, STOCK_UNTIL = 0.85, STOCK_EVERY = 3 * DAY, STOCK_MAX = 3000;
+const STOCK_CALLS = 5, STOCK_UNTIL = 0.85, STOCK_EVERY = 3 * DAY, STOCK_MAX = 100000; // every price (owner: keep all the data)
 async function stockStep(env, cfg, seen, report) {
   const D = env.DB, now = Date.now(), st = await kvGet(env, "stock", { q: [], cats: {} });
   st.cats = st.cats || {};
@@ -1013,6 +1022,7 @@ async function sweep(env, manual) {
   await D.batch([
     D.prepare("INSERT OR IGNORE INTO sales (id,pkey,cat,price,kind,at) SELECT id,pkey,cat,price+ship,'auction',end_at FROM listings WHERE status='live' AND end_at<? AND end_at>? AND type='AUC' AND bids>0 AND pkey IS NOT NULL").bind(now, now - 2 * DAY),
     D.prepare("UPDATE listings SET status='ended' WHERE status='live' AND end_at<? AND end_at>? AND type='AUC'").bind(now, now - 2 * DAY),
+    D.prepare(`INSERT OR REPLACE INTO deal_out (id, at, why, price, title) SELECT id, ${now}, 'expired', json_extract(data,'$.price'), substr(json_extract(data,'$.title'),1,120) FROM deals WHERE expires<?`).bind(now),
     D.prepare("DELETE FROM deals WHERE expires<?").bind(now),
   ]);
   // learn how auctions really end: compare each auction deal's final price with where it was when FlipScout saw it
@@ -1193,7 +1203,7 @@ async function sweep(env, manual) {
   }
 
   // 5. judge each listing
-  const deals = [], spares = [], later = [];
+  const deals = [], spares = [], later = [], whyId = {}; // whyId: why each listing isn't a deal (kept for removed deals)
   let hidden = 0;
   for (const s of cands) {
     // eBay only charges buyers its protection fee on private sellers' items (business sellers' items have none).
@@ -1204,30 +1214,30 @@ async function sweep(env, manual) {
       if (!cfg.types.spares) continue;
       const m = market(s.workKey, s.id, s.workQ || 0.5);
       if (!m || s.price + s.ship > m.med * 0.6) continue;
-      if (SCAM_WORDS.test(s.title)) { hidden++; continue; }
+      if (SCAM_WORDS.test(s.title)) { hidden++; whyId[s.id] = "scam shield"; continue; }
       spares.push({ ...s, kind: "spares", tags: [], score: 0, cost: Math.round((s.price + s.ship + extra) * 100) / 100, workMed: Math.round(m.med), n: m.n, src: m.src });
       continue;
     }
-    if (RISK_WORDS.test(s.title)) { why.risky++; continue; }
-    if (MULTI_VAR.test(s.title)) { why.noData++; continue; }
-    if (FAKE_SSD(s.title)) { why.risky++; continue; }
-    if (BOX_END.test(s.title)) { hidden++; continue; }
+    if (RISK_WORDS.test(s.title)) { why.risky++; whyId[s.id] = "risky"; continue; }
+    if (MULTI_VAR.test(s.title)) { why.noData++; whyId[s.id] = "noData"; continue; }
+    if (FAKE_SSD(s.title)) { why.risky++; whyId[s.id] = "risky"; continue; }
+    if (BOX_END.test(s.title)) { hidden++; whyId[s.id] = "scam shield"; continue; }
     const m = market(s.pkey, s.id, s.matchQ || 0.5);
-    if (!m) { why.noData++; continue; }
-    if (m.spread > 0.9 && (s.matchQ || 0.5) < 0.8) { why.noData++; continue; } // prices all over the place: not confident
+    if (!m) { why.noData++; whyId[s.id] = "noData"; continue; }
+    if (m.spread > 0.9 && (s.matchQ || 0.5) < 0.8) { why.noData++; whyId[s.id] = "noData"; continue; } // prices all over the place: not confident
     // a loose match (similar title, not a known model) needs tight, consistent prices to be trusted
-    if ((s.matchQ || 0.5) < 0.6 && m.spread > 0.5) { why.noData++; continue; }
+    if ((s.matchQ || 0.5) < 0.6 && m.spread > 0.5) { why.noData++; whyId[s.id] = "noData"; continue; }
     const cost = s.price + s.ship + extra;
     // over your "most I'll spend on one item" (total incl. postage and buyer fee; for auctions, today's bid + postage)
-    if (r.maxSpend > 0 && (s.type === "AUC" ? s.price + s.ship : cost) > r.maxSpend) { why.over++; continue; }
-    if (cost < m.med * 0.4 && (s.seller.fb < 5 || s.seller.pct < 95 || SCAM_WORDS.test(s.title))) { hidden++; continue; }
-    if (SCAM_WORDS.test(s.title)) { hidden++; continue; }
+    if (r.maxSpend > 0 && (s.type === "AUC" ? s.price + s.ship : cost) > r.maxSpend) { why.over++; whyId[s.id] = "over"; continue; }
+    if (cost < m.med * 0.4 && (s.seller.fb < 5 || s.seller.pct < 95 || SCAM_WORDS.test(s.title))) { hidden++; whyId[s.id] = "scam shield"; continue; }
+    if (SCAM_WORDS.test(s.title)) { hidden++; whyId[s.id] = "scam shield"; continue; }
     // a Buy It Now at under a fifth of what it sells for is almost always a box, a photo, a code or a scam
-    if (s.type !== "AUC" && cost < m.med * 0.2) { hidden++; continue; }
+    if (s.type !== "AUC" && cost < m.med * 0.2) { hidden++; whyId[s.id] = "scam shield"; continue; }
     const ri = m.post != null ? { ...r, post: m.post } : r; // postage out for this product, from the price book
     // the most to pay in total, never above your spending limit (so max bids and max offers stay under it too)
     const mp = r.maxSpend > 0 ? Math.min(maxPay(m.med, m.low, ri), r.maxSpend) : maxPay(m.med, m.low, ri);
-    if (mp <= 0) { why.fair++; continue; }
+    if (mp <= 0) { why.fair++; whyId[s.id] = "fair"; continue; }
     const out = ri.post + ri.pack;
     const profit = m.med - sellFee(m.med, r) - out - cost;
     const lowProfit = m.low - sellFee(m.low, r) - out - cost;
@@ -1296,7 +1306,7 @@ async function sweep(env, manual) {
     if (SPECIAL.test(s.title)) tags.push("Special version");
     if (slow) tags.push("Slow seller");
     if (m.trend === "falling") tags.push("Prices falling");
-    if (score < r.minScore) { why.lowScore++; continue; }
+    if (score < r.minScore) { why.lowScore++; whyId[s.id] = "lowScore"; continue; }
     (s.type === "AUC" && s.end - now > 12 * 3600e3 ? later : deals).push({
       ...s, kind: "deal", bpfOn: pf, cost: Math.round(cost * 100) / 100, extra: Math.round(extra * 100) / 100,
       profit: Math.round(profit * 100) / 100, lowProfit: Math.round(lowProfit * 100) / 100, roi: Math.round(roi),
@@ -1396,6 +1406,7 @@ async function sweep(env, manual) {
     const drop = cands.map((s) => s.id).filter((id) => !keep.has(id));
     for (let i = 0; i < drop.length; i += 90) {
       const chunk = drop.slice(i, i + 90);
+      try { await dealOut(env, chunk, (id) => "rules: " + (whyId[id] || "not a deal any more")); } catch (e) {}
       await D.prepare(`DELETE FROM deals WHERE id IN (${chunk.map(() => "?").join(",")})`).bind(...chunk).run();
     }
   }
@@ -1525,22 +1536,25 @@ async function checkLive(env, id, pre, full) {
   const end = d.itemEndDate ? Date.parse(d.itemEndDate) : null;
   const gone = d.notFound || (end && end < now) || avail === "OUT_OF_STOCK";
   if (gone) {
+    try { await dealOut(env, [id], () => (avail === "OUT_OF_STOCK" ? "sold out" : d.notFound ? "listing removed" : "ended")); } catch (e) {}
     await D.batch([
       D.prepare("DELETE FROM deals WHERE id=?").bind(id),
       D.prepare("UPDATE listings SET status='gone', ended_at=COALESCE(ended_at, ?), ended_from=COALESCE(ended_from, last_seen) WHERE id=? AND type='BIN' AND status<>'sold'").bind(end && end < now ? end : now, id),
     ]);
     return { live: false };
   }
-  const auction = (d.buyingOptions || []).includes("AUCTION") && !(d.buyingOptions || []).includes("FIXED_PRICE");
-  const pr = auction && d.currentBidPrice ? d.currentBidPrice : d.price;
+  // an auction can also have a Buy It Now price (eBay lists both options until the first bid): it's still an auction,
+  // so compare the current bid, not the Buy It Now price (that was deleting good auction deals as "too dear")
+  const row = await D.prepare("SELECT data FROM deals WHERE id=?").bind(id).first(), deal0 = row ? JSON.parse(row.data) : null;
+  const auction = (deal0 ? deal0.type === "AUC" : false) || (d.buyingOptions || []).includes("AUCTION");
+  const pr = auction && d.currentBidPrice ? d.currentBidPrice : auction && !d.currentBidPrice && deal0 ? null : d.price;
   const so = (d.shippingOptions || [])[0];
   const out = { live: true, price: pr ? parseFloat(pr.value) : null, ship: so && so.shippingCost ? parseFloat(so.shippingCost.value) || 0 : 0, bids: +d.bidCount || 0, end };
   if (full) out.info = listingInfo(d);
-  const row = await D.prepare("SELECT data FROM deals WHERE id=?").bind(id).first();
   if (row && out.price != null) {
-    const deal = JSON.parse(row.data);
+    const deal = deal0;
     const tooDear = deal.kind === "deal" && (deal.type === "AUC" ? out.price >= (deal.maxBid || 0) : out.price + out.ship > (deal.maxPay || 0));
-    if (tooDear) { await D.prepare("DELETE FROM deals WHERE id=?").bind(id).run(); return { ...out, live: true, tooDear: true }; }
+    if (tooDear) { try { await dealOut(env, [id], () => (deal.type === "AUC" ? "bid passed max bid" : "price went up")); } catch (e) {} await D.prepare("DELETE FROM deals WHERE id=?").bind(id).run(); return { ...out, live: true, tooDear: true }; }
     Object.assign(deal, { price: out.price, ship: out.ship, bids: out.bids, end: out.end || deal.end });
     await D.prepare("UPDATE deals SET data=?, checked=? WHERE id=?").bind(JSON.stringify(deal), now, id).run();
   } else if (row) {

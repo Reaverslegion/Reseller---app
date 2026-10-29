@@ -116,7 +116,11 @@ async function schema(env) {
       D.prepare(`CREATE INDEX IF NOT EXISTS dl_at ON ${DIARY_COLS.table}(at)`),
     ]);
   } catch (e) { /* diary is optional */ }
-  for (const sql of ["ALTER TABLE listings ADD COLUMN data TEXT", "ALTER TABLE deals ADD COLUMN checked INTEGER DEFAULT 0"]) {
+  // every sold item a fill has read (matched to a model or not), by eBay item number: tells the next fill which sales are
+  // already saved, and is matched against listings FlipScout saw for sale to learn how long they took to sell
+  try { await D.prepare("CREATE TABLE IF NOT EXISTS fillseen (id TEXT PRIMARY KEY, cat TEXT, price REAL, at INTEGER)").run(); } catch (e) {}
+  for (const sql of ["ALTER TABLE listings ADD COLUMN data TEXT", "ALTER TABLE deals ADD COLUMN checked INTEGER DEFAULT 0",
+    "ALTER TABLE listings ADD COLUMN sold_at INTEGER", "ALTER TABLE listings ADD COLUMN sold_price REAL", "ALTER TABLE listings ADD COLUMN ended_at INTEGER"]) {
     try { await D.prepare(sql).run(); } catch (e) { /* column already there */ }
   }
   SCHEMA = true;
@@ -163,7 +167,8 @@ const SPEC_TOKEN = /^(sata|pcie|gen|usb|ddr|lpddr|gddr|hdmi|dp|wifi|ip|bt|lte|nv
 const FAKE_SSD = (t) => /\b([2-9]|1\d|[2-9]\d)\s*tb\b/i.test(t) && /\b(ssd|nvme|solid state)\b/i.test(t) && !SSD_BRANDS.test(t);
 const QTY_RE = /\b(pair of|matched pair|lot of \d|set of [2-9]|(?:[2-9]\s?|\d{2,}\s)x\s(?!\d+\s?gb)|x\s?[2-9]\b|\(x[2-9]\))/i;
 function sig(title) {
-  const t = String(title || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\b([a-z]{2,})\s+(\d{1,2})\b(?!\s*(gb|tb|mb|inch|in|cm|mm|pcs|pack|x)\b)/g, "$1$2").split(/\s+/).filter(Boolean);
+  // prices in a title ("for £20") are not model names
+  const t = String(title || "").toLowerCase().replace(/[£$€]\s?\d+(?:[.,]\d+)?/g, " ").replace(/[^a-z0-9 ]+/g, " ").replace(/\b([a-z]{2,})\s+(\d{1,2})\b(?!\s*(gb|tb|mb|inch|in|cm|mm|pcs|pack|x)\b)/g, "$1$2").split(/\s+/).filter(Boolean);
   // several items in one listing ("pair of", "2x", "x2"): the price is for more than one, so never compare with single items
   if (QTY_RE.test(String(title || ""))) return "";
   const keep = t.filter((w) => (/\d/.test(w) && w.length >= 2 && !/^\d{1,2}$/.test(w) && !/^\d+(x|pcs|pc|pack)$/.test(w) && !/^x\d+$/.test(w)
@@ -256,16 +261,20 @@ function phoneKey(t) {
   return { key: "phone:" + model + (st ? " " + st : ""), label: model.replace(/\b\w/g, (c) => c.toUpperCase()).replace("Iphone", "iPhone") + (st ? " " + stLabel(st) : ""), match: st ? 0.9 : 0.7 };
 }
 const NOT_CONSOLE = /\b(portal|remote play|vr2?|psvr2?|camera|headset|pulse|dualsense edge|charging station|disc drive|drive only|media remote|cover plates?|vertical stand|cooling|games?|game bundle only|steelbook|amiibo|gift card|voucher|membership|subscription|ps plus|game pass|pegi|code only|(?:download|digital|game) code|code in (?:a )?box|cartridge|cart only|disc only|game card)\b/i;
-const CON_ACC = /\b(controllers?|joy[- ]?cons?|gamepads?|dualsense|dualshock|grips?|docks?|charg(?:er|ers|ing)|cables?|cases?|covers?|skins?|stands?|headsets?|faceplates?|shells?|screen protectors?|tempered glass|memory cards?|sd cards?|carry(?:ing)? (?:bag|case)|power (?:supply|adapter)|psu|fans?|cooling|replacement|thumb ?sticks?|joysticks?|buttons?)\b/i;
+const CON_ACC = /\b(controllers?|joy[- ]?cons?|gamepads?|dualsense|dualshock|grips?|docks?|charg(?:er|ers|ing)|cables?|cases?|covers?|skins?|stands?|headsets?|faceplates?|shells?|screen protectors?|tempered glass|memory cards?|sd cards?|micro ?sd(?:hc|xc)?|carry(?:ing)? (?:bag|case)|power (?:supply|adapter)|psu|fans?|cooling|replacement|thumb ?sticks?|joysticks?|buttons?)\b/i;
+const CON_ACC_PHRASE = /\bconsoles?\s+(?=(?:covers?|cover plates?|skins?|stands?|cases?|bags?|faceplates?|shells?|stickers?|decals?|wraps?)\b)/gi;
 const CON_YES = /\b(console|system|handheld|bundle|with|inc|includes?|including|boxed|complete|\+)(?=\W|$)/i;
 const CON_BARE = /\b(switch tablet|console only|tablet only|unit only|handheld only|screen only|system only|main unit|no (?:joy[- ]?cons?|controllers?|pads?|dock|charger|cables?|leads?|power (?:lead|cable|supply))|without (?:joy[- ]?cons?|controllers?|pads?|dock|charger|cables?|leads?))\b/i;
 function consoleKey(t) {
-  if (NOT_CONSOLE.test(t) && !/\b(console|with|\+|inc|includes?|bundle)\b/i.test(t.replace(NOT_CONSOLE, ""))) return null;
+  // "Console Covers", "console skin": the word console here describes an accessory, not a console in the listing
+  const tc = t.replace(CON_ACC_PHRASE, " ");
+  // "bundle" alone doesn't prove a console is included ("PS4 Games Bundle", "Covers, Controller & Games Bundle")
+  if (NOT_CONSOLE.test(tc) && !/\b(console|with|\+|inc|includes?)\b/i.test(tc.replace(NOT_CONSOLE, ""))) return null;
   if (/\b(portal|remote play|psvr|vr2|disc drive|drive only)\b/i.test(t)) return null;
   // "Switch Accessories Bundle": accessories without the console itself
   if (/\baccessor(?:y|ies)\b/i.test(t) && !/\bconsoles?\b/i.test(t)) return null;
   // accessories on their own (controllers, docks, cases...) are not consoles; a console listing that mentions them is fine
-  if (CON_ACC.test(t) && !CON_YES.test(t)) return null;
+  if (CON_ACC.test(t) && !CON_YES.test(tc.replace(/\bbundle\b/gi, " "))) return null;
   if (/\b(lcd|screen replacement|motherboard|housing|shell|faceplate|for parts|empty|packaging|box only|pegi|code only)\b/i.test(t)) return null;
   const l = t.toLowerCase(); let m, k = null;
   if ((m = l.match(/\b(ps5|playstation\s*5)\b/))) k = "ps5 " + (/\bpro\b/.test(l) ? "pro" : /digital/.test(l) ? "digital" : "disc") + (/\bslim\b/.test(l) ? " slim" : "");
@@ -505,13 +514,14 @@ async function fillPrices(env, b) {
   // Every sale is kept by its eBay item number (so pages read twice, or on different days, never count twice)
   // in one small record per model; each model's price comes from all its sales in the last 90 days.
   const cat = String(b.cat || "").replace(/\D/g, ""), catName = String(b.catName || "").slice(0, 80), cond = b.cond === "new" ? "new" : "used";
-  const rows = (Array.isArray(b.rows) ? b.rows : []).slice(0, 3000), groups = new Map(), now = Date.now(), cut = now - 90 * DAY;
+  const rows = (Array.isArray(b.rows) ? b.rows : []).slice(0, 3000), groups = new Map(), now = Date.now(), cut = now - 90 * DAY, seenRows = [];
   // which days these pages covered in full, for sales-per-day
   const covAll = await kvGet(env, "fillCover", {}), rng = coverOf(rows, now);
   const cover = rng ? coverAdd(covAll[cat], rng[0], rng[1], now) : coverAdd(covAll[cat], 0, 0, now);
   if (rng && cat) { covAll[cat] = cover; await kvSet(env, "fillCover", covAll); }
   for (const r of rows) {
     const t = String((r && r.n) || "").slice(0, 200), p = +r.p, id = String((r && r.id) || "").replace(/\D/g, "").slice(0, 20);
+    if (id && p > 0 && p < 100000) seenRows.push([id, cat, Math.round((p + (r.s != null && +r.s >= 0 && +r.s < 500 ? +r.s : 0)) * 100) / 100, +r.d || null]);
     if (!t || !id || !(p > 0 && p < 100000) || FILL_SKIP.test(t) || MULTI_VAR.test(t) || FAKE_SSD(t)) continue;
     if (r.c && r.c !== cond) continue; // the listing's own condition (eBay's filter sometimes drops on later pages)
     const g = groupOf({ title: t }, cat, catName, cond);
@@ -580,7 +590,49 @@ async function fillPrices(env, b) {
     e.name = catName; e.at = now; fc[cat] = e; await kvSet(env, "fillCats", fc);
     stats = fillStat(e);
   } catch (err) {}
-  return { read: rows.length, fresh, models: groups.size, saved: saved.length, few, kept, top: saved.slice(0, 40), stats };
+  // remember every sale read, then learn how long the listings FlipScout saw for sale took to sell (best effort)
+  let tracked = null;
+  try { await seenAdd(env, seenRows); tracked = await markSold(env, seenRows); await sellStats(env); } catch (err) {}
+  return { read: rows.length, fresh, models: groups.size, saved: saved.length, few, kept, top: saved.slice(0, 40), stats, tracked };
+}
+
+/* ---------------- how long listings take to sell ---------------- */
+// rows: [itemId, cat, price incl. post, soldAt]
+async function seenAdd(env, rows) {
+  const st = [];
+  for (let i = 0; i < rows.length; i += 25) { const part = rows.slice(i, i + 25);
+    st.push(env.DB.prepare("INSERT OR IGNORE INTO fillseen (id,cat,price,at) VALUES " + part.map(() => "(?,?,?,?)").join(",")).bind(...part.flat())); }
+  for (let i = 0; i < st.length; i += 50) await env.DB.batch(st.slice(i, i + 50));
+}
+// which of these sold items FlipScout had seen for sale as Buy It Now: mark them sold, with the price and date
+async function markSold(env, rows) {
+  const D = env.DB, by = new Map(rows.map((r) => [String(r[0]), r])), ids = [...by.keys()], up = [];
+  for (let i = 0; i < ids.length; i += 90) {
+    const chunk = ids.slice(i, i + 90);
+    const q = await D.prepare(`SELECT id FROM listings WHERE id IN (${chunk.map(() => "?").join(",")}) AND type='BIN' AND sold_at IS NULL`).bind(...chunk).all();
+    for (const x of q.results || []) { const r = by.get(String(x.id)); if (r && r[3]) up.push(D.prepare("UPDATE listings SET status='sold', sold_at=?, sold_price=? WHERE id=?").bind(r[3], r[2], x.id)); }
+  }
+  for (let i = 0; i < up.length; i += 50) await D.batch(up.slice(i, i + 50));
+  return up.length;
+}
+// per model (price-list key): Buy It Now listings FlipScout saw for sale that later sold (days from listing to sale), and
+// ones that ended without appearing in a sold list that was read for that day ("probably withdrawn"; an assumption)
+async function sellStats(env) {
+  const D = env.DB, now = Date.now(), cover = await kvGet(env, "fillCover", {});
+  const q = await D.prepare("SELECT pkey, cat, first_seen, last_seen, sold_at, ended_at, status FROM listings WHERE type='BIN' AND pkey IS NOT NULL AND status IN ('sold','gone')").all();
+  const m = {};
+  for (const r of q.results || []) {
+    const k = bareKey(r.pkey), x = (m[k] = m[k] || { d: [], wd: 0 });
+    if (r.status === "sold" && r.sold_at >= r.first_seen) x.d.push((r.sold_at - r.first_seen) / DAY);
+    else if (r.status === "gone" && inCover(cover[r.cat], r.ended_at || r.last_seen)) x.wd++;
+  }
+  const out = {};
+  for (const [k, x] of Object.entries(m)) {
+    const d = x.d.sort((a, c) => a - c), at = (p) => Math.round(d[Math.min(d.length - 1, Math.floor(p * d.length))] * 10) / 10;
+    out[k] = { n: d.length, wd: x.wd, med: d.length ? at(0.5) : null, lo: d.length ? at(0.25) : null, hi: d.length ? at(0.75) : null };
+  }
+  await kvSet(env, "sellTime", { at: now, m: out });
+  return out;
 }
 
 const fillStat = (e) => { const v = Object.values(e.k || {}); return { sales: v.reduce((a, x) => a + x[0], 0), models: v.filter((x) => x[1]).length, at: e.at || 0, name: e.name || "" }; };
@@ -660,6 +712,8 @@ async function closing(env) {
 // Categories whose product matching has been checked by hand on real titles (see docs/ENGINEERING_LOG.md).
 // Deals from any other category are shown as "Not verified yet": scored no higher than Medium and never alerted,
 // until a sample of its titles has been checked and the category is added here with the date.
+// a Buy It Now under this share of the usual sold price is tagged "Very cheap" (see the deal scoring)
+const VERY_CHEAP = 0.6;
 const VERIFIED_CATS = {
   "27386": "2026-10-26", // Graphics/Video Cards
   "139971": "2026-10-26", // Video Game Consoles
@@ -793,6 +847,19 @@ async function sweep(env, manual) {
     for (const c in fc) for (const k in (fc[c].k || {})) if (gone.has(k)) delete fc[c].k[k];
     await kvSet(env, "fillCats", fc);
     await kvSet(env, "fix3", { at: now, deleted: bad });
+  }
+  // 0e. one-off (29 Oct 2026): fill sales saved before the "already saved" check existed go into fillseen too,
+  // then listings seen for sale are matched against them (adds rows only; never changes or deletes existing data)
+  if (!(await kvGet(env, "seen1", false))) {
+    try {
+      const fc = await kvGet(env, "fillCats", {}), catOf = {}, rows = [];
+      for (const c in fc) for (const k in (fc[c].k || {})) if (!catOf[k]) catOf[k] = c;
+      const all = await D.prepare("SELECT pkey, data FROM fillsales").all();
+      for (const f of all.results || []) { let list = []; try { list = JSON.parse(f.data); } catch (e) {}
+        for (const r of list) if (r && r[0]) rows.push([String(r[0]), catOf[f.pkey] || "", Math.round(((+r[1] || 0) + (+r[2] || 0)) * 100) / 100, +r[3] || null]); }
+      await seenAdd(env, rows); const n = await markSold(env, rows); await sellStats(env);
+      await kvSet(env, "seen1", { at: now, rows: rows.length, sold: n });
+    } catch (e) { report.errors.push("seen1: " + e.message); }
   }
   // 1. auctions that have ended become sold prices (only if they had bids)
   // (the free database allows 5 million rows read a day, so every query here must use an index)
@@ -928,7 +995,7 @@ async function sweep(env, manual) {
     return !h || h.price !== s.price || h.ship !== s.ship || h.bids !== s.bids || now - h.last_seen > 6 * 3600e3;
   });
   const up = dirty.map((s) => D.prepare(
-    "INSERT INTO listings (id,cat,pkey,title,cond,type,price,ship,bids,end_at,first_seen,last_seen,status,data) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'live',?) ON CONFLICT(id) DO UPDATE SET price=excluded.price, ship=excluded.ship, bids=excluded.bids, last_seen=excluded.last_seen, end_at=excluded.end_at, status=CASE WHEN listings.status='gone' THEN 'gone' ELSE 'live' END, data=excluded.data"
+    "INSERT INTO listings (id,cat,pkey,title,cond,type,price,ship,bids,end_at,first_seen,last_seen,status,data) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'live',?) ON CONFLICT(id) DO UPDATE SET price=excluded.price, ship=excluded.ship, bids=excluded.bids, last_seen=excluded.last_seen, end_at=excluded.end_at, status=CASE WHEN listings.status IN ('gone','sold') THEN listings.status ELSE 'live' END, data=excluded.data"
   ).bind(s.id, s.cat, s.pkey, s.title.slice(0, 200), s.bucket, s.type, s.price, s.ship, s.bids, s.end, s.created || now, now, s.learn ? null : JSON.stringify(s)));
   for (let i = 0; i < up.length; i += 50) await D.batch(up.slice(i, i + 50));
   report.saved = up.length;
@@ -1116,6 +1183,10 @@ async function sweep(env, manual) {
     if (m.src === "asking") { score = Math.min(score, r.alertScore - 1, 69); tags.push("Price not confirmed by sales"); }
     const verified = !!VERIFIED_CATS[String(s.cat)];
     if (!verified) { score = Math.min(score, r.alertScore - 1, 69); tags.push("Not verified yet"); }
+    // far below the usual price (Buy It Now only; auctions start low): usually the wrong item, a hidden fault, a locked phone
+    // or a scam. Still shown, so real bargains aren't missed, but never above Medium and never alerted.
+    const veryCheap = s.type === "BIN" && m.med > 0 && (s.price + s.ship) < m.med * VERY_CHEAP;
+    if (veryCheap) { score = Math.min(score, r.alertScore - 1, 69); tags.push("Very cheap"); }
     if (m.src === "book") tags.push(m.fill ? "Price from category check" : "Price from price book");
     if (m.src === "book" && m.bookN && m.bookN < 10) tags.push("Few sales behind the price");
     if (SPECIAL.test(s.title)) tags.push("Special version");
@@ -1352,7 +1423,7 @@ async function checkLive(env, id, pre, full) {
   if (gone) {
     await D.batch([
       D.prepare("DELETE FROM deals WHERE id=?").bind(id),
-      D.prepare("UPDATE listings SET status='gone' WHERE id=? AND type='BIN'").bind(id),
+      D.prepare("UPDATE listings SET status='gone', ended_at=COALESCE(ended_at, ?) WHERE id=? AND type='BIN' AND status<>'sold'").bind(end && end < now ? end : now, id),
     ]);
     return { live: false };
   }
@@ -1491,7 +1562,7 @@ export default {
     }
 
     // ---- hunting (needs the database) ----
-    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "flag", "unflag", "flags", "test", "device", "check", "price", "prices", "unprice", "needs", "lookfor", "fill", "fillstats"].some((k) => u.searchParams.has(k));
+    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "flag", "unflag", "flags", "test", "device", "check", "price", "prices", "unprice", "needs", "lookfor", "fill", "fillstats", "seen"].some((k) => u.searchParams.has(k));
     if (huntCall) {
       if (!env.DB) return json({ error: "hunting database not set up yet" }, 501);
       try {
@@ -1549,6 +1620,15 @@ export default {
           const b = JSON.parse(await request.text());
           return json(await fillPrices(env, b));
         }
+        if (P("seen") && request.method === "POST") {
+          // which of these sold item numbers a fill has already saved (read only)
+          const b = JSON.parse(await request.text()), ids = (Array.isArray(b.ids) ? b.ids : []).map((x) => String(x).replace(/\D/g, "").slice(0, 20)).filter(Boolean).slice(0, 300), known = [];
+          for (let i = 0; i < ids.length; i += 90) {
+            const chunk = ids.slice(i, i + 90), q = await env.DB.prepare(`SELECT id FROM fillseen WHERE id IN (${chunk.map(() => "?").join(",")})`).bind(...chunk).all();
+            for (const r of q.results || []) known.push(r.id);
+          }
+          return json({ known });
+        }
         if (P("fillstats")) {
           const fc = await kvGet(env, "fillCats", {}), out = {};
           for (const c in fc) out[c] = fillStat(fc[c]);
@@ -1557,9 +1637,9 @@ export default {
         if (P("prices")) {
           await ensureSrc(env);
           const rows = await env.DB.prepare("SELECT pkey, label, q, avg, st, post, trend, at, src, n, lo, hi, spd, sdays, sn, act, act_at FROM prices ORDER BY at DESC LIMIT 3000").all();
-          const fc = await kvGet(env, "fillCats", {}), catOf = {};
+          const fc = await kvGet(env, "fillCats", {}), catOf = {}, sell = (await kvGet(env, "sellTime", { m: {} })).m || {};
           for (const c in fc) for (const k in (fc[c].k || {})) if (!catOf[k]) catOf[k] = fc[c].name || "";
-          return json({ prices: (rows.results || []).map((r) => ({ ...r, cat: catOf[r.pkey] || "", url: lookupUrl(r.q || ""), fresh: Date.now() - r.at < BOOK_DAYS * DAY, speed: speedOf(r, Date.now()) })) });
+          return json({ prices: (rows.results || []).map((r) => ({ ...r, cat: catOf[r.pkey] || "", sell: sell[r.pkey] || null, url: lookupUrl(r.q || ""), fresh: Date.now() - r.at < BOOK_DAYS * DAY, speed: speedOf(r, Date.now()) })) });
         }
         if (P("unprice")) {
           await env.DB.prepare("DELETE FROM prices WHERE pkey=?").bind(String(P("unprice"))).run();

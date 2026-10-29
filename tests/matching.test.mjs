@@ -44,4 +44,18 @@ t("risky and multi-size listings are kept out", () => {
   assert.ok(W.MULTI_VAR.test("Kingston NV2 250GB/500GB/1TB NVMe"));
   assert.ok(!W.MULTI_VAR.test("Lenovo L15, Intel Core i5-10210U, 8GB RAM, 256GB SSD"));
 });
+t("accessories and games aren't consoles (live deals, 29 Oct)", () => {
+  // "Console Covers" describes the covers; "bundle" alone doesn't prove a console is included
+  assert.equal(key("PS5 Galactic Purple Bundle - Official Console Covers, Controller & Games", ...CON), null);
+  assert.equal(key("Xbox Series S Console Skin and Controller Bundle", ...CON), null);
+  assert.equal(key("Nintendo Switch 128GB MicroSD Mushroom UHS-I", ...CON), null);
+  // "For £20" was read as a model name
+  assert.equal(key("PS4 Games , Will Sell Separately Or In a Bundle For £20, hardly used", ...CON), null);
+  // real console listings that mention accessories still match
+  assert.equal(key("PS5 Console Bundle with 2 controllers and games", ...CON), "con:ps5 disc|used");
+  assert.equal(key("PS4 Slim 500GB Console with Controller and Games Bundle", ...CON), "con:ps4 slim|used");
+  assert.equal(key("Nintendo Switch OLED with 128GB microSD card", ...CON), "con:switch oled|used");
+  assert.equal(key("PS5 Disc Console with Cover Plates", ...CON), "con:ps5 disc|used");
+  assert.equal(key("Xbox Series X 1TB Bundle", ...CON), "con:xbox series x|used");
+});
 console.log(`\n${n} checks passed`);

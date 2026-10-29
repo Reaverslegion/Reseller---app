@@ -16,4 +16,8 @@ t("deals from unchecked categories are capped and never alerted (rules are in th
   assert.match(src, /if \(!verified\) \{ score = Math\.min\(score, r\.alertScore - 1, 69\); tags\.push\("Not verified yet"\); \}/);
   assert.match(src, /!VERIFIED_CATS\[String\(d\.cat\)\]\) continue; \/\/ never alert on unchecked categories/);
 });
+t("very cheap Buy It Now deals are capped and so never alerted", () => {
+  assert.match(src, /const VERY_CHEAP = 0\.6;/);
+  assert.match(src, /if \(veryCheap\) \{ score = Math\.min\(score, r\.alertScore - 1, 69\); tags\.push\("Very cheap"\); \}/);
+});
 console.log(`\n${n} checks passed`);

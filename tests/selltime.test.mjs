@@ -46,11 +46,15 @@ await t("days read in full ignore stray old sales (one March sale made months lo
   const day = (k) => Math.floor(now / DAY) * DAY - k * DAY + 3600e3, ds = [];
   for (let k = 0; k <= 5; k++) for (let i = 0; i < 100; i++) ds.push(day(k));   // 6 busy days read today
   ds.push(day(20), day(21), day(45), day(200));                                  // strays from multi-unit listings
+  for (let k = 6; k <= 40; k++) ds.push(day(k), day(k), ...(k % 3 ? [day(k)] : [])); // weeks of 2–3 strays a day (live phones, 29 Oct)
   const r = W.coverOf(ds.map((d) => ({ d })), now);
   assert.ok(r[0] >= day(5), "range must start within the busy days, not at a stray: " + new Date(r[0]).toISOString());
   // two separate fills with unread days between them are two ranges, not one
   const two = [...ds]; for (let k = 10; k <= 13; k++) for (let i = 0; i < 100; i++) two.push(day(k));
   assert.equal(W.coverRuns(two, now).length, 2);
+  // a last day read only partly (fill done that morning: 20 sales instead of ~100) isn't counted as a full day
+  const part = []; for (let k = 3; k <= 8; k++) for (let i = 0; i < 100; i++) part.push(day(k)); for (let i = 0; i < 20; i++) part.push(day(2));
+  assert.equal(W.coverRuns(part, now).pop()[1], day(2) - 3600e3);
 });
 await t("one-off rebuild: coverage from saved sale dates, then each model's sales rate; raw sales untouched", async () => {
   const day = (k) => Math.floor(now / DAY) * DAY - k * DAY + 3600e3, sales = [];

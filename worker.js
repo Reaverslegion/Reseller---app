@@ -483,8 +483,9 @@ const inCover = (list, t) => (list || []).some((r) => t >= r[0] && t < r[1]);
 // the range a fill's rows prove was read in full: from the day after the oldest sale (that day was only partly read) to the end of the newest day
 // Sold pages run newest first, so the sales read form one unbroken run of days. eBay mixes in a few stray old
 // dates (multi-unit listings show their first sale), which once stretched "read in full" back by months. So only
-// "busy" days count: days with at least 15% of a typical day's sales (and at least 2). A run is busy days with
-// at most one quiet day between them.
+// "busy" days count: days with at least 15% of the busiest day's sales (and at least 2). A run is busy days with
+// at most one quiet day between them. (Measured against the busiest day, not a typical one: with weeks of 1–5 stray
+// sales a day, a "typical" day is a stray day, and strays chained into a fake month-long run.)
 function coverOf(rows, now) {
   const r = coverRuns(rows.map((x) => +(x && x.d)), now);
   return r.length ? r[r.length - 1] : null; // the run that reaches the newest sale
@@ -494,13 +495,17 @@ function coverRuns(dates, now) {
   const per = new Map();
   for (const d of dates) if (d > now - 400 * DAY && d <= now + DAY) { const k = Math.floor(d / DAY); per.set(k, (per.get(k) || 0) + 1); }
   if (!per.size) return [];
-  const counts = [...per.values()].sort((a, c) => a - c), ref = counts[Math.floor(counts.length * 0.75)];
+  const ref = Math.max(...per.values());
   const busy = [...per.entries()].filter(([, n]) => n >= Math.max(2, ref * 0.15)).sort((a, c) => a[0] - c[0]), out = [];
   let i = 0;
   while (i < busy.length) {
     let j = i, n = busy[i][1];
     while (j + 1 < busy.length && busy[j + 1][0] - busy[j][0] <= 2) { j++; n += busy[j][1]; }
-    if (n >= 20) { const from = (busy[i][0] + 1) * DAY, to = Math.min(now, (busy[j][0] + 1) * DAY); if (to > from) out.push([from, to]); }
+    // the newest day is usually only partly read too (the fill was done that day): if it has under half a normal
+    // day's sales it isn't counted (when filling today, "now" already ends the range at the right time)
+    const mid = busy.slice(i, j + 1).map((x) => x[1]).sort((a, c) => a - c)[(j - i) >> 1], last = busy[j][0];
+    const end = j > i && busy[j][1] < mid * 0.5 && (last + 1) * DAY <= now ? last * DAY : (last + 1) * DAY;
+    if (n >= 20) { const from = (busy[i][0] + 1) * DAY, to = Math.min(now, end); if (to > from) out.push([from, to]); }
     i = j + 1;
   }
   return out;
@@ -626,7 +631,7 @@ async function rebuildCover(env, now) {
     cover[cat] = list;
   }
   await kvSet(env, "fillCover", cover);
-  await kvSet(env, "fillCoverOld", before); // kept so the change can be compared or undone
+  if (!(await kvGet(env, "fillCoverOld", null))) await kvSet(env, "fillCoverOld", before); // the original, kept so the change can be compared or undone
   const fc = await kvGet(env, "fillCats", {}), catOf = {};
   for (const c in fc) for (const k in (fc[c].k || {})) if (!catOf[k]) catOf[k] = c;
   const rows = await D.prepare("SELECT f.pkey, f.data FROM fillsales f JOIN prices p ON p.pkey = f.pkey WHERE p.src='fill'").all(), up = [];
@@ -986,8 +991,9 @@ async function sweep(env, manual) {
   }
   // 0f. one-off (29 Oct 2026, owner approved): rebuild each category's "days read in full" from the saved sale dates
   // with the stray-date rule, then recalculate every model's sales rate. Raw sales are not touched.
-  if ((await kvGet(env, "seen1", false)) && !(await kvGet(env, "cover2", false))) {
-    try { await kvSet(env, "cover2", { at: now, ...(await rebuildCover(env, now)) }); } catch (e) { report.errors.push("cover2: " + e.message); }
+  // (cover3: run again after the busy-day rule was corrected the same evening)
+  if ((await kvGet(env, "seen1", false)) && !(await kvGet(env, "cover3", false))) {
+    try { await kvSet(env, "cover3", { at: now, ...(await rebuildCover(env, now)) }); } catch (e) { report.errors.push("cover3: " + e.message); }
   }
   // 0e. one-off (29 Oct 2026): fill sales saved before the "already saved" check existed go into fillseen too,
   // then listings seen for sale are matched against them (adds rows only; never changes or deletes existing data)

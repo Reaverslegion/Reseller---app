@@ -13,8 +13,8 @@ const env = { DB: { prepare: (sql) => stmt(sql), batch: async (list) => { for (c
 let n = 0; const t = async (name, fn) => { await fn(); n++; console.log("✓", name); };
 const DAY = W.DAY, now = Date.now();
 await W.schema(env);
-const add = (id, first, status = "live", type = "BIN", extra = {}) => db.prepare("INSERT INTO listings (id,cat,pkey,title,cond,type,price,ship,bids,end_at,first_seen,last_seen,status,ended_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-  .run(id, "27386", "gpu:rtx 3060|used", "RTX 3060", "used", type, 150, 5, 0, null, first, first, status, extra.ended_at ?? null);
+const add = (id, first, status = "live", type = "BIN", extra = {}) => db.prepare("INSERT INTO listings (id,cat,pkey,title,cond,type,price,ship,bids,end_at,first_seen,last_seen,status,ended_at,ended_from) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+  .run(id, "27386", "gpu:rtx 3060|used", "RTX 3060", "used", type, 150, 5, 0, null, first, extra.last_seen ?? first, status, extra.ended_at ?? null, extra.ended_from ?? null);
 
 await t("sales read by a fill are remembered, and reading them again adds nothing", async () => {
   await W.seenAdd(env, [["111", "27386", 160, now - 2 * DAY], ["222", "27386", 170, now - DAY]]);
@@ -31,8 +31,9 @@ await t("Buy It Now listings seen for sale are marked sold with the sold date an
   assert.equal(await W.markSold(env, [["111", "27386", 160, now - 2 * DAY]]), 0); // already counted
 });
 await t("days to sell per model; ended-unsold only counted when that day's sold list was read", async () => {
-  add("555", now - 20 * DAY, "gone", "BIN", { ended_at: now - 10 * DAY }); // its day was read: probably withdrawn
-  add("666", now - 40 * DAY, "gone", "BIN", { ended_at: now - 35 * DAY }); // its day wasn't read: unknown, not counted
+  add("555", now - 20 * DAY, "gone", "BIN", { ended_from: now - 12 * DAY, ended_at: now - 10 * DAY }); // that time was read: probably withdrawn
+  add("666", now - 40 * DAY, "gone", "BIN", { ended_from: now - 36 * DAY, ended_at: now - 35 * DAY }); // not read: unknown, not counted
+  add("777", now - 20 * DAY, "gone", "BIN", { ended_from: now - 18 * DAY, ended_at: now - 10 * DAY }); // only partly read: not counted
   await W.kvSet(env, "fillCover", { "27386": [[now - 15 * DAY, now]] });
   const m = await W.sellStats(env), x = m["gpu:rtx 3060|used"];
   assert.equal(x.n, 2); assert.equal(x.wd, 1);

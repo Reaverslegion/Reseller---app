@@ -120,7 +120,7 @@ async function schema(env) {
   // already saved, and is matched against listings FlipScout saw for sale to learn how long they took to sell
   try { await D.prepare("CREATE TABLE IF NOT EXISTS fillseen (id TEXT PRIMARY KEY, cat TEXT, price REAL, at INTEGER)").run(); } catch (e) {}
   for (const sql of ["ALTER TABLE listings ADD COLUMN data TEXT", "ALTER TABLE deals ADD COLUMN checked INTEGER DEFAULT 0",
-    "ALTER TABLE listings ADD COLUMN sold_at INTEGER", "ALTER TABLE listings ADD COLUMN sold_price REAL", "ALTER TABLE listings ADD COLUMN ended_at INTEGER"]) {
+    "ALTER TABLE listings ADD COLUMN sold_at INTEGER", "ALTER TABLE listings ADD COLUMN sold_price REAL", "ALTER TABLE listings ADD COLUMN ended_at INTEGER", "ALTER TABLE listings ADD COLUMN ended_from INTEGER"]) {
     try { await D.prepare(sql).run(); } catch (e) { /* column already there */ }
   }
   SCHEMA = true;
@@ -478,6 +478,7 @@ function coverAdd(list, from, to, now) {
   return out;
 }
 const coverDays = (list, since, until) => (list || []).reduce((a, r) => a + Math.max(0, Math.min(r[1], until) - Math.max(r[0], since)), 0) / DAY;
+const covered = (list, from, to) => to <= from ? inCover(list, to) : coverDays(list, from, to) >= ((to - from) / DAY) * 0.95;
 const inCover = (list, t) => (list || []).some((r) => t >= r[0] && t < r[1]);
 // the range a fill's rows prove was read in full: from the day after the oldest sale (that day was only partly read) to the end of the newest day
 function coverOf(rows, now) {
@@ -619,12 +620,13 @@ async function markSold(env, rows) {
 // ones that ended without appearing in a sold list that was read for that day ("probably withdrawn"; an assumption)
 async function sellStats(env) {
   const D = env.DB, now = Date.now(), cover = await kvGet(env, "fillCover", {});
-  const q = await D.prepare("SELECT pkey, cat, first_seen, last_seen, sold_at, ended_at, status FROM listings WHERE type='BIN' AND pkey IS NOT NULL AND status IN ('sold','gone')").all();
+  const q = await D.prepare("SELECT pkey, cat, first_seen, last_seen, sold_at, ended_at, ended_from, status FROM listings WHERE type='BIN' AND pkey IS NOT NULL AND status IN ('sold','gone')").all();
   const m = {};
   for (const r of q.results || []) {
     const k = bareKey(r.pkey), x = (m[k] = m[k] || { d: [], wd: 0 });
     if (r.status === "sold" && r.sold_at >= r.first_seen) x.d.push((r.sold_at - r.first_seen) / DAY);
-    else if (r.status === "gone" && inCover(cover[r.cat], r.ended_at || r.last_seen)) x.wd++;
+    // ended unsold: it ended some time between ended_from and ended_at, and the sold pages for that whole time were read
+    else if (r.status === "gone" && covered(cover[r.cat], r.ended_from || r.last_seen, r.ended_at || r.last_seen)) x.wd++;
   }
   const out = {};
   for (const [k, x] of Object.entries(m)) {
@@ -787,6 +789,94 @@ function paceSkip(used, now, cats, interval, sinceLast) {
   const ahead = used > EBAY_DAILY * 0.9 * ((1440 - minsLeft) / 1440) + 200; // using calls faster than the day allows
   return ahead && need > interval && sinceLast < need * 60000 - 30000 ? "slowed to stay under eBay's daily limit" : "";
 }
+/* ---------------- full stock check ---------------- */
+// Scans only ask eBay for the newest listings, so listings put up before FlipScout started watching were never seen.
+// The stock check pages through EVERY listing for sale in each ticked category (eBay's official API, 200 per call),
+// a few calls per scan, about every 3 days per category. Each listing's last_seen is refreshed, so when a pass is
+// complete, Buy It Now listings it didn't find have ended (sold or withdrawn: the sold pages from a fill tell which).
+// eBay returns at most 10,000 results per search, so a category with more is split into price bands.
+const STOCK_CALLS = 5, STOCK_UNTIL = 0.85, STOCK_EVERY = 3 * DAY, STOCK_MAX = 3000;
+async function stockStep(env, cfg, seen, report) {
+  const D = env.DB, now = Date.now(), st = await kvGet(env, "stock", { q: [], cats: {} });
+  st.cats = st.cats || {};
+  // start a pass for any ticked category that's due
+  if (!st.q.length) {
+    const due = cfg.cats.filter((c) => !st.cats[c.id] || now - (st.cats[c.id].done || 0) > STOCK_EVERY).sort((a, c) => ((st.cats[a.id] || {}).done || 0) - ((st.cats[c.id] || {}).done || 0))[0];
+    if (!due) return;
+    st.q.push({ cat: due.id, name: due.name, lo: 1, hi: STOCK_MAX, off: 0 });
+    st.cats[due.id] = { ...(st.cats[due.id] || {}), start: now, n: 0, calls: 0, err: 0 };
+  }
+  const base = ["priceCurrency:GBP", "deliveryCountry:GB", "buyingOptions:{FIXED_PRICE|AUCTION}"];
+  if (cfg.region === "uk") base.push("itemLocationCountry:GB");
+  let calls = 0;
+  while (st.q.length && calls < STOCK_CALLS) {
+    const b = st.q[0], c = { id: b.cat, name: b.name }, cs = st.cats[b.cat];
+    let d;
+    try { calls++; cs.calls++;
+      d = await ebay(env, `/buy/browse/v1/item_summary/search?category_ids=${b.cat}&limit=200&offset=${b.off}&sort=newlyListed&filter=${encodeURIComponent([...base, `price:[${b.lo}..${b.hi}]`].join(","))}`);
+    } catch (e) { cs.err++; if (cs.err > 5) { st.q = st.q.filter((x) => x.cat !== b.cat); cs.failed = now; } break; }
+    const total = +d.total || 0;
+    // too many in this price band for one search: split it in two (bands under £2 can't be split, so take what eBay gives)
+    if (b.off === 0 && total > 9800 && b.hi - b.lo >= 2) {
+      const mid = Math.floor((b.lo + b.hi) / 2);
+      st.q.splice(0, 1, { ...b, hi: mid }, { ...b, lo: mid + 1 });
+      continue;
+    }
+    const got = [];
+    for (const it of d.itemSummaries || []) {
+      const type = (it.buyingOptions || []).includes("AUCTION") ? "AUC" : "BIN", x = toListing(it, c, type);
+      if (x) { x.stock = true; got.push(x); }
+    }
+    seen.push(...got); cs.n += got.length;
+    // refresh "last seen" even for listings that haven't changed (the normal save skips those)
+    const ids = got.map((x) => x.id);
+    // (and a listing once thought ended that turns up again is back on sale)
+    for (let i = 0; i < ids.length; i += 90) { const ch = ids.slice(i, i + 90), q = ch.map(() => "?").join(",");
+      await D.batch([D.prepare(`UPDATE listings SET last_seen=? WHERE id IN (${q})`).bind(now, ...ch),
+        D.prepare(`UPDATE listings SET status='live', ended_at=NULL, ended_from=NULL WHERE id IN (${q}) AND status='gone'`).bind(...ch)]); }
+    // pages overlap by 40: listings ending while the pass runs move the rest up, and none may slip between pages
+    if (got.length < 200 || b.off + 200 >= Math.min(total, 10000)) st.q.shift(); else b.off += 160;
+    // pass for this category finished: Buy It Nows not seen since it started have ended
+    if (!st.q.some((x) => x.cat === b.cat)) {
+      const live = await D.prepare("SELECT COUNT(*) n FROM listings WHERE cat=? AND type='BIN' AND status='live' AND last_seen>=?").bind(b.cat, cs.start).first();
+      // safety: only trust a pass that found a sensible number of listings and had no errors
+      // a listing has ended only when two passes in a row missed it (one pass can miss a listing that moved price band);
+      // on the first pass, only listings not seen for 2+ days. It ended some time between last_seen and now.
+      if (!cs.err && cs.n >= 50) {
+        const r = await D.prepare("UPDATE listings SET status='gone', ended_at=?, ended_from=last_seen WHERE cat=? AND type='BIN' AND status='live' AND last_seen<? AND first_seen<?")
+          .bind(now, b.cat, cs.prevStart || cs.start - 2 * DAY, cs.start).run();
+        cs.gone = (r.meta && r.meta.changes) || 0;
+      } else cs.gone = null;
+      cs.done = now; cs.prevStart = cs.start; cs.live = live ? live.n : null;
+      report.stock = { cat: b.name, listings: cs.n, calls: cs.calls, ended: cs.gone };
+    }
+  }
+  await kvSet(env, "stock", st);
+}
+
+// one eBay search result → the listing record FlipScout keeps (used by scans and the full stock check)
+function toListing(it, c, type) {
+  const id = it.legacyItemId || String(it.itemId || "").split("|")[1];
+  if (!id) return null;
+  const auction = type === "AUC";
+  const pr = auction && it.currentBidPrice ? it.currentBidPrice : it.price;
+  const price = pr ? parseFloat(pr.value) : 0;
+  const so = (it.shippingOptions || [])[0];
+  const ship = so && so.shippingCost ? parseFloat(so.shippingCost.value) || 0 : 0;
+  // collection only: eBay sends no postage option (or only local pickup). Not "free post"
+  const collect = !(it.shippingOptions || []).some((o) => o && o.shippingCost) && ((it.pickupOptions || []).length > 0 || !(it.shippingOptions || []).length);
+  const bucket = condBucket(it.conditionId);
+  return {
+    id, cat: c.id, catName: c.name, title: it.title || "", cond: it.condition || "", condId: it.conditionId || "", bucket,
+    type, price, ship, bids: +it.bidCount || 0, end: it.itemEndDate ? Date.parse(it.itemEndDate) : null,
+    created: it.itemCreationDate ? Date.parse(it.itemCreationDate) : null,
+    seller: it.seller ? { name: it.seller.username || "", fb: +it.seller.feedbackScore || 0, pct: parseFloat(it.seller.feedbackPercentage) || 0, biz: it.seller.sellerAccountType === "BUSINESS" } : { name: "", fb: 0, pct: 0 },
+    loc: (it.itemLocation && it.itemLocation.country) || "", img: it.image ? it.image.imageUrl : "",
+    url: "https://www.ebay.co.uk/itm/" + id, bestOffer: (it.buyingOptions || []).includes("BEST_OFFER"),
+    collect, where: collect ? String((it.itemLocation && (it.itemLocation.postalCode || it.itemLocation.city)) || "").replace(/\*+/g, "").trim().slice(0, 20) : "",
+    ...(() => { const g = groupOf(it, c.id, c.name, bucket), w = groupOf(it, c.id, c.name, "used"); return { pkey: g ? g.key : null, matchLabel: g ? g.label : "", matchQ: g ? g.match : 0, workKey: w ? w.key : null, workQ: w ? w.match : 0 }; })(),
+  };
+}
 async function sweep(env, manual) {
   await schema(env);
   const cfg0 = cleanConfig(await kvGet(env, "config", null));
@@ -916,68 +1006,25 @@ async function sweep(env, manual) {
     // fewer categories ticked = each one searched deeper: 1–2 categories get up to 400 newest Buy It Nows and 200 ending auctions
     const deep = cfg.cats.length <= 2 ? 2 : cfg.cats.length <= 4 ? 1 : 0;
     if (cfg.types.bin || cfg.types.misspelt || cfg.types.spares) {
-      calls.push(["BIN", "buyingOptions:{FIXED_PRICE}", "newlyListed", deep ? 200 : 100, 0]);
+      // a call costs the same whatever the number of results, so always ask for eBay's maximum (200)
+      calls.push(["BIN", "buyingOptions:{FIXED_PRICE}", "newlyListed", 200, 0]);
       if (deep === 2) calls.push(["BIN", "buyingOptions:{FIXED_PRICE}", "newlyListed", 200, 200]);
     }
-    if (cfg.types.auction || cfg.types.spares) calls.push(["AUC", "buyingOptions:{AUCTION}", "endingSoonest", [50, 100, 200][deep], 0]);
-    // every other scan: newly listed auctions too, for "Ending later" (high-start auctions days away)
-    if (cfg.types.auction && (manual || Math.floor(now / 600000) % 2 === 0)) calls.push(["AUC", "buyingOptions:{AUCTION}", "newlyListed", deep === 2 ? 100 : 50, 0]);
+    if (cfg.types.auction || cfg.types.spares) calls.push(["AUC", "buyingOptions:{AUCTION}", "endingSoonest", deep === 2 ? 200 : 100, 0]);
+    // newly listed auctions too, for "Ending later" (high-start auctions days away): 200 at a time, so every 40 minutes is plenty
+    if (cfg.types.auction && (manual || Math.floor(now / 600000) % 4 === 0)) calls.push(["AUC", "buyingOptions:{AUCTION}", "newlyListed", 200, 0]);
     for (const [type, f, sort, lim, off] of calls) {
       try {
         const d = await ebay(env, `/buy/browse/v1/item_summary/search?category_ids=${c.id}&limit=${lim}${off ? "&offset=" + off : ""}&sort=${sort}&filter=${encodeURIComponent([...base, f].join(","))}`);
-        for (const it of d.itemSummaries || []) {
-          const id = it.legacyItemId || String(it.itemId || "").split("|")[1];
-          if (!id) continue;
-          const auction = type === "AUC";
-          const pr = auction && it.currentBidPrice ? it.currentBidPrice : it.price;
-          const price = pr ? parseFloat(pr.value) : 0;
-          const so = (it.shippingOptions || [])[0];
-          const ship = so && so.shippingCost ? parseFloat(so.shippingCost.value) || 0 : 0;
-          // collection only: eBay sends no postage option (or only local pickup). Not "free post"
-          const collect = !(it.shippingOptions || []).some((o) => o && o.shippingCost) && ((it.pickupOptions || []).length > 0 || !(it.shippingOptions || []).length);
-          const bucket = condBucket(it.conditionId);
-          seen.push({
-            id, cat: c.id, catName: c.name, title: it.title || "", cond: it.condition || "", condId: it.conditionId || "", bucket,
-            type, price, ship, bids: +it.bidCount || 0, end: it.itemEndDate ? Date.parse(it.itemEndDate) : null,
-            created: it.itemCreationDate ? Date.parse(it.itemCreationDate) : null,
-            seller: it.seller ? { name: it.seller.username || "", fb: +it.seller.feedbackScore || 0, pct: parseFloat(it.seller.feedbackPercentage) || 0, biz: it.seller.sellerAccountType === "BUSINESS" } : { name: "", fb: 0, pct: 0 },
-            loc: (it.itemLocation && it.itemLocation.country) || "", img: it.image ? it.image.imageUrl : "",
-            url: "https://www.ebay.co.uk/itm/" + id, bestOffer: (it.buyingOptions || []).includes("BEST_OFFER"),
-            collect, where: collect ? String((it.itemLocation && (it.itemLocation.postalCode || it.itemLocation.city)) || "").replace(/\*+/g, "").trim().slice(0, 20) : "",
-            ...(() => { const g = groupOf(it, c.id, c.name, bucket), w = groupOf(it, c.id, c.name, "used"); return { pkey: g ? g.key : null, matchLabel: g ? g.label : "", matchQ: g ? g.match : 0, workKey: w ? w.key : null, workQ: w ? w.match : 0 }; })(),
-          });
-        }
+        for (const it of d.itemSummaries || []) { const x = toListing(it, c, type); if (x) seen.push(x); }
         report.checked++;
       } catch (e) { report.errors.push(c.name + ": " + e.message); }
     }
   }
-  // background learning: a few popular categories per run, auctions only (skipped when near eBay's daily limit)
-  if ((await quota(env)) + CALLS < EBAY_DAILY * 0.7) try {
-    const mine = new Set(cfg.cats.map((c) => c.id));
-    const lc = (await learnCats(env)).filter((c) => !mine.has(c.id));
-    if (lc.length) {
-      let lr = await kvGet(env, "lrot", 0);
-      const pick = [];
-      for (let i = 0; i < Math.min(5, lc.length); i++) pick.push(lc[(lr + i) % lc.length]);
-      await kvSet(env, "lrot", (lr + pick.length) % lc.length);
-      for (const c of pick) {
-        try {
-          const d = await ebay(env, `/buy/browse/v1/item_summary/search?category_ids=${c.id}&limit=50&sort=endingSoonest&filter=${encodeURIComponent([...base, "buyingOptions:{AUCTION}"].join(","))}`);
-          for (const it of d.itemSummaries || []) {
-            const id = it.legacyItemId || String(it.itemId || "").split("|")[1];
-            if (!id || !it.currentBidPrice || !(+it.bidCount > 0)) continue; // no bids = no sale to learn
-            const bucket = condBucket(it.conditionId), g = groupOf(it, c.id, c.name, bucket);
-            if (!g) continue;
-            const so = (it.shippingOptions || [])[0];
-            seen.push({ id, cat: c.id, title: it.title || "", bucket, type: "AUC", price: parseFloat(it.currentBidPrice.value) || 0,
-              ship: so && so.shippingCost ? parseFloat(so.shippingCost.value) || 0 : 0, bids: +it.bidCount || 0,
-              end: it.itemEndDate ? Date.parse(it.itemEndDate) : null, created: null, pkey: g.key, learn: true });
-          }
-          report.learning = (report.learning || 0) + 1;
-        } catch (e) { /* learning is best effort */ }
-      }
-    }
-  } catch (e) {}
+  // full stock check: every listing for sale in your categories, a few pages per scan (see stockStep)
+  if ((await quota(env)) + CALLS < EBAY_DAILY * STOCK_UNTIL) {
+    try { await stockStep(env, cfg, seen, report); } catch (e) { report.errors.push("stock check: " + e.message); }
+  }
   if (!seen.length) { await saveQuota(env); await kvSet(env, "lastReport", { at: now, ...report }); return report; }
 
   // 3. remember everything we saw (this builds the sold history over time)
@@ -1423,7 +1470,7 @@ async function checkLive(env, id, pre, full) {
   if (gone) {
     await D.batch([
       D.prepare("DELETE FROM deals WHERE id=?").bind(id),
-      D.prepare("UPDATE listings SET status='gone', ended_at=COALESCE(ended_at, ?) WHERE id=? AND type='BIN' AND status<>'sold'").bind(end && end < now ? end : now, id),
+      D.prepare("UPDATE listings SET status='gone', ended_at=COALESCE(ended_at, ?), ended_from=COALESCE(ended_from, last_seen) WHERE id=? AND type='BIN' AND status<>'sold'").bind(end && end < now ? end : now, id),
     ]);
     return { live: false };
   }

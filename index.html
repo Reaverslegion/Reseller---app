@@ -877,6 +877,13 @@ function priceRow(d,noProfit){
     <span style="font-size:13px;font-weight:700" class="${good?"ok":"bad"}">Profit after fees</span>
     <span class="num-t ${good?"ok":"bad"}" style="font-weight:800;font-size:20px;white-space:nowrap">${rg?`${sgn(rg[0])} <span style="font-weight:600;opacity:.8">–</span> ${sgn(rg[1])}`:sgn(prof)}</span></div>`}</div>`}
 // One definition used everywhere: return % = profit ÷ (total you pay + your packaging)
+// total profit of the deals on screen, as a range. Low: each deal's cautious profit (cheaper end of its usual price;
+// auctions at your max bid), leaving out deals tagged Very cheap / Fault (often not genuine). High: today's profit.
+function dealTotals(L){const D=(L||[]).filter(d=>d.kind!=="spares"&&d.profit!=null);if(D.length<2)return"";
+  const risky=d=>(d.tags||[]).some(t=>/^(Very cheap|Fault in description)$/.test(t));
+  const lo=D.reduce((a,d)=>a+(risky(d)?0:Math.max(0,d.type==="AUC"?(d.profitAtMax??d.profit):(d.lowProfit??d.profit))),0),hi=D.reduce((a,d)=>a+Math.max(0,d.profit),0);
+  const cost=D.reduce((a,d)=>a+(d.cost||0),0),r=x=>"£"+fmtN(Math.round(x));
+  return`<div class="mu" style="font-size:13px;margin:-4px 4px 10px">${D.length} deals here: about <b class="ok">${r(lo)}–${r(hi)}</b> profit · ${r(cost)} to buy them all</div>`}
 function shownProfit(d){return d.type==="AUC"&&d.profitAtMax!=null?d.profitAtMax:d.profit}
 // buyer protection fee: only on private sellers' items, and only if that setting is on
 const dBpf=d=>d.bpfOn!=null?!!d.bpfOn&&!!H().bpf:!!H().bpf&&!(d.seller&&d.seller.biz);
@@ -1046,6 +1053,7 @@ function vHunt(){
      const n=cat?(t[cat]||0):Object.entries(t).filter(([k])=>!on.length||on.includes(k)).reduce((a,[,v])=>a+v,0);return` · tracking <b>${fmtN(n)}</b> listings`})():"Not scanned yet"}${S.set.admin&&h.paused?" · <span class='warn'>paused</span>":""}</div></div>
    ${S.set.admin?`<button class="s sm" style="white-space:nowrap;flex:none" onclick="huntNow()" ${HD.busy?"disabled":""}>${HD.busy?"Checking…":"Scan now"}</button>`:""}</div>
   ${HD.err?`<div class="card bad" style="font-size:15px">${esc(HD.err)}</div>`:""}
+  ${dealTotals(list)}
   <div style="position:relative;margin-bottom:6px"><div id="chips" onscroll="const e=this,h=$('chipsmore');if(h)h.style.opacity=e.scrollLeft+e.clientWidth>=e.scrollWidth-4?0:1" style="display:flex;gap:8px;overflow-x:auto;padding:0 28px 6px 0">${FILTERS.filter(f=>(f[0]!=="spares"||h.types.spares)&&(f[0]!=="guess"||F2.guess.length)).map(f=>`<button class="${HD.filter===f[0]?"":"s"}" style="margin:0;min-height:36px;padding:4px 13px;border-radius:99px;white-space:nowrap;flex:none;font-size:15px" onclick="HD.filter='${f[0]}';render()">${f[1]} ${F2[f[0]].length}</button>`).join("")}</div><div id="chipsmore" aria-hidden="true" style="position:absolute;right:0;top:0;bottom:6px;width:44px;pointer-events:none;background:linear-gradient(90deg,transparent,var(--bg) 70%);display:flex;align-items:center;justify-content:flex-end;color:var(--mu);font-size:22px;font-weight:700;transition:opacity .2s">›</div></div>
   <div class="tbar">${spendRow()}${scanRow()}</div>${(HD.deals||[]).length?`<div class="dctl" style="margin:0 0 10px">${HD.sOpen||HD.q?`<div style="margin-bottom:6px"><input id="dq" type="search" aria-label="Search deals" enterkeyhint="search" placeholder="Search deals, e.g. rtx 3070" value="${esc(HD.q)}" oninput="HD.q=this.value;clearTimeout(window._dqT);window._dqT=setTimeout(()=>{render();const e=$('dq');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length)}},250)"></div>`:""}
    <div style="display:flex;gap:8px"><div style="flex:1;min-width:0"><select id="dc" aria-label="Category" onchange="setDcat(this.value)"><option value="">All (${(HD.deals||[]).filter(mainDeal).length})</option>${(()=>{const m={};(HD.deals||[]).filter(mainDeal).forEach(d=>{const k=String(d.cat||"");if(k)m[k]=(m[k]||0)+1});

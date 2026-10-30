@@ -121,7 +121,8 @@ async function schema(env) {
   try { await D.prepare("CREATE TABLE IF NOT EXISTS deal_out (id TEXT PRIMARY KEY, at INTEGER, why TEXT, price REAL, title TEXT)").run(); } catch (e) {}
   try { await D.prepare("CREATE TABLE IF NOT EXISTS fillseen (id TEXT PRIMARY KEY, cat TEXT, price REAL, at INTEGER)").run(); } catch (e) {}
   for (const sql of ["ALTER TABLE listings ADD COLUMN data TEXT", "ALTER TABLE deals ADD COLUMN checked INTEGER DEFAULT 0",
-    "ALTER TABLE listings ADD COLUMN sold_at INTEGER", "ALTER TABLE listings ADD COLUMN sold_price REAL", "ALTER TABLE listings ADD COLUMN ended_at INTEGER", "ALTER TABLE listings ADD COLUMN ended_from INTEGER"]) {
+    "ALTER TABLE listings ADD COLUMN sold_at INTEGER", "ALTER TABLE listings ADD COLUMN sold_price REAL", "ALTER TABLE listings ADD COLUMN ended_at INTEGER", "ALTER TABLE listings ADD COLUMN ended_from INTEGER",
+    "ALTER TABLE fillseen ADD COLUMN title TEXT", "ALTER TABLE fillseen ADD COLUMN cond TEXT", "ALTER TABLE fillseen ADD COLUMN pkey TEXT"]) {
     try { await D.prepare(sql).run(); } catch (e) { /* column already there */ }
   }
   SCHEMA = true;
@@ -546,7 +547,9 @@ async function fillPrices(env, b) {
   if (rng && cat) { covAll[cat] = cover; await kvSet(env, "fillCover", covAll); }
   for (const r of rows) {
     const t = String((r && r.n) || "").slice(0, 200), p = +r.p, id = String((r && r.id) || "").replace(/\D/g, "").slice(0, 20);
-    if (id && p > 0 && p < 100000) seenRows.push([id, cat, Math.round((p + (r.s != null && +r.s >= 0 && +r.s < 500 ? +r.s : 0)) * 100) / 100, +r.d || null]);
+    // every sale read is kept with its title and condition, matched to a model or not, so it can be re-sorted later
+    const seenRow = [id, cat, Math.round((p + (r.s != null && +r.s >= 0 && +r.s < 500 ? +r.s : 0)) * 100) / 100, +r.d || null, t || null, r.c ? String(r.c).slice(0, 10) : null, null];
+    if (id && p > 0 && p < 100000) seenRows.push(seenRow);
     if (!t || !id || !(p > 0 && p < 100000) || FILL_SKIP.test(t) || MULTI_VAR.test(t) || FAKE_SSD(t)) continue;
     if (r.c && r.c !== cond) continue; // the listing's own condition (eBay's filter sometimes drops on later pages)
     const g = groupOf({ title: t }, cat, catName, cond);
@@ -554,6 +557,7 @@ async function fillPrices(env, b) {
     const known = /^(gpu|lap|phone|con|tab|cpu|ram|sto|mon|fas):/.test(g && g.key), code = g && /^t\d*:([a-z0-9]{4,})\|/.exec(g.key);
     if (!g || g.match < (known ? 0.6 : code ? 0.45 : 0.7)) continue;
     const key = bareKey(g.key);
+    seenRow[6] = key;
     let x = groups.get(key); if (!x) groups.set(key, (x = { label: bookLabel(g.label, t, key), q: lookupQ(t, g.key), add: [] }));
     x.add.push([id, Math.round(p * 100) / 100, r.s != null && +r.s >= 0 && +r.s < 500 ? Math.round(+r.s * 100) / 100 : null, +r.d || null]);
   }
@@ -658,11 +662,12 @@ async function dealOut(env, ids, why) {
 }
 
 /* ---------------- how long listings take to sell ---------------- */
-// rows: [itemId, cat, price incl. post, soldAt]
+// rows: [itemId, cat, price incl. post, soldAt, title?, condition?, model key?] — a sale read again fills in what was missing
 async function seenAdd(env, rows) {
-  const st = [];
-  for (let i = 0; i < rows.length; i += 25) { const part = rows.slice(i, i + 25);
-    st.push(env.DB.prepare("INSERT OR IGNORE INTO fillseen (id,cat,price,at) VALUES " + part.map(() => "(?,?,?,?)").join(",")).bind(...part.flat())); }
+  const st = [], full = rows.map((r) => [...r, null, null, null].slice(0, 7));
+  for (let i = 0; i < full.length; i += 14) { const part = full.slice(i, i + 14);
+    st.push(env.DB.prepare("INSERT INTO fillseen (id,cat,price,at,title,cond,pkey) VALUES " + part.map(() => "(?,?,?,?,?,?,?)").join(",") +
+      " ON CONFLICT(id) DO UPDATE SET title=COALESCE(fillseen.title, excluded.title), cond=COALESCE(fillseen.cond, excluded.cond), pkey=COALESCE(excluded.pkey, fillseen.pkey)").bind(...part.flat())); }
   for (let i = 0; i < st.length; i += 50) await env.DB.batch(st.slice(i, i + 50));
 }
 // which of these sold items FlipScout had seen for sale as Buy It Now: mark them sold, with the price and date
@@ -1704,7 +1709,7 @@ export default {
     }
 
     // ---- hunting (needs the database) ----
-    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "flag", "unflag", "flags", "test", "device", "check", "price", "prices", "unprice", "needs", "lookfor", "fill", "fillstats", "seen"].some((k) => u.searchParams.has(k));
+    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "flag", "unflag", "flags", "test", "device", "check", "price", "prices", "unprice", "needs", "lookfor", "fill", "fillstats", "seen", "sales"].some((k) => u.searchParams.has(k));
     if (huntCall) {
       if (!env.DB) return json({ error: "hunting database not set up yet" }, 501);
       try {
@@ -1761,6 +1766,31 @@ export default {
           await ensureSrc(env);
           const b = JSON.parse(await request.text());
           return json(await fillPrices(env, b));
+        }
+        if (P("sales")) {
+          // every sale behind a model's price, newest first, marked as used in the price or left out (read only)
+          const key = bareKey(String(P("sales")).slice(0, 200));
+          const f = await env.DB.prepare("SELECT data FROM fillsales WHERE pkey=?").bind(key).first();
+          let list = []; try { list = f ? JSON.parse(f.data) : []; } catch (e) {}
+          const rows = list.map((r) => ({ id: String(r[0]), price: r[1], post: r[2], at: r[3] || null, src: "fill" }));
+          const learned = await env.DB.prepare("SELECT id, price, at FROM sales WHERE pkey IN (?, ?) AND at>? ORDER BY at DESC LIMIT 300").bind(key, String(P("sales")), Date.now() - 90 * DAY).all();
+          const have = new Set(rows.map((r) => r.id));
+          for (const r of learned.results || []) if (!have.has(String(r.id))) rows.push({ id: String(r.id), price: r.price, post: null, at: r.at, src: "auction" });
+          // titles and conditions: from the sale itself (fills from 30 Oct) or from when FlipScout saw it for sale
+          const ids = rows.map((r) => r.id), info = {};
+          for (let i = 0; i < ids.length; i += 90) {
+            const ch = ids.slice(i, i + 90), q = ch.map(() => "?").join(",");
+            for (const r of (await env.DB.prepare(`SELECT id, title, cond FROM listings WHERE id IN (${q})`).bind(...ch).all()).results || []) info[r.id] = { title: r.title, cond: r.cond };
+            for (const r of (await env.DB.prepare(`SELECT id, title, cond FROM fillseen WHERE id IN (${q}) AND title IS NOT NULL`).bind(...ch).all()).results || []) info[r.id] = { title: r.title, cond: r.cond || (info[r.id] || {}).cond };
+          }
+          // same rule as the price: 50%–150% of the median; last 30 days when there are 5+ of those
+          const now = Date.now(), m = median(rows.filter((r) => r.src === "fill").map((r) => r.price)) || median(rows.map((r) => r.price));
+          const ok = (r) => r.price >= m * 0.5 && r.price <= m * 1.5, recentN = rows.filter((r) => r.src === "fill" && ok(r) && r.at && r.at >= now - 30 * DAY).length;
+          const out = rows.map((r) => ({ ...r, ...(info[r.id] || {}), used: r.src === "fill" && ok(r) && (recentN < 5 || (r.at && r.at >= now - 30 * DAY)),
+            why: r.src !== "fill" ? "auction FlipScout watched (last bid seen)" : !ok(r) ? (r.price < m ? "much lower than usual" : "much higher than usual") : recentN >= 5 && !(r.at && r.at >= now - 30 * DAY) ? "older than 30 days" : "" }))
+            .sort((a, c) => (c.at || 0) - (a.at || 0));
+          const p = await env.DB.prepare("SELECT label, avg, lo, hi, n, post FROM prices WHERE pkey=?").bind(key).first();
+          return json({ key, price: p || null, sales: out });
         }
         if (P("seen") && request.method === "POST") {
           // which of these sold item numbers a fill has already saved (read only)

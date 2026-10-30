@@ -826,7 +826,9 @@ function vScan(){
 const HDEF={cats:[],types:{bin:true,auction:true,misspelt:true,spares:false},alerts:false,interval:0,alertScore:70,minScore:40,post:5,pack:1,bpf:true,paused:false,quiet:{on:false,from:23,to:7}};
 let HD={cat:(()=>{try{const v=localStorage.getItem("flipscout_dcat")||"";return/^\d+$/.test(v)?v:""}catch(e){return""}})(),deals:null,report:null,learned:[],busy:false,err:"",filter:"all",at:0,q:"",sort:(()=>{try{const v=localStorage.getItem("flipscout_sort");return!v||(v==="score"&&!localStorage.getItem("flipscout_sort2"))?"now":v}catch(e){return"now"}})()},FL={list:null,busy:false,err:""},DV=null;
 const H=()=>{S.hunt={...HDEF,...(S.hunt||{}),types:{...HDEF.types,...((S.hunt||{}).types||{})}};return S.hunt};
-const api=(q,body)=>kfetch(S.set.url,S.set.key,q,body!==undefined?{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(body)}:{}).then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok||d.error)throw new Error(d.error||("error "+r.status));return d});
+// Cloudflare's database has brief hiccups ("D1_ERROR … internal error"): try once more before showing an error
+const api=(q,body)=>api1(q,body).catch(e=>/D1_ERROR|internal error|reset/i.test(String(e&&e.message))?new Promise(r=>setTimeout(r,1500)).then(()=>api1(q,body)):Promise.reject(e));
+const api1=(q,body)=>kfetch(S.set.url,S.set.key,q,body!==undefined?{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(body)}:{}).then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok||d.error)throw new Error(d.error||("error "+r.status));return d});
 const errText=e=>e.message==="Failed to fetch"?"no connection":e.message;
 let pcT=null;
 function pushConfig(now){clearTimeout(pcT);const go_=async()=>{if(!connected())return;const h=H(),r=S.rules;
@@ -834,13 +836,15 @@ function pushConfig(now){clearTimeout(pcT);const go_=async()=>{if(!connected())r
    rules:{cheap:r.cheap!==false,maxSpend:+r.maxPrice||0,minProfit:r.minProfit,minRoi:r.minRoi,seller:r.seller,feePct:r.feePct,feeFixed:r.feeFixed,post:h.post,pack:h.pack,bpf:h.bpf,alertScore:h.alertScore,minScore:h.minScore}})}
   catch(e){toast("Couldn't save hunting settings: "+errText(e))}};
   if(now)return go_();pcT=setTimeout(go_,800)}
-async function loadDeals(){if(!connected()||HD.busy)return;HD.busy=true;HD.err="";
-  try{const d=await api("deals=1");HD.deals=(d.deals||[]).map(normType);HD.report=d.report;HD.learned=d.learned||[];HD.close=d.close||[];HD.later=(d.later||[]).map(normType);HD.aucLearn=d.aucLearn||{};HD.learning=d.learning||null;HD.crash=d.lastCrash||null;HD.whyDay=d.whyDay||null;HD.verified=d.verified||null;HD.at=Date.now();markSeen()}catch(e){HD.err=errText(e)}
+async function loadDeals(){if(!connected()||HD.busy)return;HD.busy=true;HD.err="";HD.soft="";
+  try{const d=await api("deals=1");HD.deals=(d.deals||[]).map(normType);HD.report=d.report;HD.learned=d.learned||[];HD.close=d.close||[];HD.later=(d.later||[]).map(normType);HD.aucLearn=d.aucLearn||{};HD.learning=d.learning||null;HD.crash=d.lastCrash||null;HD.whyDay=d.whyDay||null;HD.verified=d.verified||null;HD.at=Date.now();markSeen()}catch(e){softErr(e)}
   HD.busy=false;if(FL.list==null)loadFollows();if(tab==="deals"||tab==="cats")render()}
+// a failed refresh while deals are already showing: a small grey note, not a red box
+function softErr(e){if((HD.deals||[]).length){HD.err="";HD.soft="Couldn't refresh just now · showing the last results"}else{HD.err=errText(e);HD.soft=""}}
 async function huntNow(){if(HD.busy)return;if(!H().cats.length){go("cats");toast("Pick some categories first.");return}
   HD.busy=true;render();
   try{await pushConfig(true);const r=await api("run=1");HD.busy=false;await loadDeals();toast(r.errors&&r.errors.length?"Check had problems: "+r.errors[0]:r.newDeals?`${r.newDeals} new deal${r.newDeals>1?"s":""} found.`:"Checked. No new deals this time.")}
-  catch(e){HD.busy=false;HD.err=errText(e);render()}}
+  catch(e){HD.busy=false;softErr(e);render()}}
 const ago=ts=>{if(!ts)return"";const m=Math.round((Date.now()-ts)/60000);return m<1?"just now":m<60?m+" min ago":m<1440?Math.round(m/60)+"h ago":Math.round(m/1440)+"d ago"};
 const left=ts=>{if(!ts)return"";const m=Math.round((ts-Date.now())/60000);if(m<=0)return"ended";if(m<60)return m+" min left";const h=Math.floor(m/60);return h<48?`${h}h ${m%60}m left`:Math.round(h/24)+" days left"};
 let CALM=true,SIMPLE=true;
@@ -1065,7 +1069,7 @@ function vHunt(){
      const on=(H().cats||[]).filter(c=>!c.off).map(c=>String(c.id)),cat=HD.cat&&ticked({cat:HD.cat})?HD.cat:"";
      const n=cat?(t[cat]||0):Object.entries(t).filter(([k])=>!on.length||on.includes(k)).reduce((a,[,v])=>a+v,0);return` · tracking <b>${fmtN(n)}</b> listings`})():"Not scanned yet"}${S.set.admin&&h.paused?" · <span class='warn'>paused</span>":""}</div></div>
    ${S.set.admin?`<button class="s sm" style="white-space:nowrap;flex:none" onclick="huntNow()" ${HD.busy?"disabled":""}>${HD.busy?"Checking…":"Scan now"}</button>`:""}</div>
-  ${HD.err?`<div class="card bad" style="font-size:15px">${esc(HD.err)}</div>`:""}
+  ${HD.err?`<div class="card bad" style="font-size:15px">${esc(HD.err)}</div>`:HD.soft?`<div class="mu" style="font-size:13px;margin:-4px 4px 8px">${esc(HD.soft)}</div>`:""}
   ${dealTotals(list)}
   <div style="position:relative;margin-bottom:6px"><div id="chips" onscroll="const e=this,h=$('chipsmore');if(h)h.style.opacity=e.scrollLeft+e.clientWidth>=e.scrollWidth-4?0:1" style="display:flex;gap:8px;overflow-x:auto;padding:0 28px 6px 0">${FILTERS.filter(f=>(f[0]!=="spares"||h.types.spares)&&(f[0]!=="guess"||F2.guess.length)).map(f=>`<button class="${HD.filter===f[0]?"":"s"}" style="margin:0;min-height:36px;padding:4px 13px;border-radius:99px;white-space:nowrap;flex:none;font-size:15px" onclick="HD.filter='${f[0]}';render()">${f[1]} ${F2[f[0]].length}</button>`).join("")}</div><div id="chipsmore" aria-hidden="true" style="position:absolute;right:0;top:0;bottom:6px;width:44px;pointer-events:none;background:linear-gradient(90deg,transparent,var(--bg) 70%);display:flex;align-items:center;justify-content:flex-end;color:var(--mu);font-size:22px;font-weight:700;transition:opacity .2s">›</div></div>
   <div class="tbar">${spendRow()}${scanRow()}</div>${(HD.deals||[]).length?`<div class="dctl" style="margin:0 0 10px">${HD.sOpen||HD.q?`<div style="margin-bottom:6px"><input id="dq" type="search" aria-label="Search deals" enterkeyhint="search" placeholder="Search deals, e.g. rtx 3070" value="${esc(HD.q)}" oninput="HD.q=this.value;clearTimeout(window._dqT);window._dqT=setTimeout(()=>{render();const e=$('dq');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length)}},250)"></div>`:""}
@@ -1415,7 +1419,7 @@ const fsMsg=`function(m){m=JSON.stringify(m);try{cordova_iab.postMessage(m)}catc
 // bad (not a sold-listings page, e.g. eBay's "Sorry" error), busy, pg (page number), nw/old (this page: new / already saved), caught
 const fsBtn=(id,label,main)=>`<button id="${id}" style="flex:1;min-height:44px;${main?"background:linear-gradient(135deg,#10d98a,#a3e635);color:#0b1a14;border:0;font-weight:800":"background:#1b2a4b;color:#fff;border:1px solid #33456b;font-weight:700"};border-radius:12px;padding:10px;font-size:15px">${label}</button>`;
 const FILL_MAXPG=100; // eBay shows at most 100 pages of one search
-const fillBar=o=>{const{n=0,pages=0,sign,bad,busy,pg=1,nw,old,caught}=o,diag=`<div style="opacity:.55;font-size:11px;margin-top:4px">Check: ${esc(window.FSDIAG||"no reading yet")}</div>`;
+const fillBar=o=>{const{n=0,pages=0,sign,bad,busy,pg=1,nw,old,caught,recovered}=o,diag=`<div style="opacity:.55;font-size:11px;margin-top:4px">Check: ${esc(window.FSDIAG||"no reading yet")}</div>`;
  const html=bad&&pg>FILL_MAXPG?`<b style="color:#fbbf24">FlipScout</b> eBay doesn't show more than ${FILL_MAXPG} pages of a search, so there's nothing past page ${FILL_MAXPG}. The older sales you read before are already saved.${n?` The ${n} sold read this time are kept.`:""}
    <div style="display:flex;gap:8px;margin-top:10px">${fsBtn("fs_first","Page 1")}${n?fsBtn("fs_save","Save all",1):""}</div>${diag}`
   :bad?`<b style="color:#fbbf24">FlipScout</b> eBay couldn't show page ${pg}, so nothing on it is counted.${n?` The ${n} sold read so far are kept.`:""}
@@ -1423,6 +1427,7 @@ const fillBar=o=>{const{n=0,pages=0,sign,bad,busy,pg=1,nw,old,caught}=o,diag=`<d
    <div style="display:flex;gap:8px;margin-top:8px;align-items:center"><input id="fs_pg" type="number" inputmode="numeric" min="1" max="${FILL_MAXPG}" placeholder="Page 1–${FILL_MAXPG}" aria-label="Page number" style="flex:1;min-width:0;min-height:44px;box-sizing:border-box;background:#0b1222;color:#fff;border:1px solid #33456b;border-radius:12px;padding:8px 12px;font-size:16px">${fsBtn("fs_go","Go to page")}</div>${n?`<div style="display:flex;gap:8px;margin-top:8px">${fsBtn("fs_save","Save all",1)}</div>`:""}${diag}`
   :sign?`<b style="color:#4ade80">FlipScout</b> eBay only shows sold prices when you're signed in. Sign in once with your email or username and keep <b>Stay signed in</b> ticked. FlipScout never sees your password.`
   :`<style>@keyframes fsspin{to{transform:rotate(360deg)}}</style><div style="display:flex;align-items:center;gap:8px">${busy||!(n||pages)?`<span style="width:16px;height:16px;border:2px solid #33456b;border-top-color:#4ade80;border-radius:50%;display:inline-block;animation:fsspin .8s linear infinite;flex:none"></span>`:""}<div><b style="color:#4ade80">FlipScout</b> ${n||pages?`page ${pg} · read <b>${n} sold</b> from ${pages} page${pages===1?"":"s"}${busy?" · reading…":""}`:`is reading page ${pg}…`}</div></div>
+   ${recovered?`<div style="margin-top:4px;color:#fbbf24;font-size:14px">eBay showed an error, but FlipScout read this page anyway (${recovered} sales). Nothing missed.</div>`:""}
    ${nw!=null?(caught?`<div style="margin-top:4px;color:#4ade80;font-weight:700">You're caught up: this page and the one before are almost all already saved (${old} of ${nw+old} here). Tap Save all.</div>`
      :`<div style="margin-top:2px;font-size:14px">This page: <b>${nw} new</b> · ${old} already saved</div>`):""}
    <div style="opacity:.75;font-size:13px;margin-top:2px">Take it steady: a few pages, then a break.</div>${diag}${pg>=FILL_MAXPG?`<div style="opacity:.75;font-size:13px;margin-top:2px">This is the last page eBay shows.</div>`:""}<div style="display:flex;gap:8px;margin-top:10px">${pg<FILL_MAXPG?fsBtn("fs_next","Next page ›"):""}${fsBtn("fs_save","Save all",1)}</div>`;
@@ -1468,7 +1473,8 @@ function fillCat(c,start){if(!c)return;const IAB=window.cordova&&window.cordova.
    const st=[acc.size,pages.size,page,got?1:wait?2:0,pi?pi.nw+"/"+pi.old:""].join("|");if(st===shown&&hasBar)return;shown=st;
    // caught up only when this page AND the page before are almost all saved (one odd page can't fool it)
    const high=x=>x&&x.nw+x.old>=20&&x.old>=(x.nw+x.old)*0.9;if(pi)hi.set(page,high(pi));
-   bar({bad,busy:wait,...(pi?{nw:pi.nw,old:pi.old,caught:high(pi)&&hi.get(page-1)===true}:{})})}
+   const recovered=got&&/^0 item links/.test(window.FSDIAG||"")?got:0;
+   bar({bad,busy:wait,recovered,...(pi?{nw:pi.nw,old:pi.old,caught:high(pi)&&hi.get(page-1)===true}:{})})}
   w.addEventListener("message",e=>{const d=e&&e.data||{},m=d.fs;
    if(m==="next"||m==="skip")open(Math.min(page+1,FILL_MAXPG+1));else if(m==="goto")open(Math.min(+d.pg,FILL_MAXPG));else if(m==="save"){save=true;w.close()}});
   let dumpNext=false;

@@ -34,7 +34,7 @@
 {"title":"PlayStation 4 Slim Console, 1TB Black *READ DESCRIPTION*","cat":"139971","catName":"Video Game Consoles","bucket":"used","expect":"BLOCKED"},
 {"title":"Microsoft Xbox Series S 512GB box only EMPTY outer box ","cat":"139971","catName":"Video Game Consoles","bucket":"used","expect":"BLOCKED"},
 {"title":"Microsoft Xbox Series S 1TB SSD White Console & Wireless Controller Wi-Fi","cat":"139971","catName":"Video Game Consoles","bucket":"new","expect":"con:xbox series s|new"},
-{"title":"Nintendo SNES Super Game Boy Bundle with Super Mario Land 1,2 and 3  VGC","cat":"139971","catName":"Video Game Consoles","bucket":"used","expect":"t139971:and3 land1 super|used"},
+{"title":"Nintendo SNES Super Game Boy Bundle with Super Mario Land 1,2 and 3  VGC","cat":"139971","catName":"Video Game Consoles","bucket":"used","expect":null},
 {"title":"Nintendo Wii Console + accessories/games - untested/spares","cat":"139971","catName":"Video Game Consoles","bucket":"parts","expect":"BLOCKED"},
 {"title":"Nintendo 3DS Console Ice White Console Bundle GOOD CONDITION CEF11315717 2","cat":"139971","catName":"Video Game Consoles","bucket":"used","expect":"t139971:3ds cef11315717|used"},
 {"title":"Nintendo DS lite pink Handheld System with 11 games and 3 stylus and case ","cat":"139971","catName":"Video Game Consoles","bucket":"used","expect":"t139971:and3 lite with11|used"},

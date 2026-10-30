@@ -184,7 +184,7 @@ function sig(title) {
   return uniq.sort().join(" ");
 }
 const LAPTOP_RE = /\b(laptop|notebook|macbook|chromebook|thinkpad|elitebook|probook|latitude|ideapad|thinkbook|zenbook|vivobook|inspiron|vostro|surface laptop|galaxy book|ultrabook)\b/i;
-const NOT_A_CARD = /\b(mobile|mxm|gpu chip|gpu module|bga|laptop|notebook|desktop|tower|gaming pc|pc build|full pc|computer|ssd|hdd|ram|i[3579][\s-]?\d|ryzen|bundle|job ?lot|joblot|pair of|waterblock|water block|heatsink|backplate|heat ?sinks?|fans? only|fun only|replacement fans?|fans? for|cooler only|cooler for|gaming ?pro cooler|bracket|riser|cable|box only|empty box)\b/i;
+const NOT_A_CARD = /\b(precision \d{4}|n1[5-9][a-z]-|for dell|mobile|mxm|gpu chip|gpu module|bga|laptop|notebook|desktop|tower|gaming pc|pc build|full pc|computer|ssd|hdd|ram|i[3579][\s-]?\d|ryzen|bundle|job ?lot|joblot|pair of|waterblock|water block|heatsink|backplate|heat ?sinks?|fans? only|fun only|replacement fans?|fans? for|cooler only|cooler for|gaming ?pro cooler|bracket|riser|cable|box only|empty box)\b/i;
 const MULTI_VRAM = new Set(["gtx 1060", "rtx 2060", "rtx 3050", "rtx 3060", "rtx 4060 ti", "rx 470", "rx 480", "rx 570", "rx 580", "rx 5500 xt", "rx 6500 xt"]);
 function gpuChip(t) {
   let m = t.match(/\b(rtx|gtx|rx|arc)\s*-?\s*([ab]?\d{3,4})\s*(ti\s*super|super|ti|xtx|xt|gre)?(?![a-z0-9])/i);
@@ -266,8 +266,20 @@ const NOT_CONSOLE = /\b(portal|remote play|vr2?|psvr2?|camera|headset|pulse|dual
 const CON_ACC = /\b(controllers?|joy[- ]?cons?|gamepads?|dualsense|dualshock|grips?|docks?|charg(?:er|ers|ing)|cables?|cases?|covers?|skins?|stands?|headsets?|faceplates?|shells?|screen protectors?|tempered glass|memory cards?|sd cards?|micro ?sd(?:hc|xc)?|carry(?:ing)? (?:bag|case)|power (?:supply|adapter)|psu|fans?|cooling|replacement|thumb ?sticks?|joysticks?|buttons?)\b/i;
 const CON_ACC_PHRASE = /\bconsoles?\s+(?=(?:covers?|cover plates?|skins?|stands?|cases?|bags?|faceplates?|shells?|stickers?|decals?|wraps?)\b)/gi;
 const CON_YES = /\b(console|system|handheld|bundle|with|inc|includes?|including|boxed|complete|\+)(?=\W|$)/i;
-const CON_BARE = /\b(switch tablet|console only|tablet only|unit only|handheld only|screen only|system only|main unit|no (?:joy[- ]?cons?|controllers?|pads?|dock|charger|cables?|leads?|power (?:lead|cable|supply))|without (?:joy[- ]?cons?|controllers?|pads?|dock|charger|cables?|leads?))\b/i;
+const CON_BARE = /\b(switch tablet|tablet console|bare unit|bare console|missing joy-?cons?|no stand|console only|tablet only|unit only|handheld only|screen only|system only|main unit|no (?:joy[- ]?cons?|controllers?|pads?|dock|charger|cables?|leads?|power (?:lead|cable|supply))|without (?:joy[- ]?cons?|controllers?|pads?|dock|charger|cables?|leads?))\b/i;
+// a listing must show it is the console itself: "console", "system", "handheld", a storage size, a model code, or
+// joy-cons/controllers included. Games, accessories and parts filed under consoles have none of these (30 Oct audit:
+// Red Dead Redemption 2 Ps4, Ring Fit, racing wheels, MixAmp, boards, a "Xbox Series X fridge" were all priced as consoles)
+const CON_EVIDENCE = /\b(consoles?|system|handheld|\d{2,4}\s?gb|[12]\s?tb|hac-?\d{3}|heg-?\d{3}|hdh-?\d{3}|bee-?\d{3}|cfi-?\d{4}|cuh-?\d{4}|scph-?\d{4,5}|model\s?\d{4}|joy-?cons?|with (?:\d|two|one|a)?\s?(?:wireless )?(?:controllers?|pads?|dualshock|dualsense))\b/i;
+const CON_PARTS = /\b(portal\w*|portable playstation|playstation 5 portable|steam link|faceplates?|console covers?|cover plates?|dock only|base only|stand only|charger only|cover only|faceplate only|shell(?: housing)?|housing|motherboard|power ?board|wi-?fi(?:\/usb)? (?:card|board)|rf board|front board|pcb|fan (?:&|and) heatsink|heatsink|games? only|cart(?:ridge)? only|carry case|bag\/carry|insert and leaflets|leaflets only|rear cover|power switch|eye ?toy|rumble pak|memory pak|controller only)\b/i;
+// parts named after "with" / "+" are extras that come with it ("PS5 Disc Console with Cover Plates")
+const conHead = (t) => String(t).replace(/\s(?:with|w\/|\+|inc|incl|including|plus)\s[\s\S]*$/i, "");
 function consoleKey(t) {
+  if (/portal|portable playstation|playstation 5 portable|remote play/i.test(t)) return null; // "ps5 portalblack", "PlayStation 5 Portable"
+  // "Not Xbox Series X Or S", "Non Oled": the named model is NOT what's for sale
+  t = t.replace(/\b(?:not|non|isn'?t|no)[\s-]+(?:an?\s+)?(?:xbox(?:\s*series)?\s*[xs]?(?:\s*or\s*[xs])?|ps[345]|playstation\s*[345]|oled|lite|switch\s*2|pro|slim|digital)\b/gi, " ");
+  if (!CON_EVIDENCE.test(t)) return null;
+  if (CON_PARTS.test(conHead(t))) return null;
   // "Console Covers", "console skin": the word console here describes an accessory, not a console in the listing
   const tc = t.replace(CON_ACC_PHRASE, " ");
   // "bundle" alone doesn't prove a console is included ("PS4 Games Bundle", "Covers, Controller & Games Bundle")
@@ -402,6 +414,11 @@ function groupOf(it, cat, catName, bucket) {
     || (fits(/cloth|shoe|trainer|sneaker|boot|footwear|coat|jacket|jumper|hoodie|jean|shirt|fashion|men|women|unisex|bag/i) && fashionKey(title)) || null;
   if (g) return { key: g.key + "|" + bucket, label: g.label, match: g.match };
   if (it.epid) return { key: "e" + it.epid + "|" + bucket, label: "Same eBay product", match: 1 };
+  // consoles: a "similar title" group (retro consoles) only takes listings that show they're the console itself, never
+  // parts or accessories (30 Oct audit: PS2 power boards, Game Boy shells, N64 carts were grouped with consoles)
+  // graphics cards: laptop GPU modules and anything else that isn't a card never form a "similar title" group either
+  if ((String(cat) === "27386" || /graphic|video card/i.test(catName || "")) && NOT_A_CARD.test(title)) return null;
+  if ((String(cat) === "139971" || /console|video game/i.test(catName || "")) && (!CON_EVIDENCE.test(title) || CON_PARTS.test(conHead(title)) || RISK_WORDS.test(title))) return null;
   const s = sig(title);
   return s ? { key: "t" + cat + ":" + s + "|" + bucket, label: "Similar title", match: s.split(" ").length >= 2 ? 0.7 : 0.45 } : null;
 }
@@ -661,6 +678,59 @@ async function dealOut(env, ids, why) {
   if (st.length) await env.DB.batch(st);
 }
 
+async function cleanup5(env, cfg, report) {
+  const D = env.DB, st = await kvGet(env, "fix5", { stage: 0, after: 0, changed: 0 });
+  if (st.stage === 3) return;
+  if (st.stage === 0) {
+    const fc = await kvGet(env, "fillCats", {}), keys = Object.keys((fc["139971"] || {}).k || {});
+    const conKeys = (await D.prepare("SELECT pkey FROM fillsales WHERE pkey LIKE 'con:%'").all()).results.map((r) => r.pkey);
+    const all = [...new Set([...keys, ...conKeys])];
+    await D.batch([
+      D.prepare("CREATE TABLE IF NOT EXISTS backup_fillsales AS SELECT * FROM fillsales WHERE 0"),
+      D.prepare("CREATE TABLE IF NOT EXISTS backup_prices AS SELECT * FROM prices WHERE 0"),
+      D.prepare("CREATE TABLE IF NOT EXISTS backup_fillseen AS SELECT * FROM fillseen WHERE 0"),
+      D.prepare("INSERT INTO backup_fillseen SELECT * FROM fillseen WHERE cat='139971'"),
+      D.prepare("DELETE FROM fillseen WHERE cat='139971'"),
+    ]);
+    for (let i = 0; i < all.length; i += 90) {
+      const ch = all.slice(i, i + 90), q = ch.map(() => "?").join(",");
+      await D.batch([
+        D.prepare(`INSERT INTO backup_fillsales SELECT * FROM fillsales WHERE pkey IN (${q})`).bind(...ch),
+        D.prepare(`INSERT INTO backup_prices SELECT * FROM prices WHERE pkey IN (${q})`).bind(...ch),
+        D.prepare(`DELETE FROM fillsales WHERE pkey IN (${q})`).bind(...ch),
+        D.prepare(`DELETE FROM prices WHERE pkey IN (${q})`).bind(...ch),
+      ]);
+    }
+    delete fc["139971"]; await kvSet(env, "fillCats", fc);
+    const cov = await kvGet(env, "fillCover", {}); delete cov["139971"]; await kvSet(env, "fillCover", cov);
+    Object.assign(st, { stage: 1, consoleModels: all.length, at: Date.now() });
+    await kvSet(env, "fix5", st);
+    return;
+  }
+  if (st.stage === 1) {
+    const names = Object.fromEntries((cfg.cats || []).map((c) => [String(c.id), c.name]));
+    const rows = (await D.prepare("SELECT rowid r, id, cat, title, cond, pkey FROM listings WHERE rowid>? ORDER BY rowid LIMIT 2500").bind(st.after).all()).results || [];
+    const up = [];
+    for (const x of rows) {
+      const g = x.title ? groupOf({ title: x.title }, x.cat, names[String(x.cat)] || "", x.cond || "used") : null, k = g ? g.key : null;
+      if (k !== x.pkey && !/^e\d/.test(x.pkey || "")) up.push(D.prepare("UPDATE listings SET pkey=? WHERE id=?").bind(k, x.id));
+    }
+    for (let i = 0; i < up.length; i += 50) await D.batch(up.slice(i, i + 50));
+    st.changed += up.length; st.read = (st.read || 0) + rows.length;
+    if (rows.length) st.after = rows[rows.length - 1].r;
+    if (rows.length < 2500) st.stage = 2;
+    await kvSet(env, "fix5", st);
+    report.cleanup = { read: st.read, changed: st.changed };
+    return;
+  }
+  if (st.stage === 2) {
+    const r = await D.prepare("UPDATE sales SET pkey=(SELECT l.pkey FROM listings l WHERE l.id=sales.id) WHERE EXISTS (SELECT 1 FROM listings l WHERE l.id=sales.id AND l.pkey IS NOT sales.pkey)").run();
+    await D.prepare("UPDATE prices SET act_at=NULL").run();
+    Object.assign(st, { stage: 3, salesChanged: (r.meta && r.meta.changes) || 0, done: Date.now() });
+    await kvSet(env, "fix5", st);
+  }
+}
+
 /* ---------------- how long listings take to sell ---------------- */
 // rows: [itemId, cat, price incl. post, soldAt, title?, condition?, model key?] — a sale read again fills in what was missing
 async function seenAdd(env, rows) {
@@ -715,7 +785,7 @@ const SPECIAL = /\b(poseidon|water ?cooled|watercooled|water ?block|hybrid|aio|b
 // auction learning buckets: time left (day+, 2h+, 30m+, under 30m) and bids (0-2, 3+)
 const aucBucket = (mins, bids) => (mins > 1440 ? "d" : mins > 120 ? "h" : mins > 30 ? "m" : "s") + (bids > 2 ? "+" : "-");
 /* ---------------- what the hunter avoids ---------------- */
-const RISK_WORDS = /\b(no (?:hdd|ssd|ram|memory|storage|hard ?drive|screen|display|battery|motherboard)|trade bundle|bulk lot|job ?lots?|joblots?|lot of \d+|bundle of \d+|bad health|parts\/|(?<!\bno |\bwithout |\bzero |\bany )damage|parts only|spares only|for parts|parts or not working|parts\/repair|as is|sold as seen|not tested|empty (?:retail |original |console )?(?:box|packaging|case)|packaging only|box (?:and|&) (?:inserts?|packaging|manual)|box\W{1,4}empty|empty\W{1,4}(?:box|packaging)|box only|empty box|read desc|read description|see desc|see description|please read|photo of|picture of|image of|replica|fake|not genuine|dummy|display only|case only|cover only|manual only|cable only|stand only|bundle only|no console|card only|for parts|spares|repairs?|faulty|broken|cracked|not working|untested|bios lock|icloud|activation lock|locked|blacklisted|no power|water damage|liquid damage|damaged|dented|bent pins?|burnt|burned|scorched|melted|smashed|shattered|bricked|no display|no signal|no picture|dead pixels?|artifact(?:s|ing)|artefact(?:s|ing))\b/i;
+const RISK_WORDS = /\b(no (?:hdd|ssd|ram|memory|storage|hard ?drive|screen|display|battery|motherboard)|trade bundle|bulk lot|job ?lots?|joblots?|lot of \d+|bundle of \d+|bad health|parts\/|(?<!\bno |\bwithout |\bzero |\bany )damage|parts only|spares only|for parts|parts or not working|parts\/repair|as is|sold as seen|not tested|empty (?:retail |original |console )?(?:box|packaging|case)|packaging only|box (?:and|&) (?:inserts?|packaging|manual)|box\W{1,4}empty|empty\W{1,4}(?:box|packaging)|box only|empty box|read desc|read description|see desc|see description|please read|photo of|picture of|image of|replica|fake|not genuine|dummy|display only|case only|cover only|manual only|cable only|stand only|bundle only|no console|card only|for parts|spares|repairs?|faulty|broken|cracked|not working|untested|bios lock|icloud|activation lock|locked|blacklisted|no power|water damage|liquid damage|damaged|dented|bent pins?|burnt|burned|scorched|melted|smashed|shattered|bricked|no display|no signal|no picture|dead pixels?|artifact(?:s|ing)|artefact(?:s|ing)|(?<!\bno )faults?|flicker\w*|(?:needs?|needed|requires?|need)\s+(?:a\s+)?(?:new\s+)?(?:screen|lcd|battery|charging port)|new (?:screen|lcd|battery) (?:needed|required)|screen (?:bar|line|lines|issue|problem)s?|scra?t?c?h?ed screen|scratched screen|chipped screen|low battery|poor battery|battery (?:issue|fault|problem)|missing joy-?cons?|box (?:with|w\/) inserts?)\b/i;
 const SCAM_WORDS = /\b(empty (?:retail |original |console )?(?:box|packaging|case)|packaging only|box (?:and|&) (?:inserts?|packaging|manual)|box\W{1,4}empty|empty\W{1,4}(?:box|packaging)|read desc|read description|photo of|picture of|image of|empty box|box only|replica|fake|not genuine|contact me|message me before|whatsapp|bank transfer)\b/i;
 // "iPhone 12 Pro Max 128GB BOX": a title that ends in "box" is usually the box alone ("... with box" is fine)
 const BOX_END = /(?<!\b(?:with|w\/|and|&|\+|inc|incl|includes?|including|in|original|retail) )\bbox(?:es)?\W*$/i;
@@ -788,7 +858,7 @@ async function closing(env) {
 // Deals from any other category are shown as "Not verified yet": scored no higher than Medium and never alerted,
 // until a sample of its titles has been checked and the category is added here with the date.
 // a Buy It Now under this share of the usual sold price is tagged "Very cheap" (see the deal scoring)
-const VERY_CHEAP = 0.6;
+const VERY_CHEAP = 0.6, HIDE_BELOW = 0.4;
 // a price needs at least this many sales behind it before anything can be a deal
 const MIN_SALES = 8;
 const VERIFIED_CATS = {
@@ -1015,6 +1085,11 @@ async function sweep(env, manual) {
     await kvSet(env, "fillCats", fc);
     await kvSet(env, "fix3", { at: now, deleted: bad });
   }
+  // 0g. one-off (30 Oct 2026, owner approved after the deal audit): new matching rules reach saved data.
+  //  (1) console sold prices from fills are moved to backup tables and cleared (saved before titles were kept, so they
+  //      can't be re-sorted; the owner refills Consoles); (2) every saved listing is re-matched, a batch per scan;
+  //  (3) then auction sales learned from those listings follow their listing's new model, and for-sale counts refresh.
+  try { await cleanup5(env, cfg, report); } catch (e) { report.errors.push("cleanup: " + e.message); }
   // 0f. one-off (29 Oct 2026, owner approved): rebuild each category's "days read in full" from the saved sale dates
   // with the stray-date rule, then recalculate every model's sales rate. Raw sales are not touched.
   // (cover3: run again after the busy-day rule was corrected the same evening)
@@ -1252,7 +1327,8 @@ async function sweep(env, manual) {
     if (cost < m.med * 0.4 && (s.seller.fb < 5 || s.seller.pct < 95 || SCAM_WORDS.test(s.title))) { hidden++; whyId[s.id] = "scam shield"; continue; }
     if (SCAM_WORDS.test(s.title)) { hidden++; whyId[s.id] = "scam shield"; continue; }
     // a Buy It Now at under a fifth of what it sells for is almost always a box, a photo, a code or a scam
-    if (s.type !== "AUC" && cost < m.med * 0.2) { hidden++; whyId[s.id] = "scam shield"; continue; }
+    // under 40% of the usual price is almost always the wrong item, a fault or a scam (30 Oct audit), so it isn't shown
+    if (s.type !== "AUC" && cost < m.med * HIDE_BELOW) { hidden++; whyId[s.id] = "far below usual price"; continue; }
     const ri = m.post != null ? { ...r, post: m.post } : r; // postage out for this product, from the price book
     // the most to pay in total, never above your spending limit (so max bids and max offers stay under it too)
     const mp = r.maxSpend > 0 ? Math.min(maxPay(m.med, m.low, ri), r.maxSpend) : maxPay(m.med, m.low, ri);
@@ -1371,6 +1447,17 @@ async function sweep(env, manual) {
   try {
     const need = new Map();
     for (const d of deals) { const b = d.speedKey && bookBy[d.speedKey]; if (b && (!b.act_at || now - b.act_at > 3 * DAY) && !need.has(b.pkey)) need.set(b.pkey, { b, d }); }
+    // categories the full stock check has read completely: count the model's live listings straight from the database
+    // (the old one-search estimate found 2 of an i7 10th-gen 16GB/256GB laptop where the stock check had 21: 30 Oct audit)
+    const stockCats = (await kvGet(env, "stock", { cats: {} })).cats || {};
+    for (const [pk, { b, d }] of [...need]) {
+      const sc = stockCats[String(d.cat)];
+      if (!sc || !sc.done) continue;
+      const r0 = await D.prepare("SELECT COUNT(*) n FROM listings WHERE pkey IN (?, ?) AND first_seen>0 AND status='live' AND last_seen>?").bind(d.pkey || pk, pk, now - 4 * DAY).first();
+      b.act = r0 ? r0.n : 0; b.act_at = now;
+      await D.prepare("UPDATE prices SET act=?, act_at=? WHERE pkey=?").bind(b.act, now, b.pkey).run();
+      need.delete(pk);
+    }
     const spare = (await quota(env)) + CALLS < EBAY_DAILY * 0.8; // never let this eat into the deal hunt's calls
     for (const { b, d } of spare ? [...need.values()].slice(0, 6) : []) {
       const q = String(b.q || "").split(/\s+/).filter((w) => w && !w.startsWith("-")).join(" ").slice(0, 100);
@@ -1385,7 +1472,7 @@ async function sweep(env, manual) {
       await D.prepare("UPDATE prices SET act=?, act_at=? WHERE pkey=?").bind(act, now, b.pkey).run();
       b.act = act; b.act_at = now;
     }
-    if (need.size) for (const d of deals) if (d.speedKey && bookBy[d.speedKey]) d.speed = speedOf(bookBy[d.speedKey], now);
+    for (const d of deals) if (d.speedKey && bookBy[d.speedKey]) d.speed = speedOf(bookBy[d.speedKey], now);
   } catch (e) { report.errors.push("sell speed: " + e.message); }
 
   // 6. spares: fetch the seller's own condition words (a few per run)
@@ -1435,6 +1522,14 @@ async function sweep(env, manual) {
     for (let i = 0; i < fresh.length; i += 90) { const part = fresh.slice(i, i + 90); await D.prepare(`UPDATE deals SET checked=? WHERE id IN (${part.map(() => "?").join(",")})`).bind(now, ...part).run(); }
   }
   report.gone = await verifyDeals(env, 6);
+  // read every deal's description once (official API, one call each, best deals first): faults written only in the
+  // description ("battery won't hold charge", "no charger") tag the deal and cap its score
+  if ((await quota(env)) + CALLS < EBAY_DAILY * 0.85) try {
+    const nd = await D.prepare("SELECT id FROM deals WHERE expires>? AND json_extract(data,'$.descAt') IS NULL ORDER BY score DESC LIMIT 10").bind(now).all();
+    let checked = 0, faulty = 0;
+    for (const r0 of nd.results || []) { const v = await checkLive(env, r0.id); checked++; if (v.fault) faulty++; }
+    if (checked) report.descChecked = { checked, faulty };
+  } catch (e) { report.errors.push("description check: " + e.message); }
 
   // remember where each auction deal stood, to learn from its final price later
   try {
@@ -1467,9 +1562,15 @@ async function sweep(env, manual) {
   report.ebayToday = await quota(env);
   // listings being tracked: for sale and seen in the last 4 days (the full stock check revisits each category
   // about every 3 days), per category, so the app can show a running total
+  // (counted every 30 minutes, not every scan: it reads the whole listings table, and the database struggled under it)
   try {
-    const tr = await D.prepare("SELECT cat, COUNT(*) n FROM listings WHERE status='live' AND last_seen>? GROUP BY cat").bind(now - 4 * DAY).all();
-    report.tracked = Object.fromEntries((tr.results || []).map((r) => [String(r.cat), r.n]));
+    const prev = await kvGet(env, "tracked", null);
+    if (prev && now - prev.at < 30 * 60000) report.tracked = prev.m;
+    else {
+      const tr = await D.prepare("SELECT cat, COUNT(*) n FROM listings WHERE status='live' AND last_seen>? GROUP BY cat").bind(now - 4 * DAY).all();
+      report.tracked = Object.fromEntries((tr.results || []).map((r) => [String(r.cat), r.n]));
+      await kvSet(env, "tracked", { at: now, m: report.tracked });
+    }
   } catch (e) {}
   await kvSet(env, "lastReport", { at: now, ...report, cats: cats.map((c) => c.name) });
   // remember the rules this scan used: a change triggers the 3-day second look on the next scan
@@ -1584,6 +1685,7 @@ async function checkLive(env, id, pre, full) {
     Object.assign(deal, { price: out.price, ship: out.ship, bids: out.bids, end: out.end || deal.end });
     // the description says it's faulty: keep it visible (with the words) but never above 49 and never alerted
     const f = descFaults(String(d.conditionDescription || "") + "\n" + plainText(d.description || d.shortDescription));
+    if (!pre || d.description != null || d.shortDescription != null || d.conditionDescription != null) deal.descAt = now;
     if (f.length) { out.fault = f; deal.faults = f; deal.score = Math.min(deal.score || 0, 49); if (!(deal.tags || []).includes("Fault in description")) deal.tags = [...(deal.tags || []), "Fault in description"]; }
     await D.prepare("UPDATE deals SET data=?, score=?, checked=? WHERE id=?").bind(JSON.stringify(deal), deal.score || 0, now, id).run();
   } else if (row) {

@@ -884,7 +884,8 @@ async function stockStep(env, cfg, seen, report) {
     let d;
     try { calls++; cs.calls++;
       d = await ebay(env, `/buy/browse/v1/item_summary/search?category_ids=${b.cat}&limit=200&offset=${b.off}&sort=newlyListed&filter=${encodeURIComponent([...base, `price:[${b.lo}..${b.hi}]`].join(","))}`);
-    } catch (e) { cs.err++; if (cs.err > 5) { st.q = st.q.filter((x) => x.cat !== b.cat); cs.failed = now; } break; }
+    } catch (e) { cs.err++; cs.lastErr = String(e.message || e).slice(0, 200); (report.errors = report.errors || []).push("stock check " + b.name + ": " + cs.lastErr);
+      if (cs.err > 5) { st.q = st.q.filter((x) => x.cat !== b.cat); cs.failed = now; } break; }
     const total = +d.total || 0;
     // too many in this price band for one search: split it in two (bands under £2 can't be split, so take what eBay gives)
     if (b.off === 0 && total > 9800 && b.hi - b.lo >= 2) {
@@ -904,8 +905,9 @@ async function stockStep(env, cfg, seen, report) {
     for (let i = 0; i < ids.length; i += 90) { const ch = ids.slice(i, i + 90), q = ch.map(() => "?").join(",");
       await D.batch([D.prepare(`UPDATE listings SET last_seen=? WHERE id IN (${q})`).bind(now, ...ch),
         D.prepare(`UPDATE listings SET status='live', ended_at=NULL, ended_from=NULL WHERE id IN (${q}) AND status='gone'`).bind(...ch)]); }
-    // pages overlap by 40: listings ending while the pass runs move the rest up, and none may slip between pages
-    if (got.length < 200 || b.off + 200 >= Math.min(total, 10000)) st.q.shift(); else b.off += 160;
+    // offsets stay whole pages of 200 (eBay refused the overlapping 160-steps tried first: 1 page read, then errors).
+    // A listing that slips between pages while others end is only marked ended if the NEXT pass misses it too.
+    if (got.length < 200 || b.off + 200 >= Math.min(total, 10000)) st.q.shift(); else b.off += 200;
     // pass for this category finished: Buy It Nows not seen since it started have ended
     if (!st.q.some((x) => x.cat === b.cat)) {
       const live = await D.prepare("SELECT COUNT(*) n FROM listings WHERE cat=? AND type='BIN' AND status='live' AND last_seen>=?").bind(b.cat, cs.start).first();

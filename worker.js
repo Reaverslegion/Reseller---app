@@ -864,7 +864,7 @@ function paceSkip(used, now, cats, interval, sinceLast) {
 // The stock check pages through EVERY listing for sale in each ticked category (eBay's official API, 200 per call),
 // a few calls per scan, about every 3 days per category. Each listing's last_seen is refreshed, so when a pass is
 // complete, Buy It Now listings it didn't find have ended (sold or withdrawn: the sold pages from a fill tell which).
-// eBay returns at most 10,000 results per search, so a category with more is split into price bands.
+// eBay returns at most 10,000 results per search, so results come cheapest first and a full search carries on from the last price.
 const STOCK_CALLS = 5, STOCK_UNTIL = 0.85, STOCK_EVERY = 3 * DAY, STOCK_MAX = 100000; // every price (owner: keep all the data)
 async function stockStep(env, cfg, seen, report) {
   const D = env.DB, now = Date.now(), st = await kvGet(env, "stock", { q: [], cats: {} });
@@ -883,16 +883,10 @@ async function stockStep(env, cfg, seen, report) {
     const b = st.q[0], c = { id: b.cat, name: b.name }, cs = st.cats[b.cat];
     let d;
     try { calls++; cs.calls++;
-      d = await ebay(env, `/buy/browse/v1/item_summary/search?category_ids=${b.cat}&limit=200&offset=${b.off}&sort=newlyListed&filter=${encodeURIComponent([...base, `price:[${b.lo}..${b.hi}]`].join(","))}`);
+      d = await ebay(env, `/buy/browse/v1/item_summary/search?category_ids=${b.cat}&limit=200&offset=${b.off}&sort=price&filter=${encodeURIComponent([...base, `price:[${b.lo}..${b.hi}]`].join(","))}`);
     } catch (e) { cs.err++; cs.lastErr = String(e.message || e).slice(0, 200); (report.errors = report.errors || []).push("stock check " + b.name + ": " + cs.lastErr);
       if (cs.err > 5) { st.q = st.q.filter((x) => x.cat !== b.cat); cs.failed = now; } break; }
-    const total = +d.total || 0;
-    // too many in this price band for one search: split it in two (bands under £2 can't be split, so take what eBay gives)
-    if (b.off === 0 && total > 9800 && b.hi - b.lo >= 2) {
-      const mid = Math.floor((b.lo + b.hi) / 2);
-      st.q.splice(0, 1, { ...b, hi: mid }, { ...b, lo: mid + 1 });
-      continue;
-    }
+    // (eBay's "total" proved unreliable here — it claimed 9,800+ even for £1–£98 — so it isn't used to plan pages)
     const got = [];
     for (const it of d.itemSummaries || []) {
       const type = (it.buyingOptions || []).includes("AUCTION") ? "AUC" : "BIN", x = toListing(it, c, type);
@@ -907,7 +901,13 @@ async function stockStep(env, cfg, seen, report) {
         D.prepare(`UPDATE listings SET status='live', ended_at=NULL, ended_from=NULL WHERE id IN (${q}) AND status='gone'`).bind(...ch)]); }
     // offsets stay whole pages of 200 (eBay refused the overlapping 160-steps tried first: 1 page read, then errors).
     // A listing that slips between pages while others end is only marked ended if the NEXT pass misses it too.
-    if (got.length < 200 || b.off + 200 >= Math.min(total, 10000)) st.q.shift(); else b.off += 200;
+    // results come cheapest first. A search stops at 10,000 results, so when a band reaches that, the next search
+    // starts again from the last price reached (a few repeats at that price are harmless, nothing is skipped)
+    if (got.length < 200) st.q.shift();
+    else if (b.off + 200 >= 10000) {
+      const last = Math.floor(Math.max(...got.map((x) => x.price)));
+      st.q[0] = { ...b, lo: last > b.lo ? last : b.lo + 1, off: 0 };
+    } else b.off += 200;
     // pass for this category finished: Buy It Nows not seen since it started have ended
     if (!st.q.some((x) => x.cat === b.cat)) {
       const live = await D.prepare("SELECT COUNT(*) n FROM listings WHERE cat=? AND type='BIN' AND status='live' AND last_seen>=?").bind(b.cat, cs.start).first();

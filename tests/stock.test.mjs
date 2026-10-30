@@ -19,8 +19,9 @@ globalThis.FAKE_EBAY = (path) => {
   calls++;
   const u = new URL("https://x" + path), f = decodeURIComponent(u.searchParams.get("filter")), m = f.match(/price:\[(\d+)\.\.(\d+)\]/);
   const lo = +m[1], hi = +m[2], off = +u.searchParams.get("offset"), lim = +u.searchParams.get("limit");
-  const all = shop.filter((x) => x.price >= lo && x.price <= hi), page = off >= 10000 ? [] : all.slice(off, Math.min(off + lim, 10000));
-  return { total: all.length, itemSummaries: page.map((x) => ({ legacyItemId: x.id, title: "Item " + x.id, price: { value: String(x.price) }, buyingOptions: ["FIXED_PRICE"], itemCreationDate: "2026-01-01T00:00:00Z" })) };
+  const all = shop.filter((x) => x.price >= lo && x.price <= hi).sort((a, b) => a.price - b.price), page = off >= 10000 ? [] : all.slice(off, Math.min(off + lim, 10000));
+  return { total: 99999, // eBay's total proved unreliable: the code must not depend on it
+     itemSummaries: page.map((x) => ({ legacyItemId: x.id, title: "Item " + x.id, price: { value: String(x.price) }, buyingOptions: ["FIXED_PRICE"], itemCreationDate: "2026-01-01T00:00:00Z" })) };
 };
 const cfg = { cats: [{ id: "27386", name: "Graphics/Video Cards" }], region: "uk" };
 const runPass = async () => { let guard = 0, seen = new Set();
@@ -28,7 +29,7 @@ const runPass = async () => { let guard = 0, seen = new Set();
     const st = await W.kvGet(env, "stock", {}); if (!st.q.length) break; } while (guard < 500);
   return seen; };
 
-await t("one pass finds every listing, splitting price bands past eBay's 10,000 limit, at most a few calls per scan", async () => {
+await t("one pass finds every listing, carrying on from the last price past eBay's 10,000 limit, at most a few calls per scan", async () => {
   calls = 0; const s = []; await W.stockStep(env, cfg, s, {}); assert.ok(calls <= W.STOCK_CALLS);
   const seen = await runPass(); s.forEach((x) => seen.add(x.id));
   assert.equal(seen.size, 12000);

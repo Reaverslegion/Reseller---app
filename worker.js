@@ -1460,6 +1460,12 @@ async function sweep(env, manual) {
   else if (isQuiet(cfg, now)) await D.prepare("UPDATE deals SET notified=1 WHERE notified=0").run(); // quiet hours: no catch-up flood in the morning
   await saveQuota(env);
   report.ebayToday = await quota(env);
+  // listings being tracked: for sale and seen in the last 4 days (the full stock check revisits each category
+  // about every 3 days), per category, so the app can show a running total
+  try {
+    const tr = await D.prepare("SELECT cat, COUNT(*) n FROM listings WHERE status='live' AND last_seen>? GROUP BY cat").bind(now - 4 * DAY).all();
+    report.tracked = Object.fromEntries((tr.results || []).map((r) => [String(r.cat), r.n]));
+  } catch (e) {}
   await kvSet(env, "lastReport", { at: now, ...report, cats: cats.map((c) => c.name) });
   // remember the rules this scan used: a change triggers the 3-day second look on the next scan
   await kvSet(env, "rulesSig", JSON.stringify([r, cfg.cats.map((c) => c.id)]));

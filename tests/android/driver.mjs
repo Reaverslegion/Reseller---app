@@ -35,6 +35,8 @@ export class App {
     const out = []; const L = t.split("\n");
     L.forEach((l, i) => { if (/FATAL EXCEPTION|ANR in com\.reaverslegion|Process com\.reaverslegion\.flipscout .*has died|renderer.*crash|Fatal signal/i.test(l) && /reaverslegion|chromium|FATAL|Fatal signal/.test(l)) out.push(L.slice(i, i + 4).join(" | ").slice(0, 400)); });
     return out; }
+  // the last few phone-system lines about the app, its web view, memory or freezes (to explain a dropped link)
+  recentSystemLog() { try { return fs.readFileSync(this.logFile, "utf8").split("\n").slice(-4000).filter((l) => /flipscout|webview|sandboxed/i.test(l) && /Killing|died|lowmemory|lmkd|crash|ANR|FATAL|signal/i.test(l)).slice(-2).join(" | ").slice(0, 250); } catch (e) { return ""; } }
   logSize() { try { return fs.statSync(this.logFile).size; } catch (e) { return 0; } }
   async launch() { sh(`monkey -p ${PKG} -c android.intent.category.LAUNCHER 1`); for (let i = 0; i < 40 && !this.pid(); i++) await sleep(500); this.appPid = this.pid(); if (!this.appPid) throw new Error("the app did not start"); await this.connect(); }
   async stop() { sh(`am force-stop ${PKG}`); if (this.main) this.main.close(); this.main = null; await sleep(800); }
@@ -153,7 +155,14 @@ export class Results {
     const step = async (what, f) => {
       steps++;
       if (failed) { this.rows.push({ area, name: `${name} › ${what}`, status: "NOT TESTED", detail: "not run because an earlier step failed" }); return; }
-      try { await app.unblock(); await f(); passed++; this.rows.push({ area, name: `${name} › ${what}`, status: "PASS" }); }
+      let note = "";
+      try { await app.unblock();
+        try { await f(); }
+        catch (e) { if (!/connection closed|connect timeout|can't connect/.test(String(e.message))) throw e;
+          // the link to the app's screen dropped (seen on slow emulators): note why, reconnect and try the step once more
+          note = "retried once after the link to the app dropped" + (app.recentSystemLog() ? ": " + app.recentSystemLog() : "");
+          app.appPid = app.pid() || app.appPid; await app.connect(); await f(); }
+        passed++; this.rows.push({ area, name: `${name} › ${what}`, status: "PASS", detail: note }); }
       catch (e) { failed = what; const s = await app.shot(`FAIL ${name} ${what}`);
         this.rows.push({ area, name: `${name} › ${what}`, status: "FAIL", detail: String(e.message || e).slice(0, 300), shot: s }); }
     };

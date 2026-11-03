@@ -10,7 +10,7 @@ if (fs.existsSync(dir)) for (const f of fs.readdirSync(dir, { recursive: true })
   try { rows.push(...JSON.parse(fs.readFileSync(path.join(dir, String(f)), "utf8"))); } catch (e) { rows.push({ area: "Report", name: "could not read " + f, status: "FAIL" }); }
 }
 // every area the system is meant to cover; an area with no results is NOT TESTED
-const AREAS = ["Unit tests", "Build", "Test Scan service", "Android emulator", "User journeys", "Deals: app vs database",
+const AREAS = ["Unit tests", "Build", "Test Scan service", "Android emulator", "User journeys", "Unusual behaviour", "Deals: app vs database",
   "Dependency vulnerabilities", "Security", "Accessibility", "Performance"];
 // a job that failed before it could record any results is a FAIL, never "not tested"
 let jobs = {}; try { jobs = JSON.parse(process.env.JOB_RESULTS || "{}"); } catch (e) {}

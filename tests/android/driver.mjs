@@ -1,0 +1,139 @@
+// Drives the REAL FlipScout app on an Android emulator.
+//  - Taps and typing go through Android itself ("adb shell input tap / text / keyevent"): the same touch and keyboard
+//    events a finger makes, so buttons that don't respond to a real tap are caught.
+//  - To find WHERE a button is, and to check what appeared, it reads the app's screen through Chrome's developer
+//    connection (the app is a web view inside the Android app). Android's own screen dump gives the web view's position.
+//  - Screenshots are real phone screenshots (adb screencap). Crashes are read from the phone's system log.
+import { execFileSync, spawn } from "node:child_process";
+import fs from "node:fs";
+
+export const PKG = "com.reaverslegion.flipscout";
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export const adb = (...a) => execFileSync("adb", a, { encoding: "utf8", timeout: 90000, maxBuffer: 64 << 20 });
+export const sh = (cmd) => adb("shell", cmd);
+
+class CDP {
+  constructor(ws) { this.ws = ws; this.id = 0; this.wait = new Map(); this.handlers = []; this.closed = false;
+    ws.addEventListener("message", (m) => { const d = JSON.parse(m.data); if (d.id && this.wait.has(d.id)) { const [ok, bad] = this.wait.get(d.id); this.wait.delete(d.id); d.error ? bad(new Error(d.error.message)) : ok(d.result); } else if (d.method) this.handlers.forEach((h) => h(d)); });
+    ws.addEventListener("close", () => { this.closed = true; for (const [, [, bad]] of this.wait) bad(new Error("app connection closed")); this.wait.clear(); }); }
+  static connect(url) { return new Promise((ok, bad) => { const ws = new WebSocket(url); const t = setTimeout(() => bad(new Error("connect timeout")), 15000);
+    ws.addEventListener("open", () => { clearTimeout(t); ok(new CDP(ws)); }); ws.addEventListener("error", () => { clearTimeout(t); bad(new Error("can't connect to the app's web view")); }); }); }
+  send(method, params = {}) { if (this.closed) return Promise.reject(new Error("app connection closed")); const id = ++this.id;
+    return new Promise((ok, bad) => { this.wait.set(id, [ok, bad]); this.ws.send(JSON.stringify({ id, method, params })); setTimeout(() => { if (this.wait.has(id)) { this.wait.delete(id); bad(new Error(method + " timed out")); } }, 30000); }); }
+  on(fn) { this.handlers.push(fn); }
+  close() { try { this.ws.close(); } catch (e) {} }
+}
+
+export class App {
+  constructor(shotDir) { this.shotDir = shotDir; this.n = 0; this.jsErrors = []; this.phase = ""; this.shots = []; fs.mkdirSync(shotDir, { recursive: true }); }
+  // ---------- phone ----------
+  install(apk) { adb("install", "-r", "-g", apk); try { sh(`pm grant ${PKG} android.permission.POST_NOTIFICATIONS`); } catch (e) {} }
+  pid() { try { return sh(`pidof ${PKG}`).trim(); } catch (e) { return ""; } }
+  startLog(file) { try { adb("logcat", "-c"); } catch (e) {} this.logFile = file; this.logcat = spawn("adb", ["logcat", "-v", "time"], { stdio: ["ignore", fs.openSync(file, "a"), "ignore"] }); }
+  // crashes since `from` (byte offset in the log): app crash, "not responding", web view crash
+  crashesSince(from = 0) { const t = fs.existsSync(this.logFile) ? fs.readFileSync(this.logFile, "utf8").slice(from) : "";
+    const out = []; const L = t.split("\n");
+    L.forEach((l, i) => { if (/FATAL EXCEPTION|ANR in com\.reaverslegion|Process com\.reaverslegion\.flipscout .*has died|renderer.*crash|Fatal signal/i.test(l) && /reaverslegion|chromium|FATAL|Fatal signal/.test(l)) out.push(L.slice(i, i + 4).join(" | ").slice(0, 400)); });
+    return out; }
+  logSize() { try { return fs.statSync(this.logFile).size; } catch (e) { return 0; } }
+  async launch() { sh(`monkey -p ${PKG} -c android.intent.category.LAUNCHER 1`); for (let i = 0; i < 40 && !this.pid(); i++) await sleep(500); this.appPid = this.pid(); if (!this.appPid) throw new Error("the app did not start"); await this.connect(); }
+  async stop() { sh(`am force-stop ${PKG}`); if (this.main) this.main.close(); this.main = null; await sleep(800); }
+  async home() { sh("input keyevent 3"); await sleep(1500); }
+  async resume() { sh(`monkey -p ${PKG} -c android.intent.category.LAUNCHER 1`); await sleep(2500); }
+  alive() { const p = this.pid(); return !!p && p === this.appPid; }
+  async tapXY(x, y) { sh(`input tap ${Math.round(x)} ${Math.round(y)}`); }
+  async key(code) { sh(`input keyevent ${code}`); await sleep(400); }
+  async back() { await this.key(4); await sleep(500); }
+  async type(text) { const s = String(text).replace(/ /g, "%s").replace(/'/g, ""); sh(`input text '${s}'`); await sleep(500); }
+  async selectAll() { try { sh("input keycombination 113 29"); } catch (e) { sh("input keyevent 123"); for (let i = 0; i < 80; i++) sh("input keyevent 67"); } await sleep(300); }
+  keyboardShown() { try { return /mInputShown=true/.test(sh("dumpsys input_method")); } catch (e) { return false; } }
+  async hideKeyboard() { if (this.keyboardShown()) await this.key(4); }
+  async shot(name) { const f = `${this.shotDir}/${String(++this.n).padStart(2, "0")}-${name.replace(/[^a-z0-9]+/gi, "-").slice(0, 50)}.png`;
+    try { fs.writeFileSync(f, execFileSync("adb", ["exec-out", "screencap", "-p"], { maxBuffer: 64 << 20, timeout: 30000 })); this.shots.push(f); return f; } catch (e) { return null; } }
+  // ---------- the app's web view ----------
+  async connect(match = (t) => /^https:\/\/localhost/.test(t.url), isMain = true) {
+    let last = "";
+    for (let i = 0; i < 40; i++) {
+      try {
+        const sock = sh("cat /proc/net/unix").split("\n").map((l) => (l.match(/@(webview_devtools_remote_\d+)/) || [])[1]).filter(Boolean);
+        const mine = sock.find((s) => s.endsWith("_" + this.appPid)) || sock[0];
+        if (mine) { adb("forward", "tcp:9222", "localabstract:" + mine);
+          const list = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+          const t = list.find((x) => x.type === "page" && match(x));
+          if (t) { const c = await CDP.connect(t.webSocketDebuggerUrl.replace(/ws:\/\/[^/]+/, "ws://127.0.0.1:9222"));
+            await c.send("Runtime.enable");
+            c.on((e) => { if (e.method === "Runtime.exceptionThrown") this.jsErrors.push({ phase: this.phase, msg: String((e.params.exceptionDetails.exception || {}).description || e.params.exceptionDetails.text).slice(0, 300) }); });
+            if (isMain) { if (this.main) this.main.close(); this.main = c; } return c; }
+          last = "web view found, app page not open yet"; } else last = "no web view debug socket yet";
+      } catch (e) { last = e.message; }
+      await sleep(1000);
+    }
+    throw new Error("couldn't connect to the app's screen: " + last);
+  }
+  async eval(expr, c = this.main) { const r = await c.send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
+    if (r.exceptionDetails) throw new Error("check failed in app: " + (r.exceptionDetails.exception || {}).description); return r.result.value; }
+  async waitFor(expr, ms = 15000, what = expr, c = this.main) { const t = Date.now(); let v;
+    while (Date.now() - t < ms) { try { v = await this.eval(expr, c); if (v) return v; } catch (e) {} await sleep(300); }
+    throw new Error(`waited ${Math.round(ms / 1000)}s but ${what} never appeared`); }
+  text(c = this.main) { return this.eval("document.body.innerText", c); }
+  async waitText(re, ms = 15000, c = this.main) { const src = re instanceof RegExp ? re.source : re.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return this.waitFor(`(()=>{const m=document.body.innerText.match(new RegExp(${JSON.stringify(src)},"i"));return m&&m[0]})()`, ms, `"${re}" on screen`, c); }
+  // where the web view sits on the phone screen, from Android's own screen dump (largest web view = the one in front)
+  webviewBounds() {
+    for (let i = 0; i < 4; i++) {
+      try { sh("uiautomator dump /sdcard/ui.xml >/dev/null 2>&1"); const x = sh("cat /sdcard/ui.xml");
+        const B = [...x.matchAll(/class="android\.webkit\.WebView"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/g)].map((m) => ({ l: +m[1], t: +m[2], r: +m[3], b: +m[4] }));
+        if (B.length) { B.sort((a, b) => (b.r - b.l) * (b.b - b.t) - (a.r - a.l) * (a.b - a.t)); this.lastBounds = B[0]; this.lastDump = x; return B[0]; }
+      } catch (e) {}
+    }
+    if (this.lastBounds) return this.lastBounds;
+    throw new Error("couldn't find the app's screen area");
+  }
+  nativeButton(text) { this.webviewBounds(); const m = [...(this.lastDump || "").matchAll(/<node [^>]*?(?:text|content-desc)="([^"]*)"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/g)].find((m) => m[1].trim().toLowerCase() === text.toLowerCase());
+    return m ? { x: (+m[2] + +m[4]) / 2, y: (+m[3] + +m[5]) / 2 } : null; }
+  // find a control by its words (or a CSS selector), scroll it into view, and return its centre in phone pixels
+  async locate(spec, c = this.main) {
+    const find = `(function(spec){const vis=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!=="hidden"&&s.display!=="none"&&!e.closest('[style*="display: none"]')};
+      const norm=s=>String(s||"").replace(/\\s+/g," ").trim().toLowerCase(),lab=e=>norm(e.innerText||e.value||e.getAttribute("aria-label")||e.placeholder||"");
+      let L=[...document.querySelectorAll(spec.sel||'button,a,input,select,textarea,summary,[onclick],[role=button]')];
+      const sheet=document.getElementById("sheet"),onb=document.getElementById("onb");
+      if(spec.text){const t=norm(spec.text);L=L.filter(e=>spec.exact?lab(e)===t:lab(e).includes(t))}
+      L=L.filter(vis);if(!spec.sel)L=L.filter(e=>!L.some(o=>o!==e&&e.contains(o)));
+      if(sheet&&sheet.classList.contains("on")){const inS=L.filter(e=>sheet.contains(e));if(inS.length)L=inS}
+      if(onb&&getComputedStyle(onb).display!=="none"){const inO=L.filter(e=>onb.contains(e));if(inO.length)L=inO}
+      const e=L[spec.nth||0];if(!e)return{missing:L.length};e.scrollIntoView({block:"center",inline:"center"});
+      const r=e.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2,top=document.elementFromPoint(cx,cy);
+      return{x:cx,y:cy,w:innerWidth,h:innerHeight,covered:top&&top!==e&&!e.contains(top)&&!(top.contains&&top.contains(e))?(top.id||top.className||top.tagName):null,label:lab(e).slice(0,60)}})`;
+    let r;
+    for (let i = 0; i < 4; i++) { r = await this.eval(`${find}(${JSON.stringify(spec)})`, c); if (r && !r.missing && r.missing !== 0 && !r.covered) break; await sleep(700); }
+    if (!r || r.missing !== undefined) throw new Error(`couldn't find "${spec.text || spec.sel}" on screen`);
+    if (r.covered) throw new Error(`"${spec.text || spec.sel}" is covered by something else (${r.covered})`);
+    await sleep(250);
+    const b = this.webviewBounds(), k = (b.r - b.l) / r.w;
+    return { x: b.l + r.x * k, y: b.t + r.y * k, label: r.label };
+  }
+  async tap(spec, c) { if (typeof spec === "string") spec = { text: spec }; const p = await this.locate(spec, c); await this.tapXY(p.x, p.y); await sleep(spec.wait ?? 700); return p; }
+}
+
+// ---------- results: every step is PASS / FAIL / NOT TESTED, with a screenshot when it fails ----------
+export class Results {
+  constructor(app) { this.app = app; this.rows = []; }
+  async journey(area, name, fn) {
+    const app = this.app, logAt = app.logSize(), errAt = app.jsErrors.length; app.phase = name;
+    let failed = null, steps = 0, passed = 0;
+    const step = async (what, f) => {
+      steps++;
+      if (failed) { this.rows.push({ area, name: `${name} › ${what}`, status: "NOT TESTED", detail: "not run because an earlier step failed" }); return; }
+      try { await f(); passed++; this.rows.push({ area, name: `${name} › ${what}`, status: "PASS" }); }
+      catch (e) { failed = what; const s = await app.shot(`FAIL ${name} ${what}`);
+        this.rows.push({ area, name: `${name} › ${what}`, status: "FAIL", detail: String(e.message || e).slice(0, 300), shot: s }); }
+    };
+    try { await fn(step); } catch (e) { this.rows.push({ area, name: `${name} › (journey stopped)`, status: "FAIL", detail: String(e.message || e).slice(0, 300) }); failed = failed || "stopped"; }
+    const crashes = app.crashesSince(logAt), errs = app.jsErrors.slice(errAt);
+    this.rows.push({ area: "Android emulator", name: `${name}: no crash`, status: crashes.length || !app.alive() ? "FAIL" : "PASS", detail: crashes.length ? crashes[0] : !app.alive() ? "the app stopped running" : "" });
+    this.rows.push({ area: "Android emulator", name: `${name}: no app errors`, status: errs.length ? "FAIL" : "PASS", detail: errs.map((e) => e.msg).join(" || ").slice(0, 300) });
+    if (!app.alive()) { try { await app.launch(); } catch (e) {} }
+    return !failed;
+  }
+  add(area, name, status, detail = "") { this.rows.push({ area, name, status, detail }); }
+}

@@ -15,6 +15,10 @@ unknown = [n for n in named if n not in want and n not in skip]
 if missing or unknown:
     sys.exit(f"Live build file changed: missing {missing}, new {unknown}. Update tests/ci/live-build-steps.py.")
 for s in steps:
+    if s.get("name") == "Build APK" and os.environ.get("PRE_BUILD_HOOK"):
+        print("::group::Test-only changes (emulator test app)", flush=True)
+        subprocess.run(["bash", "-e", "-c", os.environ["PRE_BUILD_HOOK"]], check=True)
+        print("::endgroup::", flush=True)
     if s.get("name") in want:
         script = s["run"].replace("${{ github.run_number }}", RUN)
         if "${{" in script:

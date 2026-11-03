@@ -17,6 +17,19 @@ if (!key || key.length < 16) { console.error("TEST_APP_KEY (a random throwaway k
 let src = fs.readFileSync(path.join(root, "worker.js"), "utf8");
 const hosts = ["https://api.ebay.com", "https://auth.ebay.com", "https://fcm.googleapis.com", "https://oauth2.googleapis.com", "https://www.googleapis.com"];
 for (const h of hosts) src = src.split(h).join(FAKE + "/" + h.slice(8));
+// TEST-ONLY endpoints, added to this private copy only (never to the real worker.js): load fake data and read the
+// test database so tests can compare what the app shows with what is stored. Still need the test key.
+const HOOK = "    const huntCall = [";
+if (src.split(HOOK).length !== 2) { console.error("REFUSED: couldn't find where to add the test-only endpoints"); process.exit(1); }
+src = src.replace(HOOK, `    if (P("__testseed") && request.method === "POST") { await schema(env); const b = JSON.parse(await request.text());
+      for (const s of b.sql || []) await env.DB.prepare(s[0]).bind(...(s[1] || [])).run();
+      for (const [k, v] of Object.entries(b.kv || {})) await kvSet(env, k, v);
+      return json({ ok: true, ran: (b.sql || []).length }); }
+    if (P("__testquery") && request.method === "POST") { await schema(env); const b = JSON.parse(await request.text());
+      if (!/^\\s*(select|with)\\b/i.test(b.q)) return json({ error: "read-only" }, 400);
+      return json({ rows: (await env.DB.prepare(b.q).bind(...(b.args || [])).all()).results || [] }); }
+` + HOOK);
+if (fs.readFileSync(path.join(root, "worker.js"), "utf8").includes("__testseed")) { console.error("REFUSED: the real worker.js must never contain test endpoints"); process.exit(1); }
 // safety check: nothing in the test copy may still point at a real outside service (www.ebay.co.uk is only used for links shown to you)
 const left = [...src.matchAll(/https:\/\/[a-z0-9.-]+/gi)].map((m) => m[0]).filter((h) => h !== "https://www.ebay.co.uk");
 if (left.length) { console.error("REFUSED: test copy still calls real services: " + [...new Set(left)].join(", ")); process.exit(1); }

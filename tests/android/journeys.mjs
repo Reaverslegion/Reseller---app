@@ -39,8 +39,7 @@ await J("First-time welcome guide", async (step) => {
 await U("Wrong key is handled clearly", async (step) => {
   await step("Connect now opens the connection box", async () => { await app.tap("Connect now"); await app.waitFor(`!!document.getElementById("s_url")`, 8000, "address box"); });
   await step("typing a setup code with a WRONG key saves it", async () => {
-    await app.tap({ sel: "#s_url" }); await app.type("http://localhost:8787#wrongkey0000000000"); await app.key(61); await app.hideKeyboard();
-    await app.waitText("Saved", 6000); await app.shot("wrong key saved"); });
+    await app.fill({ sel: "#s_url" }, "http://localhost:8787#wrongkey0000000000"); await app.waitText("Saved", 6000); await app.shot("wrong key saved"); });
   await step("Deals asks to pick categories", async () => { await dealsTab(); await app.waitText("Pick what to hunt"); });
   await step("Start with popular categories shows a clear 'wrong key' message, not a crash", async () => {
     await app.tap("Start with popular categories"); await app.waitText("wrong key", 20000); await app.shot("wrong key message"); });
@@ -51,9 +50,11 @@ await J("Connect to the Scan service", async (step) => {
     await app.eval(`(()=>{const a=document.getElementById("adv");if(a&&!a.open)a.querySelector("summary").click();return 1})()`).catch(() => {});
     if (!(await app.eval(`!!document.getElementById("s_url")&&document.getElementById("s_url").offsetParent!==null`))) await app.tap({ sel: "#adv summary" }); });
   await step("replace the setup code with the right one", async () => {
-    await app.tap({ sel: "#s_url" }); await app.selectAll(); await app.type(`http://localhost:8787#${KEY}`); await app.key(61); await app.hideKeyboard();
-    await app.waitText("Saved", 6000); });
-  await step("Deals now loads with no error", async () => { await dealsTab(); await app.waitFor(`!/wrong key|no connection/i.test(document.getElementById("app").innerText)&&/No deals right now|deals?\\b/i.test(document.getElementById("app").innerText)`, 25000, "deals screen without errors"); });
+    await app.fill({ sel: "#s_url" }, `http://localhost:8787#${KEY}`); await app.waitText("Saved", 6000); });
+  await step("Deals opens with no error", async () => { await dealsTab(); await sleep(3000); const t = await app.eval(`document.getElementById("app").innerText`); ok(!/wrong key|no connection|error/i.test(t), "error on screen: " + t.slice(0, 120)); });
+  await step("categories are picked (Start with popular categories)", async () => {
+    if (/Pick what to hunt/.test(await app.text())) { await app.tap("Start with popular categories"); await app.waitText("Added \\d+ popular categor|already have these", 15000); }
+    await app.waitFor(`/No deals right now|\\d+ deals?/.test(document.getElementById("app").innerText)`, 25000, "the deals screen (no categories prompt)"); await app.shot("connected"); });
 });
 
 await U("Empty data: no deals yet", async (step) => {
@@ -95,7 +96,10 @@ await J("Menu and settings", async (step) => {
     const c = await query("SELECT v FROM kv WHERE k='config'"); ok(c[0] && /"seller":"business"/.test(c[0].v), "the Scan service didn't get the change"); });
   await step("switching back to Private seller", async () => { await app.tap("Private seller"); await app.waitText("Private seller: no final value fee", 5000); });
   await step("Dark theme applies", async () => { await app.tap({ text: "Dark", exact: true }); await app.waitFor(`document.documentElement.dataset.theme==="dark"`, 4000, "dark theme"); await app.shot("dark theme"); await app.tap({ text: "Auto", exact: true }); });
-  await step("tapping the version 7 times turns on admin tools", async () => { const p = await app.locate({ text: "FlipScout version", sel: "div[onclick]" });
+});
+
+await J("Turn on admin tools", async (step) => {
+  await step("tapping the version 7 times turns on admin tools", async () => { await menu(); const p = await app.locate({ text: "FlipScout version", sel: "div[onclick]" });
     for (let i = 0; i < 7; i++) { await app.tapXY(p.x, p.y); await sleep(150); } await app.waitText("Admin tools on", 6000); await app.waitText("Open admin tools", 5000); });
 });
 
@@ -126,9 +130,9 @@ await J("Fill prices for a category (fake eBay sold pages)", async (step) => {
 await J("Page… (choose a page to fill from)", async (step) => {
   let iab;
   await step("Page… appears after a fill and opens the page chooser", async () => { await app.tap({ text: "Page…", nth: 0 }); await app.waitText("Go to page", 6000); await app.shot("page chooser"); });
-  await step("an impossible page (0) is refused with a clear message", async () => { await app.tap({ sel: "#fpg" }); await app.selectAll(); await app.type("0"); await app.hideKeyboard();
+  await step("an impossible page (0) is refused with a clear message", async () => { await app.fill({ sel: "#fpg" }, "0");
     await app.tap({ text: "Open page", exact: true }); await app.waitText("Pick a page from 1 to 100", 5000); });
-  await step("page 7 (which the fake eBay can't show) opens and FlipScout says so", async () => { await app.tap({ sel: "#fpg" }); await app.selectAll(); await app.type("7"); await app.hideKeyboard();
+  await step("page 7 (which the fake eBay can't show) opens and FlipScout says so", async () => { await app.fill({ sel: "#fpg" }, "7");
     await app.tap({ text: "Open page", exact: true, wait: 3000 }); iab = await app.connect((t) => /:8790\/.*_pgn=7/.test(t.url), false);
     await app.waitFor(`!!document.getElementById("fs_bar")&&/couldn't show page 7/i.test(document.getElementById("fs_bar").innerText)`, 30000, "the 'couldn't show page 7' message", iab); await app.shot("page 7 not available"); });
   await step("closing the browser returns to the app safely", async () => { iab.close(); const b = app.nativeButton("Done"); ok(b, "no Done button on the browser"); await app.tapXY(b.x, b.y); await sleep(2000);

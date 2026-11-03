@@ -44,7 +44,15 @@ export class App {
   async tapXY(x, y) { sh(`input tap ${Math.round(x)} ${Math.round(y)}`); }
   async key(code) { sh(`input keyevent ${code}`); await sleep(400); }
   async back() { await this.key(4); await sleep(500); }
-  async type(text) { const s = String(text).replace(/ /g, "%s").replace(/'/g, ""); sh(`input text '${s}'`); await sleep(500); }
+  async type(text) { const t = String(text).replace(/'/g, "");
+    // Android's "input text" can drop letters when a web view gets a long string at once, so type a few at a time
+    for (let i = 0; i < t.length; i += 6) { sh(`input text '${t.slice(i, i + 6).replace(/ /g, "%s")}'`); await sleep(120); } await sleep(300); }
+  // tap a box, replace what's in it with `text` (typed through the phone's keyboard), check it really holds that text, then leave the box
+  async fill(spec, text, c = this.main) { let got = "";
+    for (let a = 0; a < 3; a++) { await this.tap(spec, c); await this.selectAll(); await this.key(67); await this.type(text);
+      got = await this.eval("document.activeElement&&document.activeElement.value", c); if (got === String(text)) break; }
+    if (got !== String(text)) throw new Error(`typed "${String(text).slice(0, 25)}…" but the box holds "${String(got).slice(0, 25)}…"`);
+    await this.key(61); await this.hideKeyboard(); }
   async selectAll() { try { sh("input keycombination 113 29"); } catch (e) { sh("input keyevent 123"); for (let i = 0; i < 80; i++) sh("input keyevent 67"); } await sleep(300); }
   keyboardShown() { try { return /mInputShown=true/.test(sh("dumpsys input_method")); } catch (e) { return false; } }
   async hideKeyboard() { if (this.keyboardShown()) await this.key(4); }

@@ -109,7 +109,7 @@ export class App {
       L=L.filter(vis);if(!spec.sel)L=L.filter(e=>!L.some(o=>o!==e&&e.contains(o)));
       if(sheet&&sheet.classList.contains("on")){const inS=L.filter(e=>sheet.contains(e));if(inS.length)L=inS}
       if(onb&&getComputedStyle(onb).display!=="none"){const inO=L.filter(e=>onb.contains(e));if(inO.length)L=inO}
-      const e=L[spec.nth||0];if(!e)return{missing:L.length};e.scrollIntoView({block:"center",inline:"center"});
+      const e=L[spec.nth||0];if(!e)return{missing:L.length};e.scrollIntoView({block:"center",inline:"center",behavior:"instant"});
       const r=e.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2,top=document.elementFromPoint(cx,cy);
       return{x:cx,y:cy,w:innerWidth,h:innerHeight,covered:top&&top!==e&&!e.contains(top)&&!(top.contains&&top.contains(e))?(top.id||top.className||top.tagName):null,label:lab(e).slice(0,60)}})`;
     let r;

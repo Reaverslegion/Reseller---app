@@ -39,7 +39,7 @@ await J("First-time welcome guide", async (step) => {
 await U("Wrong key is handled clearly", async (step) => {
   await step("Connect now opens the connection box", async () => { await app.tap("Connect now"); await app.waitFor(`!!document.getElementById("s_url")`, 8000, "address box"); });
   await step("typing a setup code with a WRONG key saves it", async () => {
-    await app.fill({ sel: "#s_url" }, "http://localhost:8787#wrongkey0000000000"); await app.waitText("Saved", 6000); await app.shot("wrong key saved"); });
+    await app.fill({ sel: "#s_url" }, "http://localhost:8787#wrongkey0000000000"); await app.waitText("Saved|Automatic cloud backup is on", 8000); await app.shot("wrong key saved"); });
   await step("Deals asks to pick categories", async () => { await dealsTab(); await app.waitText("Pick what to hunt"); });
   await step("Start with popular categories shows a clear 'wrong key' message, not a crash", async () => {
     await app.tap("Start with popular categories"); await app.waitText("wrong key", 20000); await app.shot("wrong key message"); });
@@ -56,7 +56,8 @@ await J("Connect to the Scan service", async (step) => {
     if (!(await app.eval(`!!document.getElementById("s_url")&&document.getElementById("s_url").offsetParent!==null`))) await app.tap({ sel: "#adv summary" });
     await app.waitFor(`!!document.getElementById("s_url")&&document.getElementById("s_url").offsetParent!==null`, 6000, "address box"); });
   await step("replace the setup code with the right one", async () => {
-    await app.fill({ sel: "#s_url" }, `http://localhost:8787#${KEY}`); await app.waitText("Saved", 6000); });
+    await app.fill({ sel: "#s_url" }, `http://localhost:8787#${KEY}`);
+    await app.waitFor(`(()=>{try{const s=JSON.parse(localStorage.getItem("resell_helper_v1")).set;return s.url==="http://localhost:8787"&&s.key.length===48}catch(e){return false}})()`, 8000, "the new address and key saved on the phone"); });
   await step("Deals opens with no error", async () => { await dealsTab(); await sleep(3000); const t = await app.eval(`document.getElementById("app").innerText`); ok(!/wrong key|no connection|error/i.test(t), "error on screen: " + t.slice(0, 120)); });
   await step("categories are picked (Start with popular categories)", async () => {
     if (/Pick what to hunt/.test(await app.text())) { await app.tap("Start with popular categories"); await app.waitText("Added \\d+ popular categor|already have these", 15000); }

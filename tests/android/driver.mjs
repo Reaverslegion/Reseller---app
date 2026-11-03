@@ -25,7 +25,7 @@ class CDP {
 }
 
 export class App {
-  constructor(shotDir) { this.shotDir = shotDir; this.n = 0; this.jsErrors = []; this.phase = ""; this.shots = []; fs.mkdirSync(shotDir, { recursive: true }); }
+  constructor(shotDir) { this.shotDir = shotDir; this.n = 0; this.jsErrors = []; this.events = []; this.phase = ""; this.shots = []; fs.mkdirSync(shotDir, { recursive: true }); }
   // ---------- phone ----------
   install(apk) { adb("install", "-r", "-g", apk); try { sh(`pm grant ${PKG} android.permission.POST_NOTIFICATIONS`); } catch (e) {} }
   pid() { try { return sh(`pidof ${PKG}`).trim(); } catch (e) { return ""; } }
@@ -55,6 +55,7 @@ export class App {
     for (let i = 0; i < t.length; i += 6) { sh(`input text '${t.slice(i, i + 6).replace(/ /g, "%s")}'`); await sleep(120); } await sleep(300); }
   // tap a box, replace what's in it with `text` (typed through the phone's keyboard), check it really holds that text, then leave the box
   async fill(spec, text, c = this.main) { let got = "";
+    if (this.netQuiet) await this.netQuiet();   // wait until the app has finished loading (it redraws when data arrives)
     for (let a = 0; a < 3; a++) { await this.tap(spec, c); await this.selectAll(); await this.key(67); await this.type(text);
       got = await this.eval("document.activeElement&&document.activeElement.value", c); if (got === String(text)) break; }
     if (got !== String(text)) throw new Error(`typed "${String(text).slice(0, 25)}…" but the box holds "${String(got).slice(0, 25)}…"`);
@@ -75,7 +76,10 @@ export class App {
           const list = await (await fetch("http://127.0.0.1:9222/json/list")).json();
           const t = list.find((x) => x.type === "page" && match(x));
           if (t) { const c = await CDP.connect(t.webSocketDebuggerUrl.replace(/ws:\/\/[^/]+/, "ws://127.0.0.1:9222"));
-            await c.send("Runtime.enable");
+            await c.send("Runtime.enable"); await c.send("Inspector.enable").catch(() => {});
+            const tag = isMain ? "app" : "browser";
+            c.on((e) => { if (/^Inspector\.(detached|targetCrashed)$/.test(e.method) || e.method === "Runtime.executionContextsCleared")
+              this.events.push(`${new Date().toISOString().slice(11, 19)} ${this.phase} [${tag}] ${e.method}${e.params && e.params.reason ? " (" + e.params.reason + ")" : ""}`); });
             c.on((e) => { if (e.method === "Runtime.exceptionThrown") this.jsErrors.push({ phase: this.phase, msg: String((e.params.exceptionDetails.exception || {}).description || e.params.exceptionDetails.text).slice(0, 300) }); });
             if (isMain) { if (this.main) this.main.close(); this.main = c; } return c; }
           last = "web view found, app page not open yet"; } else last = "no web view debug socket yet";

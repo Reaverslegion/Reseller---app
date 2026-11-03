@@ -8,6 +8,9 @@ import { makeDeals, seedDeals, query } from "./seed.mjs";
 const KEY = process.env.TEST_APP_KEY, APK = process.env.APK || "app-debug.apk";
 const CHAOS = (m, ms) => fetch(`http://127.0.0.1:8791/${m === "reset" ? "reset" : m === "stats" ? "stats" : "mode?m=" + m + (ms ? "&ms=" + ms : "")}`).then((r) => r.json());
 const app = new App("screenshots"), R = new Results(app);
+// "the app has stopped loading": no new request to the test Scan service for 3 seconds
+app.netQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 30; i++) { let n = 0; try { n = Object.values((await CHAOS("stats")).stats).reduce((a, b) => a + b, 0); } catch (e) { return; }
+  if (n === last) { if (++same >= 3) return; } else { same = 0; last = n; } await sleep(1000); } };
 const J = (name, fn) => R.journey("User journeys", name, fn), U = (name, fn) => R.journey("Unusual behaviour", name, fn);
 const ok = (cond, msg) => { if (!cond) throw new Error(msg); };
 const dealsCount = async () => +((await app.text()).match(/(\d+) deals?\b/) || [])[1] || 0;
@@ -43,7 +46,8 @@ await J("First-time welcome guide", async (step) => {
 await U("Wrong key is handled clearly", async (step) => {
   await step("Connect now opens the connection box", async () => { await app.tap("Connect now"); await app.waitFor(`!!document.getElementById("s_url")`, 8000, "address box"); });
   await step("typing a setup code with a WRONG key saves it", async () => {
-    await app.fill({ sel: "#s_url" }, "http://localhost:8787#wrongkey0000000000"); await app.waitText("Saved|Automatic cloud backup is on", 8000); await app.shot("wrong key saved"); });
+    await app.fill({ sel: "#s_url" }, "http://localhost:8787#wrongkey0000000000");
+    await app.waitFor(`(()=>{try{const s=JSON.parse(localStorage.getItem("resell_helper_v1")).set;return s.url==="http://localhost:8787"&&s.key==="wrongkey0000000000"}catch(e){return false}})()`, 8000, "the address and key saved on the phone"); await app.shot("wrong key saved"); });
   await step("Deals asks to pick categories", async () => { await dealsTab(); await app.waitText("Pick what to hunt"); });
   await step("Start with popular categories shows a clear 'wrong key' message, not a crash", async () => {
     await app.tap("Start with popular categories"); await app.waitText("wrong key", 20000); await app.shot("wrong key message"); });
@@ -56,7 +60,7 @@ await J("Connect to the Scan service", async (step) => {
   await step("turn on admin tools (tap the version 7 times): with a key saved, the connection box is only in admin tools", async () => { await menu();
     const p = await app.locate({ text: "FlipScout version", sel: "div[onclick]" }); for (let i = 0; i < 7; i++) { await app.tapXY(p.x, p.y); await sleep(150); }
     await app.waitText("Admin tools on", 6000); });
-  await step("open admin tools and the connection box", async () => { await app.tap("Open admin tools"); await app.waitText("Admin tools", 8000);
+  await step("open admin tools and the connection box", async () => { await app.tap("Open admin tools"); await app.waitText("Admin tools", 8000); await app.netQuiet();
     if (!(await app.eval(`!!document.getElementById("s_url")&&document.getElementById("s_url").offsetParent!==null`))) await app.tap({ sel: "#adv summary" });
     await app.waitFor(`!!document.getElementById("s_url")&&document.getElementById("s_url").offsetParent!==null`, 6000, "address box"); });
   await step("replace the setup code with the right one", async () => {
@@ -183,6 +187,7 @@ function finish() {
   try { app.logcat && app.logcat.kill(); } catch (e) {}
   fs.writeFileSync("results/android.json", JSON.stringify(R.rows, null, 1));
   const c = (s) => R.rows.filter((r) => r.status === s).length;
+  if (app.events.length) console.log("Screen-link events:\n" + app.events.join("\n"));
   if (app.unblocked) R.add("Android emulator", "the virtual phone itself froze and was un-stuck", "PARTIALLY TESTED", `${app.unblocked} system "isn't responding" pop-up(s) closed during the run (emulator slowness, not FlipScout)`);
   fs.writeFileSync("results/android.json", JSON.stringify(R.rows, null, 1));
   console.log(`\nEmulator tests: ${c("PASS")} passed, ${c("FAIL")} failed, ${c("NOT TESTED")} not run`);

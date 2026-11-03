@@ -11,7 +11,8 @@ let mode = "normal", delay = 9000, stats = {};
 const kind = (u) => { const q = new URL(u, "http://x").searchParams; return [...q.keys()].filter((k) => k !== "key")[0] || "(none)"; };
 
 http.createServer((req, res) => {
-  const k = kind(req.url); stats[k] = (stats[k] || 0) + 1;
+  // count real requests only: the browser's automatic permission check (OPTIONS) before each one isn't a request by the app
+  if (req.method !== "OPTIONS") { const k = kind(req.url); stats[k] = (stats[k] || 0) + 1; }
   if (req.method === "OPTIONS" || mode === "normal" || mode === "slow" || mode === "cut") {
     const go = () => {
       const p = http.request({ host: "127.0.0.1", port: TARGET, path: req.url, method: req.method, headers: req.headers }, (r) => {

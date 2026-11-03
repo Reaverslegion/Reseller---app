@@ -43,12 +43,18 @@ await U("Wrong key is handled clearly", async (step) => {
   await step("Deals asks to pick categories", async () => { await dealsTab(); await app.waitText("Pick what to hunt"); });
   await step("Start with popular categories shows a clear 'wrong key' message, not a crash", async () => {
     await app.tap("Start with popular categories"); await app.waitText("wrong key", 20000); await app.shot("wrong key message"); });
+  await step("the wrong key can be corrected from Menu (without hidden admin tools)", async () => { await menu(); await sleep(1000);
+    const t = await app.text(); ok(/Service address|setup code|Connect your Scan service/i.test(t) && !!(await app.eval(`!!document.getElementById("s_url")`)),
+      "APP FINDING: once a key is saved, Menu has no way to change it (the connection box only appears in hidden admin tools), so a user with a wrong key is stuck"); });
 });
 
 await J("Connect to the Scan service", async (step) => {
-  await step("open Menu and the connection box", async () => { await menu(); await app.waitFor(`!!document.getElementById("s_url")||!!document.getElementById("adv")`, 8000, "connection box");
-    await app.eval(`(()=>{const a=document.getElementById("adv");if(a&&!a.open)a.querySelector("summary").click();return 1})()`).catch(() => {});
-    if (!(await app.eval(`!!document.getElementById("s_url")&&document.getElementById("s_url").offsetParent!==null`))) await app.tap({ sel: "#adv summary" }); });
+  await step("turn on admin tools (tap the version 7 times): with a key saved, the connection box is only in admin tools", async () => { await menu();
+    const p = await app.locate({ text: "FlipScout version", sel: "div[onclick]" }); for (let i = 0; i < 7; i++) { await app.tapXY(p.x, p.y); await sleep(150); }
+    await app.waitText("Admin tools on", 6000); });
+  await step("open admin tools and the connection box", async () => { await app.tap("Open admin tools"); await app.waitText("Admin tools", 8000);
+    if (!(await app.eval(`!!document.getElementById("s_url")&&document.getElementById("s_url").offsetParent!==null`))) await app.tap({ sel: "#adv summary" });
+    await app.waitFor(`!!document.getElementById("s_url")&&document.getElementById("s_url").offsetParent!==null`, 6000, "address box"); });
   await step("replace the setup code with the right one", async () => {
     await app.fill({ sel: "#s_url" }, `http://localhost:8787#${KEY}`); await app.waitText("Saved", 6000); });
   await step("Deals opens with no error", async () => { await dealsTab(); await sleep(3000); const t = await app.eval(`document.getElementById("app").innerText`); ok(!/wrong key|no connection|error/i.test(t), "error on screen: " + t.slice(0, 120)); });
@@ -96,11 +102,6 @@ await J("Menu and settings", async (step) => {
     const c = await query("SELECT v FROM kv WHERE k='config'"); ok(c[0] && /"seller":"business"/.test(c[0].v), "the Scan service didn't get the change"); });
   await step("switching back to Private seller", async () => { await app.tap("Private seller"); await app.waitText("Private seller: no final value fee", 5000); });
   await step("Dark theme applies", async () => { await app.tap({ text: "Dark", exact: true }); await app.waitFor(`document.documentElement.dataset.theme==="dark"`, 4000, "dark theme"); await app.shot("dark theme"); await app.tap({ text: "Auto", exact: true }); });
-});
-
-await J("Turn on admin tools", async (step) => {
-  await step("tapping the version 7 times turns on admin tools", async () => { await menu(); const p = await app.locate({ text: "FlipScout version", sel: "div[onclick]" });
-    for (let i = 0; i < 7; i++) { await app.tapXY(p.x, p.y); await sleep(150); } await app.waitText("Admin tools on", 6000); await app.waitText("Open admin tools", 5000); });
 });
 
 await J("Refresh (Scan now)", async (step) => {

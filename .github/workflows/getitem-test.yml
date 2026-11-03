@@ -33,9 +33,11 @@ jobs:
           const tag = (x, t) => { const m = x.match(new RegExp("<" + t + ">([^<]*)</" + t + ">")); return m ? m[1] : null; };
           const out = [];
           for (const r of all) {
-            const body = `<?xml version="1.0" encoding="utf-8"?><GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents"><RequesterCredentials><eBayAuthToken>${tok}</eBayAuthToken></RequesterCredentials><ItemID>${r.id}</ItemID><DetailLevel>ReturnAll</DetailLevel></GetItemRequest>`;
+            // OAuth user tokens (start "v^1.1") go in a header; older Auth'n'Auth tokens go in the request body
+            const oauth = /^v\^1\.1/.test(tok), cred = oauth ? "" : `<RequesterCredentials><eBayAuthToken>${tok}</eBayAuthToken></RequesterCredentials>`;
+            const body = `<?xml version="1.0" encoding="utf-8"?><GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">${cred}<ItemID>${r.id}</ItemID><DetailLevel>ReturnAll</DetailLevel></GetItemRequest>`;
             let x = "";
-            try { const res = await fetch("https://api.ebay.com/ws/api.dll", { method: "POST", body, headers: { "Content-Type": "text/xml", "X-EBAY-API-SITEID": "3", "X-EBAY-API-COMPATIBILITY-LEVEL": "1423", "X-EBAY-API-CALL-NAME": "GetItem" } }); x = await res.text(); }
+            try { const res = await fetch("https://api.ebay.com/ws/api.dll", { method: "POST", body, headers: { ...(oauth ? { "X-EBAY-API-IAF-TOKEN": tok } : {}), "Content-Type": "text/xml", "X-EBAY-API-SITEID": "3", "X-EBAY-API-COMPATIBILITY-LEVEL": "1423", "X-EBAY-API-CALL-NAME": "GetItem" } }); x = await res.text(); }
             catch (e) { x = "<Ack>Failure</Ack><LongMessage>" + e.message + "</LongMessage>"; }
             const start = tag(x, "StartTime"), end = tag(x, "EndTime");
             out.push({ age: Math.floor((now - r.at) / DAY), ok: /<Ack>(Success|Warning)<\/Ack>/.test(x), err: tag(x, "ErrorCode"), msg: (tag(x, "LongMessage") || "").slice(0, 120),

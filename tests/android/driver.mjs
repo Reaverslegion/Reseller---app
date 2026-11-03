@@ -106,7 +106,7 @@ export class App {
     while (Date.now() - t < ms) { try { v = await this.eval(expr, c); if (v) return v; } catch (e) {} await sleep(300); }
     throw new Error(`waited ${Math.round(ms / 1000)}s but ${what} never appeared`); }
   text(c = this.main) { return this.eval("document.body.innerText", c); }
-  async waitText(re, ms = 15000, c = this.main) { const src = re instanceof RegExp ? re.source : re.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  async waitText(re, ms = 15000, c = this.main) { const src = re instanceof RegExp ? re.source : String(re);   // the words are a pattern: "a|b" means either
     return this.waitFor(`(()=>{const m=document.body.innerText.match(new RegExp(${JSON.stringify(src)},"i"));return m&&m[0]})()`, ms, `"${re}" on screen`, c); }
   // where the web view sits on the phone screen, from Android's own screen dump (largest web view = the one in front)
   webviewBounds() {

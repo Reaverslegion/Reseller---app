@@ -32,6 +32,7 @@ jobs:
           if (!tok) { console.log("::error::EBAY_USER_TOKEN secret is missing"); process.exit(1); }
           const tag = (x, t) => { const m = x.match(new RegExp("<" + t + ">([^<]*)</" + t + ">")); return m ? m[1] : null; };
           const out = [];
+          (async () => { try {
           for (const r of all) {
             // OAuth user tokens (start "v^1.1") go in a header; older Auth'n'Auth tokens go in the request body
             const oauth = /^v\^1\.1/.test(tok), cred = oauth ? "" : `<RequesterCredentials><eBayAuthToken>${tok}</eBayAuthToken></RequesterCredentials>`;
@@ -55,4 +56,5 @@ jobs:
             `Formats: ${JSON.stringify(out.reduce((a, o) => (o.type && (a[o.type] = (a[o.type] || 0) + 1), a), {}))}`,
             `Errors: ${JSON.stringify(errs)}`];
           for (const l of lines) console.log("::notice title=result::" + l);
+          } catch (e) { console.log("::error::" + String(e && e.stack || e).slice(0, 500)); process.exit(1); } })();
           JS

@@ -122,7 +122,10 @@ async function schema(env) {
   try { await D.prepare("CREATE TABLE IF NOT EXISTS fillseen (id TEXT PRIMARY KEY, cat TEXT, price REAL, at INTEGER)").run(); } catch (e) {}
   for (const sql of ["ALTER TABLE listings ADD COLUMN data TEXT", "ALTER TABLE deals ADD COLUMN checked INTEGER DEFAULT 0",
     "ALTER TABLE listings ADD COLUMN sold_at INTEGER", "ALTER TABLE listings ADD COLUMN sold_price REAL", "ALTER TABLE listings ADD COLUMN ended_at INTEGER", "ALTER TABLE listings ADD COLUMN ended_from INTEGER",
-    "ALTER TABLE fillseen ADD COLUMN title TEXT", "ALTER TABLE fillseen ADD COLUMN cond TEXT", "ALTER TABLE fillseen ADD COLUMN pkey TEXT"]) {
+    "ALTER TABLE fillseen ADD COLUMN title TEXT", "ALTER TABLE fillseen ADD COLUMN cond TEXT", "ALTER TABLE fillseen ADD COLUMN pkey TEXT",
+    // sold details from eBay's Trading API (GetItem): when it was listed, seller, format, quantities, when looked up (0 = not found)
+    "ALTER TABLE fillseen ADD COLUMN start_at INTEGER", "ALTER TABLE fillseen ADD COLUMN seller TEXT", "ALTER TABLE fillseen ADD COLUMN fmt TEXT",
+    "ALTER TABLE fillseen ADD COLUMN qty INTEGER", "ALTER TABLE fillseen ADD COLUMN qty_sold INTEGER", "ALTER TABLE fillseen ADD COLUMN gi_at INTEGER"]) {
     try { await D.prepare(sql).run(); } catch (e) { /* column already there */ }
   }
   SCHEMA = true;
@@ -731,6 +734,78 @@ async function cleanup5(env, cfg, report) {
   }
 }
 
+/* ---------------- sold details from eBay's Trading API ---------------- */
+// The owner connects their eBay account once (OAuth, "view public data" only). eBay gives a refresh token (about 18
+// months) that FlipScout keeps in its database and uses to get 2-hour access tokens. GetItem then returns, for any sold
+// item number up to about 90 days after it ended: when it was listed (StartTime), the seller, the format and quantities.
+// Tested 3 Nov 2026: 130 of 130 sold items answered with an upload time, 30 of 30 matching FlipScout's own records.
+const RUNAME = "Anthony_Wildsmi-AnthonyW-FlipSc-wqplioem"; // eBay "redirect URL name" for the FlipScout keyset (not secret)
+const USER_SCOPE = "https://api.ebay.com/oauth/api_scope";
+const GI_PER_SCAN = 25, GI_DAILY = 4000; // Trading API calls: well under eBay's default 5,000 a day
+const ebayConnectUrl = (env) => "https://auth.ebay.com/oauth2/authorize?client_id=" + encodeURIComponent(env.EBAY_ID) + "&response_type=code&redirect_uri=" +
+  encodeURIComponent(RUNAME) + "&scope=" + encodeURIComponent(USER_SCOPE);
+async function ebayUserTokenCall(env, body) {
+  const res = await fetch("https://api.ebay.com/identity/v1/oauth2/token", { method: "POST", body,
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: "Basic " + btoa(env.EBAY_ID + ":" + env.EBAY_SECRET) } });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error("eBay sign-in refused (" + res.status + "): " + String(d.error_description || d.error || "").slice(0, 120));
+  return d;
+}
+// the code eBay hands back after the owner taps Agree → a refresh token kept in the database
+async function ebayConnect(env, code) {
+  const d = await ebayUserTokenCall(env, "grant_type=authorization_code&code=" + encodeURIComponent(code) + "&redirect_uri=" + encodeURIComponent(RUNAME));
+  if (!d.refresh_token) throw new Error("eBay didn't return a long-lasting token");
+  const now = Date.now();
+  await kvSet(env, "ebayUser", { refresh: d.refresh_token, refreshExp: now + (+d.refresh_token_expires_in || 47304000) * 1000,
+    access: d.access_token, accessExp: now + ((+d.expires_in || 7200) - 300) * 1000, at: now });
+  return { ok: true, until: now + (+d.refresh_token_expires_in || 47304000) * 1000 };
+}
+async function ebayUserToken(env) {
+  const u = await kvGet(env, "ebayUser", null);
+  if (!u || !u.refresh) return null;
+  if (u.access && Date.now() < u.accessExp) return u.access;
+  if (Date.now() > u.refreshExp) return null;
+  const d = await ebayUserTokenCall(env, "grant_type=refresh_token&refresh_token=" + encodeURIComponent(u.refresh) + "&scope=" + encodeURIComponent(USER_SCOPE));
+  u.access = d.access_token; u.accessExp = Date.now() + ((+d.expires_in || 7200) - 300) * 1000;
+  await kvSet(env, "ebayUser", u);
+  return u.access;
+}
+const xmlTag = (x, t) => { const m = x.match(new RegExp("<" + t + ">([^<]*)</" + t + ">")); return m ? m[1] : null; };
+async function getItemTrading(env, tok, id) {
+  const body = `<?xml version="1.0" encoding="utf-8"?><GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents"><ItemID>${String(id).replace(/\D/g, "")}</ItemID><DetailLevel>ReturnAll</DetailLevel></GetItemRequest>`;
+  const res = await fetch("https://api.ebay.com/ws/api.dll", { method: "POST", body, headers: { "X-EBAY-API-IAF-TOKEN": tok, "Content-Type": "text/xml",
+    "X-EBAY-API-SITEID": "3", "X-EBAY-API-COMPATIBILITY-LEVEL": "1423", "X-EBAY-API-CALL-NAME": "GetItem" } });
+  const x = await res.text();
+  if (/<ErrorCode>(?:21917053|931|932|21916984)<\/ErrorCode>/.test(x)) throw new Error("eBay token no longer accepted"); // expired or revoked
+  if (!/<Ack>(?:Success|Warning)<\/Ack>/.test(x)) return { missing: true, err: xmlTag(x, "ErrorCode") };
+  const st = xmlTag(x, "StartTime");
+  return { start: st ? Date.parse(st) : null, seller: (xmlTag(x, "UserID") || "").slice(0, 64) || null, fmt: xmlTag(x, "ListingType"),
+    qty: +xmlTag(x, "Quantity") || null, sold: +xmlTag(x, "QuantitySold") || null };
+}
+// a batch of sold items each scan, oldest first (eBay stops answering about 90 days after a listing ends)
+async function soldDetails(env, report) {
+  const D = env.DB, now = Date.now(), day = new Date(now).toISOString().slice(0, 10);
+  const use = await kvGet(env, "giUse", { d: day, n: 0 });
+  if (use.d !== day) { use.d = day; use.n = 0; }
+  if (use.n >= GI_DAILY) return;
+  const tok = await ebayUserToken(env);
+  if (!tok) return;
+  const rows = (await D.prepare("SELECT id FROM fillseen WHERE gi_at IS NULL AND at > ? ORDER BY at ASC LIMIT ?").bind(now - 92 * DAY, Math.min(GI_PER_SCAN, GI_DAILY - use.n)).all()).results || [];
+  let found = 0, missing = 0;
+  const up = [];
+  for (const r of rows) {
+    let g;
+    try { g = await getItemTrading(env, tok, r.id); } catch (e) { report.errors.push("sold details: " + e.message); if (/no longer accepted/.test(e.message)) await kvSet(env, "ebayUser", { ...(await kvGet(env, "ebayUser", {})), broken: now }); break; }
+    use.n++;
+    if (g.missing) { missing++; up.push(D.prepare("UPDATE fillseen SET gi_at=0 WHERE id=?").bind(r.id)); continue; }
+    found++;
+    up.push(D.prepare("UPDATE fillseen SET start_at=?, seller=?, fmt=?, qty=?, qty_sold=?, gi_at=? WHERE id=?").bind(g.start, g.seller, g.fmt, g.qty, g.sold, now, r.id));
+  }
+  for (let i = 0; i < up.length; i += 50) await D.batch(up.slice(i, i + 50));
+  await kvSet(env, "giUse", use);
+  if (rows.length) report.soldDetails = { found, missing, today: use.n };
+}
+
 /* ---------------- how long listings take to sell ---------------- */
 // rows: [itemId, cat, price incl. post, soldAt, title?, condition?, model key?] — a sale read again fills in what was missing
 async function seenAdd(env, rows) {
@@ -755,11 +830,15 @@ async function markSold(env, rows) {
 // ones that ended without appearing in a sold list that was read for that day ("probably withdrawn"; an assumption)
 async function sellStats(env) {
   const D = env.DB, now = Date.now(), cover = await kvGet(env, "fillCover", {});
-  const q = await D.prepare("SELECT pkey, cat, first_seen, last_seen, sold_at, ended_at, ended_from, status FROM listings WHERE type='BIN' AND pkey IS NOT NULL AND status IN ('sold','gone')").all();
-  const m = {};
+  const q = await D.prepare("SELECT id, pkey, cat, first_seen, last_seen, sold_at, ended_at, ended_from, status FROM listings WHERE type='BIN' AND pkey IS NOT NULL AND status IN ('sold','gone')").all();
+  const m = {}, done = new Set();
+  // sold items looked up with eBay's GetItem: listed → sold. Single-item listings only (a listing selling many units
+  // over months says how old the listing is, not how fast one sells), and nothing over a year.
+  const g = await D.prepare("SELECT id, pkey, at, start_at FROM fillseen WHERE pkey IS NOT NULL AND start_at > 0 AND at >= start_at AND COALESCE(qty, 1) <= 1 AND at - start_at < ?").bind(365 * DAY).all();
+  for (const r of g.results || []) { const x = (m[r.pkey] = m[r.pkey] || { d: [], wd: 0 }); x.d.push((r.at - r.start_at) / DAY); done.add(String(r.id)); }
   for (const r of q.results || []) {
     const k = bareKey(r.pkey), x = (m[k] = m[k] || { d: [], wd: 0 });
-    if (r.status === "sold" && r.sold_at >= r.first_seen) x.d.push((r.sold_at - r.first_seen) / DAY);
+    if (r.status === "sold" && r.sold_at >= r.first_seen) { if (!done.has(String(r.id))) x.d.push((r.sold_at - r.first_seen) / DAY); }
     // ended unsold: it ended some time between ended_from and ended_at, and the sold pages for that whole time were read
     else if (r.status === "gone" && covered(cover[r.cat], r.ended_from || r.last_seen, r.ended_at || r.last_seen)) x.wd++;
   }
@@ -1530,6 +1609,8 @@ async function sweep(env, manual) {
     for (const r0 of nd.results || []) { const v = await checkLive(env, r0.id); checked++; if (v.fault) faulty++; }
     if (checked) report.descChecked = { checked, faulty };
   } catch (e) { report.errors.push("description check: " + e.message); }
+  // sold details (upload time, seller, format) for sold items from fills, once the owner has connected their eBay account
+  try { await soldDetails(env, report); if (report.soldDetails && report.soldDetails.found) await sellStats(env); } catch (e) { report.errors.push("sold details: " + e.message); }
 
   // remember where each auction deal stood, to learn from its final price later
   try {
@@ -1811,7 +1892,7 @@ export default {
     }
 
     // ---- hunting (needs the database) ----
-    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "flag", "unflag", "flags", "test", "device", "check", "price", "prices", "unprice", "needs", "lookfor", "fill", "fillstats", "seen", "sales"].some((k) => u.searchParams.has(k));
+    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "flag", "unflag", "flags", "test", "device", "check", "price", "prices", "unprice", "needs", "lookfor", "fill", "fillstats", "seen", "sales", "ebayconnect", "ebaycode"].some((k) => u.searchParams.has(k));
     if (huntCall) {
       if (!env.DB) return json({ error: "hunting database not set up yet" }, 501);
       try {
@@ -1884,6 +1965,8 @@ export default {
             const ch = ids.slice(i, i + 90), q = ch.map(() => "?").join(",");
             for (const r of (await env.DB.prepare(`SELECT id, title, cond FROM listings WHERE id IN (${q})`).bind(...ch).all()).results || []) info[r.id] = { title: r.title, cond: r.cond };
             for (const r of (await env.DB.prepare(`SELECT id, title, cond FROM fillseen WHERE id IN (${q}) AND title IS NOT NULL`).bind(...ch).all()).results || []) info[r.id] = { title: r.title, cond: r.cond || (info[r.id] || {}).cond };
+            for (const r of (await env.DB.prepare(`SELECT id, start_at, seller, fmt, qty, qty_sold FROM fillseen WHERE id IN (${q}) AND start_at > 0`).bind(...ch).all()).results || [])
+              info[r.id] = { ...(info[r.id] || {}), listed: r.start_at, seller: r.seller, fmt: r.fmt === "Chinese" ? "auction" : r.fmt === "FixedPriceItem" ? "Buy It Now" : r.fmt, qty: r.qty, qtySold: r.qty_sold };
           }
           // same rule as the price: 50%–150% of the median; last 30 days when there are 5+ of those
           const now = Date.now(), m = median(rows.filter((r) => r.src === "fill").map((r) => r.price)) || median(rows.map((r) => r.price));
@@ -1893,6 +1976,17 @@ export default {
             .sort((a, c) => (c.at || 0) - (a.at || 0));
           const p = await env.DB.prepare("SELECT label, avg, lo, hi, n, post FROM prices WHERE pkey=?").bind(key).first();
           return json({ key, price: p || null, sales: out });
+        }
+        if (P("ebayconnect")) {
+          // where to send the owner to connect their eBay account, and how the sold-details lookups are going
+          const u = await kvGet(env, "ebayUser", null), use = await kvGet(env, "giUse", { n: 0 });
+          const c = await env.DB.prepare("SELECT SUM(gi_at > 0) found, SUM(gi_at = 0) missing, SUM(gi_at IS NULL AND at > ?) todo FROM fillseen").bind(Date.now() - 92 * DAY).first();
+          return json({ url: ebayConnectUrl(env), connected: !!(u && u.refresh && !u.broken && Date.now() < u.refreshExp), until: u ? u.refreshExp : null,
+            broken: u ? u.broken || null : null, today: use.n || 0, found: c ? c.found || 0 : 0, missing: c ? c.missing || 0 : 0, todo: c ? c.todo || 0 : 0 });
+        }
+        if (P("ebaycode") && request.method === "POST") {
+          const b = JSON.parse(await request.text());
+          return json(await ebayConnect(env, String(b.code || "").slice(0, 2000)));
         }
         if (P("seen") && request.method === "POST") {
           // which of these sold item numbers a fill has already saved (read only)

@@ -57,12 +57,15 @@ export class App {
   async fill(spec, text, c = this.main, prep = null) { let got = "", why = "";
     if (this.netQuiet) await this.netQuiet();   // wait until the app has finished loading (it redraws when data arrives)
     const target = spec.sel ? JSON.stringify(spec.sel) : "null";
+    // watch for the page redrawing itself (read-only: records what asked for each redraw)
+    await this.eval(`(()=>{if(!window.__rw&&typeof render==="function"){const r=render;window.__rs=[];window.render=function(){window.__rs.push(Date.now()+" "+String(new Error().stack).split("\\n").slice(2,5).map(x=>x.trim().replace(/^at /,"").replace(/\\(?https:\\/\\/localhost\\/?/,"").slice(0,40)).join(" < "));return r.apply(this,arguments)};window.__rw=1}window.__rs=[];return 1})()`, c).catch(() => {});
     for (let a = 0; a < 4; a++) {
       if (prep) await prep();
       await this.tap(spec, c);
       // only type once the phone's keyboard focus is really in that box (a redraw can remove the box under the finger)
       const f = await this.eval(`(()=>{const a=document.activeElement,t=${target}&&document.querySelector(${target});return{ok:!!a&&(t?a===t:/INPUT|TEXTAREA/.test(a.tagName)),now:a?(a.id||a.tagName):"none",there:!!t}})()`, c);
-      if (!f.ok) { why = `focus went to ${f.now}${f.there ? "" : " (the box had disappeared)"}`; await sleep(1500); continue; }
+      if (!f.ok) { const rs = await this.eval("(window.__rs||[]).slice(-3).join(' || ')", c).catch(() => "");
+        why = `focus went to ${f.now}${f.there ? "" : " (the box had disappeared)"}${rs ? "; page redrawn by: " + rs : "; no redraw"}`; await sleep(1500); continue; }
       await this.selectAll(); await this.key(67); await this.type(text);
       got = await this.eval("document.activeElement&&document.activeElement.value", c); if (got === String(text)) break; why = `box holds "${String(got).slice(0, 25)}…"`; }
     if (got !== String(text)) throw new Error(`couldn't type "${String(text).slice(0, 22)}…" into ${spec.sel || spec.text}: ${why}`);

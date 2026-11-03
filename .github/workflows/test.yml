@@ -1,0 +1,132 @@
+# TEST PIPELINE: runs on every change to any branch EXCEPT main, and on every request to merge into main.
+# It never deploys anything, never touches the live Scan service or live database, and uses no real keys:
+# the Scan service is tested as a private local copy with a throwaway database and a fake eBay.
+# Results: the run's Summary page shows the testing report (PASS / FAIL / NOT TESTED / PARTIALLY TESTED).
+name: Test changes (safe, no live access)
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node tests/ci/unit-results.mjs
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-unit
+          path: results/
+          retention-days: 7
+
+  build:
+    name: Build test app (live build steps)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Build with the same steps as the live build
+        env:
+          RUN_NO: ${{ github.run_number }}
+        run: |
+          pip install -q pyyaml
+          python3 tests/ci/live-build-steps.py
+          test -s android/app/build/outputs/apk/debug/app-debug.apk
+          ls -la android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Record result
+        if: always()
+        run: |
+          mkdir -p results
+          if [ -s android/app/build/outputs/apk/debug/app-debug.apk ]; then S=PASS; D="test app built ($(du -k android/app/build/outputs/apk/debug/app-debug.apk | cut -f1) KB)"; else S=FAIL; D="the build failed: see the Build job log"; fi
+          echo "[{\"area\":\"Build\",\"name\":\"test app builds with the live build steps\",\"status\":\"$S\",\"detail\":\"$D\"}]" > results/build.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-build
+          path: results/
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flipscout-TEST-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
+
+  service:
+    name: Private test Scan service
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Safety check - no Cloudflare or eBay keys on this machine
+        run: |
+          test -z "${CLOUDFLARE_API_TOKEN}${CLOUDFLARE_ACCOUNT_ID}${EBAY_ID}${EBAY_SECRET}"
+          echo "No real keys present: this job cannot reach the live service or database."
+      - name: Start fake eBay and the private test Scan service
+        run: |
+          KEY=$(openssl rand -hex 24); echo "::add-mask::$KEY"; echo "TEST_APP_KEY=$KEY" >> $GITHUB_ENV
+          export TEST_APP_KEY=$KEY
+          nohup node tests/e2e/fake-ebay.mjs > fake-ebay.out 2>&1 &
+          node tests/e2e/make-test-service.mjs
+          npm i -g wrangler@3 >/dev/null 2>&1
+          cd .test-service
+          WRANGLER_SEND_METRICS=false nohup wrangler dev --local --port 8787 --ip 127.0.0.1 --persist-to ./state > ../service.out 2>&1 &
+          for i in $(seq 1 60); do curl -s -o /dev/null http://127.0.0.1:8787/ && break; sleep 2; done
+          curl -s -o /dev/null -w "test service answering (HTTP %{http_code})\n" http://127.0.0.1:8787/
+      - name: Check the test service
+        env:
+          TEST_URL: http://127.0.0.1:8787
+        run: node tests/e2e/service-smoke.mjs
+      - name: Service log (if anything failed)
+        if: failure()
+        run: tail -60 service.out; tail -20 fake-ebay.out
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-service
+          path: results/
+          retention-days: 7
+
+  report:
+    name: Testing report
+    needs: [unit, build, service]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: results-*
+          path: results
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node tests/ci/report.mjs results
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: test-report.md
+          retention-days: 30

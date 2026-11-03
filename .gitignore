@@ -1,0 +1,6 @@
+.test-service/
+results/
+fake-ebay.log
+fake-ebay.out
+service.out
+test-report.md

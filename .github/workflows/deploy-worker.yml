@@ -6,6 +6,8 @@ on:
     paths: [worker.js, .github/workflows/deploy-worker.yml]
 jobs:
   deploy:
+    # safety lock: only ever runs for main, so untested branches can never reach the live service or your phone build
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

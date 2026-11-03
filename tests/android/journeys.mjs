@@ -188,6 +188,7 @@ function finish() {
   try { app.logcat && app.logcat.kill(); } catch (e) {}
   fs.writeFileSync("results/android.json", JSON.stringify(R.rows, null, 1));
   const c = (s) => R.rows.filter((r) => r.status === s).length;
+  if (app.missed) console.log(`Taps corrected after the screen shifted: ${app.missed}`);
   if (app.events.length) console.log("Screen-link events:\n" + app.events.join("\n"));
   if (app.unblocked) R.add("Android emulator", "the virtual phone itself froze and was un-stuck", "PARTIALLY TESTED", `${app.unblocked} system "isn't responding" pop-up(s) closed during the run (emulator slowness, not FlipScout)`);
   fs.writeFileSync("results/android.json", JSON.stringify(R.rows, null, 1));

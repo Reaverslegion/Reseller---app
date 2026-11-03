@@ -140,7 +140,7 @@ export class App {
     if (r.covered) throw new Error(`"${spec.text || spec.sel}" is covered by something else (${r.covered})`);
     await sleep(250);
     const b = await this.calibrate(c);
-    return { x: b.l + r.x * b.k, y: b.t + r.y * b.k, label: r.label };
+    return { x: b.l + r.x * b.k, y: b.t + r.y * b.k, px: r.x, py: r.y, label: r.label };
   }
   // Where the web view sits on the phone screen: one real tap in the middle of the screen, which the app is told to
   // ignore, reports where it landed inside the page. Measured once per screen (again after rotating).
@@ -157,7 +157,18 @@ export class App {
     }
     throw new Error("couldn't measure where the app is on the screen (calibration tap not received)");
   }
-  async tap(spec, c) { if (typeof spec === "string") spec = { text: spec }; const p = await this.locate(spec, c); await this.tapXY(p.x, p.y); await sleep(spec.wait ?? 700); return p; }
+  // Tap a control with a real touch, then check where the touch actually landed inside the app (a listener that only
+  // watches). If the screen had shifted (e.g. the keyboard pushed it up), correct the position and tap once more.
+  async tap(spec, c) { if (typeof spec === "string") spec = { text: spec }; c = c || this.main;
+    const p = await this.locate(spec, c);
+    await this.eval(`(()=>{window.__lt=null;addEventListener("pointerdown",e=>{window.__lt={x:e.clientX,y:e.clientY}},{capture:true,once:true,passive:true});return 1})()`, c).catch(() => {});
+    await this.tapXY(p.x, p.y); await sleep(150);
+    const lt = await this.eval("window.__lt", c).catch(() => null), b = this.cal && this.cal.get(c);
+    if (lt && b) { const off = Math.hypot(lt.x - p.px, lt.y - p.py);
+      b.l = p.x - lt.x * b.k; b.t = p.y - lt.y * b.k;     // where the app really is now
+      if (off > 12) { this.missed = (this.missed || 0) + 1; if (spec._again) throw new Error(`taps on "${spec.text || spec.sel}" keep landing ${Math.round(off)}px away`);
+        await sleep(600); return this.tap({ ...spec, _again: true }, c); } }
+    await sleep(spec.wait ?? 700); return p; }
 }
 
 // ---------- results: every step is PASS / FAIL / NOT TESTED, with a screenshot when it fails ----------

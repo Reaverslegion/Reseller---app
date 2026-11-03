@@ -88,7 +88,7 @@ export class App {
     return this.waitFor(`(()=>{const m=document.body.innerText.match(new RegExp(${JSON.stringify(src)},"i"));return m&&m[0]})()`, ms, `"${re}" on screen`, c); }
   // where the web view sits on the phone screen, from Android's own screen dump (largest web view = the one in front)
   webviewBounds() {
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 8; i++) {
       try { sh("uiautomator dump /sdcard/ui.xml >/dev/null 2>&1"); const x = sh("cat /sdcard/ui.xml");
         const B = [...x.matchAll(/class="android\.webkit\.WebView"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/g)].map((m) => ({ l: +m[1], t: +m[2], r: +m[3], b: +m[4] }));
         if (B.length) { B.sort((a, b) => (b.r - b.l) * (b.b - b.t) - (a.r - a.l) * (a.b - a.t)); this.lastBounds = B[0]; this.lastDump = x; return B[0]; }
@@ -117,8 +117,23 @@ export class App {
     if (!r || r.missing !== undefined) throw new Error(`couldn't find "${spec.text || spec.sel}" on screen`);
     if (r.covered) throw new Error(`"${spec.text || spec.sel}" is covered by something else (${r.covered})`);
     await sleep(250);
-    const b = this.webviewBounds(), k = (b.r - b.l) / r.w;
-    return { x: b.l + r.x * k, y: b.t + r.y * k, label: r.label };
+    const b = await this.calibrate(c);
+    return { x: b.l + r.x * b.k, y: b.t + r.y * b.k, label: r.label };
+  }
+  // Where the web view sits on the phone screen: one real tap in the middle of the screen, which the app is told to
+  // ignore, reports where it landed inside the page. Measured once per screen (again after rotating).
+  async calibrate(c = this.main) {
+    this.cal = this.cal || new Map(); if (this.cal.has(c)) return this.cal.get(c);
+    const [W, H] = (sh("wm size").match(/(\d+)x(\d+)/) || []).slice(1).map(Number), cx = Math.round(W / 2), cy = Math.round(H / 2);
+    for (let a = 0; a < 3; a++) {
+      await this.eval(`(function(){window.__cal=null;const ev=["pointerdown","pointerup","touchstart","touchend","mousedown","mouseup","click"];
+        const h=e=>{e.preventDefault();e.stopImmediatePropagation();if(!window.__cal&&e.type==="pointerdown")window.__cal={x:e.clientX,y:e.clientY,w:innerWidth}};
+        window.__calh=h;ev.forEach(n=>window.addEventListener(n,h,{capture:true,passive:false}));return 1})()`, c);
+      await this.tapXY(cx, cy); await sleep(600);
+      const r = await this.eval(`(function(){const r=window.__cal;const ev=["pointerdown","pointerup","touchstart","touchend","mousedown","mouseup","click"];ev.forEach(n=>window.removeEventListener(n,window.__calh,true));return r})()`, c);
+      if (r && r.w) { const k = W / r.w, b = { l: cx - r.x * k, t: cy - r.y * k, k }; this.cal.set(c, b); return b; }
+    }
+    throw new Error("couldn't measure where the app is on the screen (calibration tap not received)");
   }
   async tap(spec, c) { if (typeof spec === "string") spec = { text: spec }; const p = await this.locate(spec, c); await this.tapXY(p.x, p.y); await sleep(spec.wait ?? 700); return p; }
 }

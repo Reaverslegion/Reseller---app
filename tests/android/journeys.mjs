@@ -167,8 +167,8 @@ await U("Repeated and rapid taps", async (step) => {
 
 await U("Leaving and coming back", async (step) => {
   await step("going to the home screen and back keeps the app where it was", async () => { await app.home(); await app.resume(); ok(app.alive(), "app restarted or died"); await app.waitFor(`!!document.querySelector(".dcard")`, 10000, "deals list"); await app.shot("resumed"); });
-  await step("rotating the phone doesn't lose anything", async () => { sh("settings put system accelerometer_rotation 0"); sh("settings put system user_rotation 1"); await sleep(2500); await app.shot("landscape");
-    sh("settings put system user_rotation 0"); await sleep(2000); ok(app.alive(), "app died on rotation"); await app.connect().catch(() => {}); await app.waitFor(`!!document.querySelector(".dcard")`, 10000, "deals list after rotation"); });
+  await step("rotating the phone doesn't lose anything", async () => { sh("settings put system accelerometer_rotation 0"); sh("settings put system user_rotation 1"); await sleep(2500); app.cal = null; await app.shot("landscape");
+    sh("settings put system user_rotation 0"); await sleep(2000); app.cal = null; ok(app.alive(), "app died on rotation"); await app.connect().catch(() => {}); await app.waitFor(`!!document.querySelector(".dcard")`, 10000, "deals list after rotation"); });
 });
 
 finish();

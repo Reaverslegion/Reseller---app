@@ -22,6 +22,10 @@ adb("reverse", "tcp:8787", "tcp:8789");
 adb("reverse", "tcp:8790", "tcp:8790");
 fs.mkdirSync("results", { recursive: true });
 app.startLog("logcat.txt");
+// let the new virtual phone finish starting up (Google services update themselves after boot and slow everything down)
+app.prepPhone();
+for (let i = 0; i < 24; i++) { let busy = ""; try { busy = sh("top -b -n 1 | head -4"); } catch (e) {} const idle = +((busy.match(/(\d+)%idle/) || [])[1] || 0); if (i >= 6 && idle > 120) break; await sleep(5000); }
+await app.unblock();
 
 const setup = await R.journey("Android emulator", "Install and launch the real app", async (step) => {
   await step("APK installs on the emulator", async () => { app.install(APK); ok(/com\.reaverslegion\.flipscout/.test(sh("pm list packages")), "package not installed"); });
@@ -179,6 +183,8 @@ function finish() {
   try { app.logcat && app.logcat.kill(); } catch (e) {}
   fs.writeFileSync("results/android.json", JSON.stringify(R.rows, null, 1));
   const c = (s) => R.rows.filter((r) => r.status === s).length;
+  if (app.unblocked) R.add("Android emulator", "the virtual phone itself froze and was un-stuck", "PARTIALLY TESTED", `${app.unblocked} system "isn't responding" pop-up(s) closed during the run (emulator slowness, not FlipScout)`);
+  fs.writeFileSync("results/android.json", JSON.stringify(R.rows, null, 1));
   console.log(`\nEmulator tests: ${c("PASS")} passed, ${c("FAIL")} failed, ${c("NOT TESTED")} not run`);
   for (const r of R.rows) console.log(`${r.status.padEnd(10)} ${r.area} | ${r.name}${r.detail ? "  — " + r.detail : ""}`);
 }

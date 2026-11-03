@@ -40,6 +40,10 @@ export class App {
   async stop() { sh(`am force-stop ${PKG}`); if (this.main) this.main.close(); this.main = null; await sleep(800); }
   async home() { sh("input keyevent 3"); await sleep(1500); }
   async resume() { sh(`monkey -p ${PKG} -c android.intent.category.LAUNCHER 1`); await sleep(2500); }
+  // the emulator itself can be slow on GitHub's small machines: turn off "isn't responding" pop-ups, and close any that appear
+  prepPhone() { for (const c of ["settings put global hide_error_dialogs 1", "settings put global window_animation_scale 0", "settings put global transition_animation_scale 0", "settings put global animator_duration_scale 0", "svc power stayon true", "input keyevent 82"]) { try { sh(c); } catch (e) {} } }
+  async unblock() { for (let i = 0; i < 3; i++) { let f = ""; try { f = sh("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"); } catch (e) { return; }
+      if (!/Not Responding|isn't responding|Application Error/i.test(f)) return; this.unblocked = (this.unblocked || 0) + 1; sh("input keyevent 4"); await sleep(2000); } }
   alive() { const p = this.pid(); return !!p && p === this.appPid; }
   async tapXY(x, y) { sh(`input tap ${Math.round(x)} ${Math.round(y)}`); }
   async key(code) { sh(`input keyevent ${code}`); await sleep(400); }
@@ -78,7 +82,9 @@ export class App {
     }
     throw new Error("couldn't connect to the app's screen: " + last);
   }
-  async eval(expr, c = this.main) { const r = await c.send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
+  async eval(expr, c = this.main) {
+    if (c && c.closed && c === this.main) { this.appPid = this.pid() || this.appPid; await this.connect(); c = this.main; }
+    const r = await c.send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
     if (r.exceptionDetails) throw new Error("check failed in app: " + (r.exceptionDetails.exception || {}).description); return r.result.value; }
   async waitFor(expr, ms = 15000, what = expr, c = this.main) { const t = Date.now(); let v;
     while (Date.now() - t < ms) { try { v = await this.eval(expr, c); if (v) return v; } catch (e) {} await sleep(300); }
@@ -109,7 +115,7 @@ export class App {
       L=L.filter(vis);if(!spec.sel)L=L.filter(e=>!L.some(o=>o!==e&&e.contains(o)));
       if(sheet&&sheet.classList.contains("on")){const inS=L.filter(e=>sheet.contains(e));if(inS.length)L=inS}
       if(onb&&getComputedStyle(onb).display!=="none"){const inO=L.filter(e=>onb.contains(e));if(inO.length)L=inO}
-      const e=L[spec.nth||0];if(!e)return{missing:L.length};e.scrollIntoView({block:"center",inline:"center",behavior:"instant"});
+      const e=L[spec.nth||0];if(!e)return{missing:L.length};const de=document.documentElement,sb=de.style.scrollBehavior;de.style.scrollBehavior="auto";e.scrollIntoView({block:"center",inline:"center"});de.style.scrollBehavior=sb;
       const r=e.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2,top=document.elementFromPoint(cx,cy);
       return{x:cx,y:cy,w:innerWidth,h:innerHeight,covered:top&&top!==e&&!e.contains(top)&&!(top.contains&&top.contains(e))?(top.id||top.className||top.tagName):null,label:lab(e).slice(0,60)}})`;
     let r;
@@ -147,7 +153,7 @@ export class Results {
     const step = async (what, f) => {
       steps++;
       if (failed) { this.rows.push({ area, name: `${name} › ${what}`, status: "NOT TESTED", detail: "not run because an earlier step failed" }); return; }
-      try { await f(); passed++; this.rows.push({ area, name: `${name} › ${what}`, status: "PASS" }); }
+      try { await app.unblock(); await f(); passed++; this.rows.push({ area, name: `${name} › ${what}`, status: "PASS" }); }
       catch (e) { failed = what; const s = await app.shot(`FAIL ${name} ${what}`);
         this.rows.push({ area, name: `${name} › ${what}`, status: "FAIL", detail: String(e.message || e).slice(0, 300), shot: s }); }
     };

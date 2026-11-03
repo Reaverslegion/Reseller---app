@@ -12,6 +12,10 @@ if (fs.existsSync(dir)) for (const f of fs.readdirSync(dir, { recursive: true })
 // every area the system is meant to cover; an area with no results is NOT TESTED
 const AREAS = ["Unit tests", "Build", "Test Scan service", "Android emulator", "User journeys", "Deals: app vs database",
   "Dependency vulnerabilities", "Security", "Accessibility", "Performance"];
+// a job that failed before it could record any results is a FAIL, never "not tested"
+let jobs = {}; try { jobs = JSON.parse(process.env.JOB_RESULTS || "{}"); } catch (e) {}
+for (const [a, res] of Object.entries(jobs)) if (!rows.some((r) => r.area === a) && res !== "success")
+  rows.push({ area: a, name: "the job stopped before recording results", status: res === "skipped" ? "NOT TESTED" : "FAIL", detail: "job result: " + res });
 for (const a of AREAS) if (!rows.some((r) => r.area === a)) rows.push({ area: a, name: "(not set up yet, or its job didn't run)", status: "NOT TESTED" });
 
 const icon = { PASS: "✅ PASS", FAIL: "❌ FAIL", "NOT TESTED": "⬜ NOT TESTED", "PARTIALLY TESTED": "🟨 PARTIALLY TESTED" };

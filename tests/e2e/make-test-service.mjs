@@ -24,7 +24,7 @@ if (left.length) { console.error("REFUSED: test copy still calls real services: 
 fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(out, { recursive: true });
 fs.writeFileSync(path.join(out, "worker.js"), src);
-fs.writeFileSync(path.join(out, "wrangler.toml"), `name = "flipscout-TEST-local-only"
+fs.writeFileSync(path.join(out, "wrangler.toml"), `name = "flipscout-test-local-only"
 main = "worker.js"
 compatibility_date = "2024-09-23"
 workers_dev = false

@@ -124,6 +124,8 @@ jobs:
         with:
           node-version: 22
       - run: node tests/ci/report.mjs results
+        env:
+          JOB_RESULTS: '{"Unit tests":"${{ needs.unit.result }}","Build":"${{ needs.build.result }}","Test Scan service":"${{ needs.service.result }}"}'
       - if: always()
         uses: actions/upload-artifact@v4
         with:

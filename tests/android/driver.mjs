@@ -54,11 +54,18 @@ export class App {
     // Android's "input text" can drop letters when a web view gets a long string at once, so type a few at a time
     for (let i = 0; i < t.length; i += 6) { sh(`input text '${t.slice(i, i + 6).replace(/ /g, "%s")}'`); await sleep(120); } await sleep(300); }
   // tap a box, replace what's in it with `text` (typed through the phone's keyboard), check it really holds that text, then leave the box
-  async fill(spec, text, c = this.main) { let got = "";
+  async fill(spec, text, c = this.main, prep = null) { let got = "", why = "";
     if (this.netQuiet) await this.netQuiet();   // wait until the app has finished loading (it redraws when data arrives)
-    for (let a = 0; a < 3; a++) { await this.tap(spec, c); await this.selectAll(); await this.key(67); await this.type(text);
-      got = await this.eval("document.activeElement&&document.activeElement.value", c); if (got === String(text)) break; }
-    if (got !== String(text)) throw new Error(`typed "${String(text).slice(0, 25)}…" but the box holds "${String(got).slice(0, 25)}…"`);
+    const target = spec.sel ? JSON.stringify(spec.sel) : "null";
+    for (let a = 0; a < 4; a++) {
+      if (prep) await prep();
+      await this.tap(spec, c);
+      // only type once the phone's keyboard focus is really in that box (a redraw can remove the box under the finger)
+      const f = await this.eval(`(()=>{const a=document.activeElement,t=${target}&&document.querySelector(${target});return{ok:!!a&&(t?a===t:/INPUT|TEXTAREA/.test(a.tagName)),now:a?(a.id||a.tagName):"none",there:!!t}})()`, c);
+      if (!f.ok) { why = `focus went to ${f.now}${f.there ? "" : " (the box had disappeared)"}`; await sleep(1500); continue; }
+      await this.selectAll(); await this.key(67); await this.type(text);
+      got = await this.eval("document.activeElement&&document.activeElement.value", c); if (got === String(text)) break; why = `box holds "${String(got).slice(0, 25)}…"`; }
+    if (got !== String(text)) throw new Error(`couldn't type "${String(text).slice(0, 22)}…" into ${spec.sel || spec.text}: ${why}`);
     await this.key(61); await this.hideKeyboard(); }
   async selectAll() { try { sh("input keycombination 113 29"); } catch (e) { sh("input keyevent 123"); for (let i = 0; i < 80; i++) sh("input keyevent 67"); } await sleep(300); }
   keyboardShown() { try { return /mInputShown=true/.test(sh("dumpsys input_method")); } catch (e) { return false; } }

@@ -128,6 +128,12 @@ jobs:
         env:
           RESTART_CMD: bash tests/e2e/restart-test-service.sh
         run: node tests/stage4/service-checks.mjs
+      - name: The live deploy's bundling step works (dry run, nothing uploaded)
+        if: always()
+        run: |
+          mkdir -p w4 && cd w4 && cp ../worker.js . && printf 'name = "flipscout-dryrun"\nmain = "worker.js"\ncompatibility_date = "2024-09-23"\n[[kv_namespaces]]\nbinding = "BACKUP"\nid = "00000000000000000000000000000000"\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "x"\ndatabase_id = "00000000-0000-0000-0000-000000000000"\n[triggers]\ncrons = ["* * * * *"]\n' > wrangler.toml
+          if wrangler deploy --dry-run --outdir dist > dry.out 2>&1; then S=PASS; else S=FAIL; fi; tail -5 dry.out
+          mkdir -p ../results && node -e 'const fs=require("fs");const L=fs.readFileSync("dry.out","utf8").trim().split("\n").slice(-2).join(" ").replace(/"/g,"").slice(0,200);fs.writeFileSync("../results/w4-dryrun.json",JSON.stringify([{area:"Test Scan service",name:"the Scan service bundles for deployment with the pinned Wrangler (dry run, nothing uploaded)",status:process.argv[1],detail:L}]))' $S
       - name: Service log (if anything failed)
         if: failure()
         run: tail -60 service.out; tail -20 fake-ebay.out
@@ -135,46 +141,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: results-service
-          path: results/
-          retention-days: 7
-
-  service-w4:
-    # TRIAL ONLY: the same test-service checks with Wrangler 4 (the live service still deploys with Wrangler 3)
-    name: Wrangler 4 trial (test service)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Start fake eBay and the private test Scan service with Wrangler 4
-        run: |
-          test -z "${CLOUDFLARE_API_TOKEN}${CLOUDFLARE_ACCOUNT_ID}${EBAY_ID}${EBAY_SECRET}"
-          KEY=$(openssl rand -hex 24); echo "::add-mask::$KEY"; echo "TEST_APP_KEY=$KEY" >> $GITHUB_ENV
-          TEST_APP_KEY=$KEY WRANGLER_VER=4.157.0 bash tests/e2e/start-test-service.sh
-          wrangler --version
-      - name: Service, security and monitoring checks on Wrangler 4
-        if: always()
-        env:
-          TEST_URL: http://127.0.0.1:8787
-          RESTART_CMD: bash tests/e2e/restart-test-service.sh
-        run: |
-          s=0; node tests/e2e/service-smoke.mjs || s=1; node tests/security/service-security.mjs || s=1; node tests/stage4/service-checks.mjs || s=1; exit $s
-      - name: The live deploy's bundling step works with Wrangler 4 (dry run, nothing uploaded)
-        if: always()
-        run: |
-          mkdir -p w4 && cd w4 && cp ../worker.js . && printf 'name = "flipscout-dryrun"\nmain = "worker.js"\ncompatibility_date = "2024-09-23"\n[[kv_namespaces]]\nbinding = "BACKUP"\nid = "00000000000000000000000000000000"\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "x"\ndatabase_id = "00000000-0000-0000-0000-000000000000"\n[triggers]\ncrons = ["* * * * *"]\n' > wrangler.toml
-          if wrangler deploy --dry-run --outdir dist > dry.out 2>&1; then S=PASS; else S=FAIL; fi; tail -5 dry.out
-          mkdir -p ../results && node -e 'const fs=require("fs");const L=fs.readFileSync("dry.out","utf8").trim().split("\n").slice(-2).join(" ").replace(/"/g,"").slice(0,200);fs.writeFileSync("../results/w4-dryrun.json",JSON.stringify([{area:"Wrangler 4 trial",name:"the Scan service bundles for deployment with Wrangler 4 (dry run, nothing uploaded)",status:process.argv[1],detail:L}]))' $S
-      - name: Label these results as the Wrangler 4 trial (so nothing is counted twice)
-        if: always()
-        run: |
-          mkdir -p results && node -e 'const fs=require("fs");for(const f of fs.readdirSync("results")){if(f==="w4-dryrun.json")continue;const p="results/"+f;try{const r=JSON.parse(fs.readFileSync(p,"utf8"));fs.writeFileSync(p,JSON.stringify(r.map(x=>({...x,area:"Wrangler 4 trial",name:`${x.area}: ${x.name}`}))))}catch(e){}}'
-      - if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: results-w4
           path: results/
           retention-days: 7
 
@@ -427,7 +393,7 @@ jobs:
 
   report:
     name: Testing report
-    needs: [unit, supply, build, service, emulator, service-w4, build-cap8, compat, build-phone]
+    needs: [unit, supply, build, service, emulator, build-cap8, compat, build-phone]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -441,7 +407,7 @@ jobs:
           node-version: 22
       - run: node tests/ci/report.mjs results
         env:
-          JOB_RESULTS: '{"Unit tests":"${{ needs.unit.result }}","Dependencies":"${{ needs.supply.result }}","Build":"${{ needs.build.result }}","Test Scan service":"${{ needs.service.result }}","Android emulator":"${{ needs.emulator.result }}","Wrangler 4 trial":"${{ needs.service-w4.result }}","Capacitor 8 trial":"${{ needs.build-cap8.result }}"}'
+          JOB_RESULTS: '{"Unit tests":"${{ needs.unit.result }}","Dependencies":"${{ needs.supply.result }}","Build":"${{ needs.build.result }}","Test Scan service":"${{ needs.service.result }}","Android emulator":"${{ needs.emulator.result }}","Capacitor 8 trial":"${{ needs.build-cap8.result }}"}'
       - if: always()
         uses: actions/upload-artifact@v4
         with:

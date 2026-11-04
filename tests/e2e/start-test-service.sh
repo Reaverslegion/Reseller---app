@@ -7,7 +7,7 @@ test -z "${CLOUDFLARE_API_TOKEN:-}${CLOUDFLARE_ACCOUNT_ID:-}${EBAY_ID:-}${EBAY_S
 nohup node tests/e2e/fake-ebay.mjs > fake-ebay.out 2>&1 &
 nohup node tests/e2e/chaos-proxy.mjs > chaos.out 2>&1 &
 node tests/e2e/make-test-service.mjs
-npm i -g wrangler@${WRANGLER_VER:-3.114.17} >/dev/null 2>&1
+npm i -g wrangler@${WRANGLER_VER:-4.157.0} >/dev/null 2>&1
 (cd .test-service && WRANGLER_SEND_METRICS=false nohup wrangler dev --local --test-scheduled --port 8787 --ip 127.0.0.1 --persist-to ./state > ../service.out 2>&1 &)
 for i in $(seq 1 60); do curl -s -o /dev/null http://127.0.0.1:8787/ && break; sleep 2; done
 curl -s -o /dev/null -w "test Scan service answering (HTTP %{http_code})\n" http://127.0.0.1:8787/

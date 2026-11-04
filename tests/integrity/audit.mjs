@@ -25,11 +25,11 @@ const READ = `(()=>{const app=document.getElementById("app"),T=app.innerText,m=T
 export function parseCard(text) {
   const L = text.split("\n").map((x) => x.trim()).filter(Boolean), at = (re) => L.findIndex((x) => re.test(x));
   const o = { label: L[0] || "" };
-  const si = at(/^(High|Medium|Low)$/); o.score = si >= 0 ? L[si + 1] : null;
+  const si = at(/^(High|Medium|Low|Not scored)$/); o.score = si >= 0 ? L[si + 1] : null;
   const pi = at(/^Est\. (profit|loss)( if you win)?$/); o.profit = pi >= 0 ? L[pi + 2] : null;
   const ci = at(/^(Buy it now|Current bid)$/); if (ci >= 0) { o.priceLabel = L[ci]; o.price = L[ci + 1]; o.note = L[ci + 2]; }
   const xi = L.findIndex((x, i) => i > ci && /^(Max offer|Your max bid|Max item price|Sells for about)$/.test(x)); if (xi >= 0) { o.secondLabel = L[xi]; o.second = L[xi + 1]; }
-  const sl = L.find((x) => /^Sells for about £/.test(x)); o.sells = sl ? (sl.match(/^Sells for about (-?£[\d,]+)/) || [])[1] : null;
+  const sl = L.find((x) => /^Sells for about (£|-£|Not available)/.test(x)); o.sells = sl ? (sl.match(/^Sells for about (-?£[\d,]+|Not available)/) || [])[1] : null;
   const rl = L.find((x) => /\d+% return$/.test(x)); o.ret = rl ? rl.match(/(-?\d+)% return$/)[1] + "%" : null;
   const fl = L.find((x) => /^(From .*›|From sold prices you checked|Guess from)/.test(x)); o.src = fl ? fl.replace(/ ›.*$/, "").replace(/ · estimate$/, "") : null;
   return o;
@@ -39,7 +39,7 @@ function cardProblems(d, shown) {
   const e = O.card(d), p = parseCard(shown.text), out = [];
   const want = (f, exp, got) => { if (exp != null && collapse(exp) !== collapse(got)) out.push({ id: d.id, field: f, expected: exp, shown: got == null ? "(missing)" : got }); };
   if (shown.aria !== String(d.title)) out.push({ id: d.id, field: "title (exact)", expected: d.title, shown: shown.aria });
-  want("title on screen", collapse(d.title), collapse(shown.title));
+  want("title on screen", collapse(e.shownTitle), collapse(shown.title));
   if (!p.label.startsWith(e.label)) out.push({ id: d.id, field: "type label", expected: e.label + "…", shown: p.label });
   if (d.kind === "spares") return out;
   want("score", e.score, p.score); want("profit", e.profit, p.profit); want("price label", e.priceLabel, p.priceLabel); want("price", e.price, p.price);
@@ -109,19 +109,19 @@ export async function runAudit(drv, R, opt = {}) {
       check("Empty database › 'No deals right now', count 0, every filter 0", st.empty && st.cards.length === 0 && Object.values(st.chips).every((n) => n === 0), JSON.stringify(st.chips)); });
   });
 
-  // ===== 2. deals made by the Scan service itself from fake eBay listings (profit, cost, postage end to end) =====
+  // ===== 2. deals made by the Scan service itself from fake eBay listings (profit, cost and every kind of postage) =====
   let genAuction = null;
+  const POSTAGE = [["free postage", { ship: 0 }, "free"], ["fixed postage", { ship: 7.25 }, "fixed"], ["postage estimated by eBay", { ship: 6.5, estShip: true }, "est"],
+    ["postage calculated by eBay", { calcShip: true }, "calc"], ["postage not stated", { unknownShip: true }, "unknown"], ["collection only", { noShip: true, pickup: true }, "collect"]];
   await R.journey(AREA, "Deals made by a real scan", async (step) => {
     await step("price book filled with 90 fake sold prices (3 models)", async () => { await seed([]); await F.call("fill=1", { cat: "27386", catName: "Graphics Cards", cond: "used", rows: F.soldRows(3) }); });
     const L = []; let id = 700000000000;
     F.MODELS.forEach((m) => [0.5, 0.62, 0.74, 0.86].forEach((f) => L.push(F.listing({ id: ++id, title: `${m.title.replace(" Graphics Card", "")} used #${id}`, price: Math.round(m.base * f * 100) / 100, ship: 4.99 }))));
-    L.push(F.listing({ id: ++id, title: `NVIDIA GeForce RTX 3070 8GB free postage #${id}`, price: 140, ship: 0 }));
-    L.push(F.listing({ id: ++id, title: `NVIDIA GeForce RTX 3070 8GB postage calculated by eBay #${id}`, price: 150, calcShip: true }));
-    L.push(F.listing({ id: ++id, title: `NVIDIA GeForce RTX 3070 8GB collection only #${id}`, price: 145, noShip: true, pickup: true }));
+    for (const [t, o] of POSTAGE) L.push(F.listing({ id: ++id, title: `NVIDIA GeForce RTX 3070 8GB ${t} #${id}`, price: 140, ...o }));
     L.push(F.listing({ id: ++id, title: `NVIDIA GeForce RTX 3070 8GB business seller #${id}`, price: 160, ship: 4.99, business: true }));
     L.push(F.listing({ id: (genAuction = String(++id)), title: `NVIDIA GeForce RTX 3070 8GB auction #${id}`, price: 120, ship: 6.5, type: "AUC", bids: 3, endsIn: 3 }));
     L.push(F.listing({ id: ++id, title: `NVIDIA GeForce RTX 3070 8GB too dear #${id}`, price: 250, ship: 4.99 }));
-    await step("fake eBay has 18 listings; Scan now tapped in the app", async () => { await F.fakeSearch(L); await drv.relaunch();
+    await step(`fake eBay has ${L.length} listings; Scan now tapped in the app`, async () => { await F.fakeSearch(L); await drv.relaunch();
       await drv.waitText("Scan now", 20000); await drv.tap("Scan now"); await drv.waitText("Checked|new deal|Check had problems|Just scanned", 90000); await sleep(2500); });
     await step("compare database, Scan service and screen", async () => {
       const db = await live(), book = await F.query("SELECT pkey, avg, post FROM prices");
@@ -138,37 +138,55 @@ export async function runAudit(drv, R, opt = {}) {
       }
       note("real scan: sums that don't add up", sums);
       check(`Deals made by a real scan › ${db.length} deals made; profit, cost, sells-for and max-bid sums all correct`, db.length >= 8 && !sums.length, sums.length ? `${sums.length} wrong, e.g. #${sums[0].id} ${sums[0].field}: expected ${sums[0].expected}, stored ${sums[0].stored}` : `${db.length} deals`);
-      const calc = db.find((d) => /calculated by eBay/.test(d.title)), tooDear = db.find((d) => /too dear/.test(d.title));
-      check("Deals made by a real scan › a listing whose postage eBay calculates (no fixed price) is not treated as free postage",
-        !calc || !(calc.ship === 0 && !calc.collect), calc ? `stored postage £${calc.ship}, collection only: ${!!calc.collect} → the card says "free post" and profit leaves postage out` : "listing wasn't made into a deal");
+      const tooDear = db.find((d) => /too dear/.test(d.title));
       check("Deals made by a real scan › a listing priced above what makes £20 profit is not a deal", !tooDear, tooDear ? `#${tooDear.id} profit ${tooDear.profit}` : "");
+      // every kind of postage: stored as what it is, never overstating profit, and said plainly on the card
+      const st = await read();
+      for (const [t, o, kind] of POSTAGE) {
+        const d = db.find((x) => x.title.includes(" " + t + " #")), c = d && st.cards.find((x) => x.aria === d.title), p = c ? parseCard(c.text) : null;
+        if (!d) { check(`Postage: ${t} › made into a deal`, false, "not a deal"); continue; }
+        const allowance = kind === "calc" || kind === "unknown", shipOk = kind === "free" ? d.ship === 0 : kind === "fixed" ? d.ship === 7.25 : kind === "est" ? d.ship === 6.5 : kind === "collect" ? !!d.collect : d.ship >= 5;
+        check(`Postage: ${t} › stored as "${kind}" with ${allowance ? "a careful allowance (at least £5), not £0" : "the right amount"}`, (kind === "collect" ? d.collect : d.post === kind) && shipOk, `stored kind ${d.post}, postage £${d.ship}${d.collect ? ", collection only" : ""}`);
+        if (allowance) { const noPost = Math.round((d.med - 5.99 - (d.price + O.buyerFee(d.price))) * 100) / 100;
+          check(`Postage: ${t} › profit counts the allowance (not overstated)`, d.profit <= noPost - 5 + 0.011, `profit ${O.signed(d.profit)}; with no postage it would be ${O.signed(noPost)}`); }
+        if (kind === "collect") { check(`Postage: ${t} › under the Collection filter, not All`, !c, c ? "shown in All" : ""); continue; }
+        const want = O.postText(d), sub = p && p.note;
+        check(`Postage: ${t} › card says "${want}"`, sub === want, `card says "${sub}"`);
+        if (allowance) check(`Postage: ${t} › card warns that postage isn't known`, !!c && /postage allowed for, not known/.test(c.text) && /Postage not known/.test(c.text), "");
+      }
       await compareAll("Deals made by a real scan");
     });
   });
 
-  // ===== 3. a live re-check changes an auction's price: do price and profit stay consistent? =====
-  await R.journey(AREA, "Live price change (auction bid goes up)", async (step) => {
-    let before;
-    await step("the auction's bid rises from £120 to £150 on the fake eBay", async () => {
-      before = (await live()).find((d) => d.id === genAuction); if (!before) throw new Error("the auction deal from the real scan isn't there");
-      const it = F.listing({ id: genAuction, title: before.title, price: 150, ship: 6.5, type: "AUC", bids: 6, endsIn: 3 });
-      await fetch("http://127.0.0.1:8788/__fake/items", { method: "POST", body: JSON.stringify([it]) }); });
-    await step("open the deal in the app (it checks the live listing), then go back", async () => {
-      await drv.tap({ sel: ".dcard", text: "auction #" + genAuction }); await sleep(6000); await drv.shot("auction after bid rise"); await drv.back(); await sleep(1500); });
-    await step("compare", async () => {
-      const d = (await live()).find((x) => x.id === genAuction), st = await read(), c = st.cards.find((x) => x.aria === (d || before).title);
-      if (!d) { check("Live price change › deal still listed after the bid rose (still under the max bid)", false, "the deal was removed"); return; }
-      const out = d.out != null ? d.out : 5.99, expect = Math.round((d.med - (d.sellFee || 0) - out - (d.price + d.ship + (d.bpfOn ? O.buyerFee(d.price) : 0))) * 100) / 100;
-      check("Live price change › database has the new bid (£150)", d.price === 150, `stored £${d.price}`);
-      check("Live price change › profit at today's bid updated to match the new bid", Math.abs(d.profit - expect) < 0.011, `bid £${d.price}: profit should be ${O.signed(expect)}, stored ${O.signed(d.profit)} (still worked out from the old £${before.price} bid)`);
-      const pc = c ? parseCard(c.text).profit : null, want = `${O.signed(d.profitAtMax)} to ${O.signed(expect)}`;
-      check("Live price change › card shows profit at the new bid (right after the check)", pc === want, `card "${pc}", correct "${want}"`);
-    });
-    await step("close and reopen the app", async () => { await relaunch(); await sleep(1500);
-      const d = (await live()).find((x) => x.id === genAuction), st = await read(), c = d && st.cards.find((x) => x.aria === d.title);
-      const expect = d ? Math.round((d.med - (d.sellFee || 0) - (d.out != null ? d.out : 5.99) - (d.price + d.ship + (d.bpfOn ? O.buyerFee(d.price) : 0))) * 100) / 100 : null;
-      const pc = c ? parseCard(c.text).profit : null, want = d ? `${O.signed(d.profitAtMax)} to ${O.signed(expect)}` : "";
-      check("Live price change › after reopening, the card still shows profit at the new bid", pc === want, `card "${pc}", correct "${want}"`); await drv.shot("auction after reopen"); });
+  // ===== 3. an auction's bid goes up and down: every money figure follows (stored, on screen, after reopening) =====
+  await R.journey(AREA, "Auction bid changes", async (step) => {
+    const start = (await live()).find((d) => d.id === genAuction);
+    if (!start) { await step("the auction deal from the real scan is there", async () => { throw new Error("missing"); }); return; }
+    const right = (d) => { const fee = (x) => (d.bpfOn ? O.buyerFee(x) : 0), out = d.out != null ? d.out : 5.99, sf = d.sellFee || 0, r2 = (x) => Math.round(x * 100) / 100;
+      return { cost: r2(d.price + d.ship + fee(d.price)), profit: r2(d.med - sf - out - (d.price + d.ship + fee(d.price))), atMax: r2(d.med - sf - out - (d.maxBid + d.ship + fee(d.maxBid))) }; };
+    // bid rises, falls, rises again; then postage changes (the max bid must drop by the same amount); then the bid passes the max bid
+    const STEPS = [[150, 6.5, 6], [135, 6.5, 7], [170, 6.5, 9], [170, 9, 9], [Math.ceil(start.maxBid + 5), 9, 12]];
+    let maxBid = start.maxBid;
+    for (const [bid, ship, bids] of STEPS) {
+      const gone = bid >= maxBid;
+      await step(`bid £${bid}${ship !== 6.5 ? `, postage £${ship}` : ""}: deal opened in the app (live check), then back`, async () => {
+        await fetch("http://127.0.0.1:8788/__fake/items", { method: "POST", body: JSON.stringify([F.listing({ id: genAuction, title: start.title, price: bid, ship, type: "AUC", bids, endsIn: 3 })]) });
+        await drv.tap({ sel: ".dcard", text: "auction #" + genAuction }); await sleep(6000); await drv.back(); await sleep(1500);
+        const d = (await live()).find((x) => x.id === genAuction), st = await read(), c = d && st.cards.find((x) => x.aria === d.title);
+        if (gone) { check(`Bid £${bid} (past the max bid) › deal removed`, !d, d ? "still listed" : ""); return; }
+        if (!d) { check(`Bid £${bid} › deal still listed`, false, "removed"); return; }
+        if (ship !== 6.5) { check(`Bid £${bid}, postage £${ship} › max bid lowered by the extra postage`, Math.abs(d.maxBid - (start.maxBid - (ship - 6.5))) < 0.011, `max bid £${d.maxBid}, was £${start.maxBid}`); maxBid = d.maxBid; }
+        const w = right(d);
+        check(`Bid £${bid}${ship !== 6.5 ? `, postage £${ship}` : ""} › stored price, cost, profit and profit at max bid all match the new bid`,
+          d.price === bid && d.ship === ship && Math.abs(d.cost - w.cost) < 0.011 && Math.abs(d.profit - w.profit) < 0.011 && Math.abs(d.profitAtMax - w.atMax) < 0.011,
+          `price £${d.price}, cost ${d.cost} (right ${w.cost}), profit ${d.profit} (right ${w.profit}), at max ${d.profitAtMax} (right ${w.atMax})`);
+        const probs = c ? cardProblems(d, c) : [{ field: "card", shown: "not found" }];
+        check(`Bid £${bid}${ship !== 6.5 ? `, postage £${ship}` : ""} › card shows the new figures`, !probs.length, probs.map((q) => `${q.field}: "${q.shown}" (right "${q.expected}")`).slice(0, 2).join("; "));
+      });
+    }
+    await step("close and reopen the app", async () => { await relaunch(); const d = (await live()).find((x) => x.id === genAuction), st = await read();
+      const c = d && st.cards.find((x) => x.aria === d.title);
+      check("Bid changes › after reopening, nothing shows an old bid's figures", !d ? !st.cards.some((x) => x.aria === start.title) : !!c && !cardProblems(d, c).length, d ? (c ? cardProblems(d, c).map((q) => q.field).join(", ") : "card missing") : "removed, and not shown"); await drv.shot("auction after bid changes"); });
   });
 
   // ===== 4. unusual and incomplete records =====
@@ -177,22 +195,19 @@ export async function runAudit(drv, R, opt = {}) {
     await step(`${E.length} unusual records loaded (1 expired)`, async () => { await seed(E.map((x) => x.d), E.filter((x) => x.expect.expired).map((x) => x.d.id)); await relaunch(); });
     await step("compare", async () => {
       const r = await compareAll("Unusual and incomplete records");
-      // record by record: hidden when they should be, in the right filter, and a sensible display for missing values
+      // record by record: hidden when they should be, in the right filter, and missing values said plainly
       for (const { note: n, d, expect: x } of E) {
-        const on = r.pairs.find(([p]) => p.id === d.id), tag = x.realWorld ? "" : " (robustness: the Scan service doesn't make records like this today)";
+        const on = r.pairs.find(([p]) => p.id === d.id), tag = x.realWorld ? "" : " (data the Scan service doesn't make today)";
         if (x.hidden || x.expired) { check(`Unusual records › ${n}`, !on, on ? "shown" : ""); continue; }
         if (x.chip) { check(`Unusual records › ${n}: not in All, only under its own filter`, !on, on ? "shown in All" : ""); continue; }
         if (!on) { check(`Unusual records › ${n}: shown`, false, "not on screen"); continue; }
         const c = on[1], p = parseCard(c.text), probs = cardProblems(d, c);
-        if (d.price == null) { check(`Unusual records › ${n}: not shown as £0.00${tag}`, p.price !== "£0.00", `price shows "${p.price}"`); continue; }
-        if (d.ship == null && !d.collect) { check(`Unusual records › ${n}: not shown as "free post"${tag}`, !/free post$/.test(p.note || ""), `postage shows "${p.note}"`); continue; }
-        if (d.med == null) { check(`Unusual records › ${n}: no made-up "sells for"${tag}`, p.sells !== "£0", `sells for shows "${p.sells}"`); continue; }
-        if (d.score == null) { check(`Unusual records › ${n}: no "null" score${tag}`, p.score !== "null", `score shows "${p.score}"`); continue; }
-        if (d.title === "") { check(`Unusual records › ${n}: card still usable${tag}`, true, "shown with an empty title"); continue; }
-        check(`Unusual records › ${n}: shown exactly`, !probs.length, probs.map((q) => `${q.field}: "${q.shown}" (expected "${q.expected}")`).slice(0, 2).join("; "));
+        const say = d.price == null ? ` (price says "${p.price}")` : d.ship == null ? ` (postage says "${p.note}")` : d.med == null ? ` (sells for says "${p.sells}")` : d.score == null ? ` (score says "${p.score}")` : d.title === "" ? ` (title says "${c.title}")` : "";
+        check(`Unusual records › ${n}: shown exactly${say}${tag}`, !probs.length, probs.map((q) => `${q.field}: "${q.shown}" (expected "${q.expected}")`).slice(0, 2).join("; "));
       }
       const st = await read(), chips = st.chips, exp = (g) => E.filter(({ d, expect: x }) => !x.expired && O.visible(d, S) && O.groups(d).includes(g)).length;
       check("Unusual records › filter counts (Collection, Guesses) match", (chips["Collection"] || 0) === exp("col") && (chips["Guesses"] || 0) === exp("guess"), `Collection ${chips["Collection"]} (expected ${exp("col")}), Guesses ${chips["Guesses"]} (expected ${exp("guess")})`);
+      check("Unusual records › nothing on screen says £0.00 for an unknown price, null, undefined or NaN", !/\bnull\b|\bundefined\b|\bNaN\b/.test(st.cards.map((x) => x.text).join("\n")), "");
     });
   });
 
@@ -216,29 +231,31 @@ export async function runAudit(drv, R, opt = {}) {
     await step("category: Graphics Cards", async () => { await drv.tap({ sel: "#dc" }); await sleep(1500); await drv.tap({ sel: "#pick button", text: "Graphics Cards" }); await sleep(1500); const st = await read();
       same("Category Graphics Cards › exactly the graphics card deals", setOf(st.cards), vis().filter((d) => O.groups(d).includes("all") && String(d.cat) === "27386").map((d) => d.id));
       await drv.tap({ sel: "#dc" }); await sleep(1500); await drv.tap({ sel: "#pick button", text: "All (" }); await sleep(1500); });
-    await step("spend limit £150 (Menu › Most I'll spend)", async () => { await drv.menu(); await sleep(1000);
-      await drv.fill({ sel: "#r_maxPrice" }, "150"); await sleep(1500); await drv.dealsTab(); await sleep(2000); S.maxSpend = 150; const st = await read();
-      same("Spend limit £150 › exactly the deals costing £150 or less in total", setOf(st.cards), vis().filter((d) => O.groups(d).includes("all")).map((d) => d.id));
-      const over = matchCards(st.cards, MIX).pairs.filter(([d]) => (O.isAuction(d) ? d.price + d.ship : d.price + d.ship + O.buyerFee(d.price)) > 150.0001).map(([d]) => d.id);
-      check("Spend limit £150 › no deal over the limit is shown", !over.length, over.slice(0, 3).join(", "));
-      const mb = matchCards(st.cards, MIX).pairs.filter(([d, c]) => O.isAuction(d) && (() => { const v = parseFloat(String(parseCard(c.text).second).replace(/[£,]/g, "")); return v + d.ship > 150.01; })()).map(([d]) => d.id);
-      check("Spend limit £150 › straight after setting it, no max bid shown above the limit", !mb.length, mb.length ? `${mb.length} auctions still show their old, higher max bid until the deals reload, e.g. ${mb.slice(0, 3).join(", ")}` : "");
-      await drv.shot("spend limit 150");
-      // the app lowers max bids to the limit when it loads deals: check after reopening, and that "profit at your max bid" follows
-      await relaunch(); const st3 = await read(), P = matchCards(st3.cards, MIX).pairs.filter(([d]) => O.isAuction(d));
-      const overBid = [], wrongLow = [];
-      for (const [d, c] of P) { const pc = parseCard(c.text), mb = parseFloat(String(pc.second).replace(/[£,]/g, "")); if (mb + d.ship > 150.01) overBid.push(d.id);
-        const cap = Math.floor((150 - (d.ship || 0)) * 100) / 100;
-        if (d.maxBid > cap) { const lowExp = Math.round((d.med - (d.sellFee || 0) - 5.99 - (cap + d.ship + O.buyerFee(cap))) * 100) / 100, low = String(pc.profit).split(" to ")[0];
-          if (low !== O.signed(lowExp)) wrongLow.push({ id: d.id, field: "profit at your max bid", expected: O.signed(lowExp), shown: low }); } }
-      note("Spend limit: profit at max bid not updated", wrongLow);
-      check("Spend limit £150 › after reopening, no max bid goes above the limit", !overBid.length, overBid.slice(0, 3).join(", "));
-      check("Spend limit £150 › 'profit at your max bid' matches the lowered max bid", !wrongLow.length, wrongLow.length ? `${wrongLow.length} auctions, e.g. #${wrongLow[0].id}: shows ${wrongLow[0].shown}, at the lowered max bid it's ${wrongLow[0].expected}` : "");
-      await drv.menu(); await sleep(1000); await drv.fill({ sel: "#r_maxPrice" }, ""); await sleep(1200); S.maxSpend = 0; await drv.dealsTab(); await sleep(1500);
-      // the lowered max bids stay until the deals reload (same cause as above): reopen so later checks start clean
-      const st4 = await read(), still = matchCards(st4.cards, MIX).pairs.filter(([d, c]) => O.isAuction(d) && parseCard(c.text).second !== O.card(d).second).length;
-      check("Spend limit removed › max bids go back to normal without reopening the app", !still, still ? `${still} auctions keep the lowered max bid until the app reloads deals` : "");
-      await relaunch(); });
+  });
+
+  // ===== spend limit: set, change, remove, reload, reopen — max bids and "profit at your max" must always agree =====
+  await R.journey(AREA, "Spend limit and max bids", async (step) => {
+    const vis = () => MIX.filter((d) => O.visible(d, S)), setOf = (cards) => new Set(matchCards(cards, MIX).pairs.map(([d]) => d.id));
+    // every auction and Buy It Now on screen: max bid / max price within the limit, and every card exactly as worked out for this limit
+    const verify = async (name) => { const st = await read(), P = matchCards(st.cards, MIX).pairs, want = vis().filter((d) => O.groups(d).includes("all")).map((d) => d.id), got = setOf(st.cards);
+      const miss = want.filter((id) => !got.has(id)), extra = [...got].filter((id) => !want.includes(id));
+      check(`${name} › exactly the deals within the limit (${want.length})`, !miss.length && !extra.length, `${got.size} shown${miss.length ? ", missing " + miss.slice(0, 2) : ""}${extra.length ? ", extra " + extra.slice(0, 2) : ""}`);
+      const over = [], probs = [];
+      for (const [d, c] of P) { const e = O.card(d, S), pc = parseCard(c.text), v = parseFloat(String(pc.second).replace(/[£,]/g, ""));
+        if (S.maxSpend > 0 && O.isAuction(d) && v + (d.ship || 0) > S.maxSpend + 0.01) over.push(d.id);
+        if (pc.second !== e.second || pc.profit !== e.profit) probs.push({ id: d.id, field: "max bid / profit at max", expected: `${e.second} · ${e.profit}`, shown: `${pc.second} · ${pc.profit}` }); }
+      note(`${name}: max bid and profit at max`, probs);
+      check(`${name} › no max bid above the limit`, !over.length, over.slice(0, 3).join(", "));
+      check(`${name} › every max bid and "profit at your max" agree (${P.length} cards)`, !probs.length, probs.length ? `${probs.length} differ, e.g. #${probs[0].id}: shows ${probs[0].shown}, right ${probs[0].expected}` : ""); };
+    const menuLimit = async (v) => { await drv.menu(); await sleep(1000); await drv.fill({ sel: "#r_maxPrice" }, v); await sleep(1200); await drv.dealsTab(); await sleep(1800); };
+    const sheetLimit = async (v) => { await drv.tap({ sel: ".tpill", text: "Spend limit" }); await sleep(1200);
+      if (v === "") await drv.tap({ text: "No limit", exact: true }); else { await drv.fill({ sel: "#sp_in" }, v); await drv.tap({ text: "Save", exact: true }); } await sleep(1800); };
+    await step("set £150 in Menu", async () => { await menuLimit("150"); S.maxSpend = 150; await verify("Limit set to £150 (Menu), straight away"); await drv.shot("limit 150"); });
+    await step("change to £200 from the Deals screen", async () => { await sheetLimit("200"); S.maxSpend = 200; await verify("Limit changed to £200 (Deals screen), straight away"); });
+    await step("change back to £150", async () => { await sheetLimit("150"); S.maxSpend = 150; await verify("Limit changed back to £150, straight away"); });
+    await step("close and reopen with the £150 limit", async () => { await relaunch(); await verify("Limit £150 after reopening"); });
+    await step("remove the limit (No limit)", async () => { await sheetLimit(""); S.maxSpend = 0; await verify("Limit removed, straight away"); });
+    await step("close and reopen with no limit", async () => { await relaunch(); await verify("No limit after reopening"); });
   });
   await R.journey(AREA, "Sorting", async (step) => {
     for (const [label, key] of [["Best score", "score"], ["Most profit", "profit"], ["Best return", "roi"], ["Ending soon", "ending"], ["Newest", "newest"], ["Best now", null]]) {
@@ -279,8 +296,8 @@ export async function runAudit(drv, R, opt = {}) {
       await compareAll("After updates"); });
   });
 
-  // ===== 11. large datasets: 200, 500, 837, 1,000 and 1,500 deals =====
-  for (const n of opt.sizes || [200, 500, 837, 1000, 1500]) {
+  // ===== 11. every size: 13, 200, 201, 500, 837, 1,000 and 1,500 deals (the old hidden cap was 200) =====
+  for (const n of opt.sizes || [13, 200, 201, 500, 837, 1000, 1500]) {
     await R.journey(AREA, `${n.toLocaleString("en-GB")} deals`, async (step) => {
       let ms = 0;
       await step(`${n} deals loaded into the test database`, async () => { await seed(DS.scale(n, 830000000000 + n * 10000)); ms = await relaunch(); });

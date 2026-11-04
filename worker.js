@@ -157,6 +157,23 @@ const median = (a) => { const s = [...a].sort((x, y) => x - y), m = s.length >> 
 const pct = (a, p) => { const s = [...a].sort((x, y) => x - y), i = (s.length - 1) * p, l = Math.floor(i), h = Math.ceil(i); return s[l] + (s[h] - s[l]) * (i - l); };
 function sellFee(x, r) { return r.seller === "private" ? 0 : x * r.feePct / 100 + (x > 10 ? r.feeFixed : Math.min(r.feeFixed, 0.3)); }
 // UK buyer protection fee on private sellers' items (estimate: £0.10 + 7% to £20, 4% to £300, 2% to £4,000)
+// work a stored deal's money out again after its price or postage changed (same sums as judging it; see sweep step 5).
+// The selling price it's compared with (med/low) and the postage out stay as judged.
+function reprice(d, r, oldShip) {
+  const r2 = (x) => Math.round(x * 100) / 100, fee = (p) => (d.bpfOn ? bpf(p) : 0), out = d.out != null ? d.out : (r.post + r.pack), sf = (x) => sellFee(x, r);
+  d.extra = r2(fee(d.price)); d.cost = r2(d.price + d.ship + d.extra);
+  d.profit = r2(d.med - sf(d.med) - out - d.cost);
+  if (d.low != null) d.lowProfit = r2(d.low - sf(d.low) - out - d.cost);
+  d.roi = d.cost + r.pack > 0 ? Math.round((d.profit / (d.cost + r.pack)) * 100) : 0;
+  if (d.type === "AUC") {
+    if (d.maxBid != null && oldShip != null && oldShip !== d.ship) d.maxBid = Math.floor((d.maxBid + oldShip - d.ship) * 100) / 100; // more postage, lower max bid
+    d.maxItem = d.maxBid;
+  } else if (d.maxPay != null) d.maxItem = Math.floor((d.maxPay - d.ship - fee(d.maxPay)) * 100) / 100;
+  const it = d.type === "AUC" ? d.maxBid : d.maxItem;
+  if (it != null) d.profitAtMax = r2(d.med - sf(d.med) - out - (it + d.ship + fee(it)));
+  d.repricedAt = Date.now();
+  return d;
+}
 function bpf(p) { return 0.1 + Math.min(p, 20) * 0.07 + Math.max(0, Math.min(p, 300) - 20) * 0.04 + Math.max(0, Math.min(p, 4000) - 300) * 0.02; }
 function maxPay(med, low, r) {
   const out = r.post + r.pack, N = med - sellFee(med, r) - out, k = r.minRoi / 100;
@@ -1085,6 +1102,24 @@ async function stockStep(env, cfg, seen, report) {
   await kvSet(env, "stock", st);
 }
 
+// What eBay says about postage, as one of:
+//   free    eBay gives a fixed £0 postage          fixed   eBay gives a fixed postage price
+//   est     eBay calculates it and gives its estimate   calc    eBay calculates it but gives no figure
+//   unknown postage is offered but no price is given    collect collection only (no postage offered, or only pickup)
+// For calc and unknown, sums use a careful allowance (POST_ALLOW, or the model's usual postage if higher) so profit is
+// never overstated; the app says the postage isn't known. (Before 4 Nov these were all counted as free postage.)
+const POST_ALLOW = 5;
+function postageOf(it) {
+  const L = (it.shippingOptions || []).filter(Boolean), pickup = (it.pickupOptions || []).length > 0;
+  if (!L.length) return { ship: 0, post: "collect" };
+  const calc = L.some((o) => /CALCULATED/i.test(o.shippingCostType || ""));
+  const priced = L.find((o) => o.shippingCost && Number.isFinite(parseFloat(o.shippingCost.value)));
+  if (priced) { const v = parseFloat(priced.shippingCost.value); return { ship: v, post: calc ? "est" : v === 0 ? "free" : "fixed" }; }
+  if (calc) return { ship: 0, post: "calc" };
+  if (pickup) return { ship: 0, post: "collect" };
+  return { ship: 0, post: "unknown" };
+}
+const postUnknown = (s) => s && (s.post === "calc" || s.post === "unknown");
 // one eBay search result → the listing record FlipScout keeps (used by scans and the full stock check)
 function toListing(it, c, type) {
   const id = it.legacyItemId || String(it.itemId || "").split("|")[1];
@@ -1092,14 +1127,13 @@ function toListing(it, c, type) {
   const auction = type === "AUC";
   const pr = auction && it.currentBidPrice ? it.currentBidPrice : it.price;
   const price = pr ? parseFloat(pr.value) : 0;
-  const so = (it.shippingOptions || [])[0];
-  const ship = so && so.shippingCost ? parseFloat(so.shippingCost.value) || 0 : 0;
+  const { ship, post } = postageOf(it);
   // collection only: eBay sends no postage option (or only local pickup). Not "free post"
-  const collect = !(it.shippingOptions || []).some((o) => o && o.shippingCost) && ((it.pickupOptions || []).length > 0 || !(it.shippingOptions || []).length);
+  const collect = post === "collect";
   const bucket = condBucket(it.conditionId);
   return {
     id, cat: c.id, catName: c.name, title: it.title || "", cond: it.condition || "", condId: it.conditionId || "", bucket,
-    type, price, ship, bids: +it.bidCount || 0, end: it.itemEndDate ? Date.parse(it.itemEndDate) : null,
+    type, price, ship, post, bids: +it.bidCount || 0, end: it.itemEndDate ? Date.parse(it.itemEndDate) : null,
     created: it.itemCreationDate ? Date.parse(it.itemCreationDate) : null,
     seller: it.seller ? { name: it.seller.username || "", fb: +it.seller.feedbackScore || 0, pct: parseFloat(it.seller.feedbackPercentage) || 0, biz: it.seller.sellerAccountType === "BUSINESS" } : { name: "", fb: 0, pct: 0 },
     loc: (it.itemLocation && it.itemLocation.country) || "", img: it.image ? it.image.imageUrl : "",
@@ -1382,6 +1416,8 @@ async function sweep(env, manual) {
   const deals = [], spares = [], later = [], whyId = {}; // whyId: why each listing isn't a deal (kept for removed deals)
   let hidden = 0;
   for (const s of cands) {
+    // postage calculated by eBay without a figure, or not stated: count a careful allowance, never £0 (see postageOf)
+    if (postUnknown(s)) { s.ship = POST_ALLOW; s.shipAllow = true; }
     // eBay only charges buyers its protection fee on private sellers' items (business sellers' items have none).
     // If eBay doesn't say which kind of seller it is, the fee is counted, to be safe.
     const pf = !!r.bpf && !(s.seller && s.seller.biz);
@@ -1400,6 +1436,7 @@ async function sweep(env, manual) {
     if (BOX_END.test(s.title)) { hidden++; whyId[s.id] = "scam shield"; continue; }
     const m = market(s.pkey, s.id, s.matchQ || 0.5);
     if (!m) { why.noData++; whyId[s.id] = "noData"; continue; }
+    if (s.shipAllow && m.post > s.ship) s.ship = Math.round(m.post * 100) / 100; // this model usually costs more to post
     // prices from fewer than 8 sales were often wrong (5–9 sales: 37% within 10% in the 29 Oct accuracy test)
     if ((m.src === "book" ? m.bookN || m.n : m.n) < MIN_SALES) { why.noData++; whyId[s.id] = "under " + MIN_SALES + " sales"; continue; }
     if (m.spread > 0.9 && (s.matchQ || 0.5) < 0.8) { why.noData++; whyId[s.id] = "noData"; continue; } // prices all over the place: not confident
@@ -1483,6 +1520,7 @@ async function sweep(env, manual) {
     if (m.src === "book") tags.push(m.fill ? "Price from category check" : "Price from price book");
     if (m.src === "book" && m.bookN && m.bookN < 10) tags.push("Few sales behind the price");
     if (SPECIAL.test(s.title)) tags.push("Special version");
+    if (s.shipAllow) tags.push("Postage not known"); else if (s.post === "est") tags.push("Postage estimated");
     if (slow) tags.push("Slow seller");
     if (m.trend === "falling") tags.push("Prices falling");
     if (score < r.minScore) { why.lowScore++; whyId[s.id] = "lowScore"; continue; }
@@ -1514,7 +1552,7 @@ async function sweep(env, manual) {
   } catch (e) {}
   // ending later: cheap high-start auctions with days left. Shown with a Follow button, never alerted
   try {
-    const keep = new Set(cands.map((s) => s.id)), mk = (d) => ({ id: d.id, collect: d.collect, where: d.where, title: d.title, img: d.img, url: d.url, cond: d.cond, cat: d.cat, catName: d.catName, type: "AUC",
+    const keep = new Set(cands.map((s) => s.id)), mk = (d) => ({ id: d.id, collect: d.collect, where: d.where, post: d.post, shipAllow: d.shipAllow, title: d.title, img: d.img, url: d.url, cond: d.cond, cat: d.cat, catName: d.catName, type: "AUC",
       price: d.price, ship: d.ship, bids: d.bids, end: d.end, med: d.med, maxBid: d.maxBid, maxItem: d.maxItem, maxPay: d.maxPay, profitAtMax: d.profitAtMax, sellFee: d.sellFee, out: d.out,
       score: d.score, n: d.n, src: d.src, fill: d.fill, rangeLo: d.rangeLo, rangeHi: d.rangeHi, seen: now });
     const old = (await kvGet(env, "later", [])).filter((x) => !keep.has(x.id) && x.end - now > 12 * 3600e3 && now - x.seen < 3 * DAY);
@@ -1761,14 +1799,23 @@ async function checkLive(env, id, pre, full) {
   const row = await D.prepare("SELECT data FROM deals WHERE id=?").bind(id).first(), deal0 = row ? JSON.parse(row.data) : null;
   const auction = (deal0 ? deal0.type === "AUC" : false) || (d.buyingOptions || []).includes("AUCTION");
   const pr = auction && d.currentBidPrice ? d.currentBidPrice : auction && !d.currentBidPrice && deal0 ? null : d.price;
-  const so = (d.shippingOptions || [])[0];
-  const out = { live: true, price: pr ? parseFloat(pr.value) : null, ship: so && so.shippingCost ? parseFloat(so.shippingCost.value) || 0 : 0, bids: +d.bidCount || 0, end };
+  const po = postageOf(d);
+  const out = { live: true, price: pr ? parseFloat(pr.value) : null, ship: po.ship, post: po.post, bids: +d.bidCount || 0, end };
   if (full) out.info = listingInfo(d);
   if (row && out.price != null) {
     const deal = deal0;
+    // postage not known: keep the careful allowance this deal was judged with (never £0)
+    if (postUnknown(out)) out.ship = deal.shipAllow ? deal.ship : POST_ALLOW;
+    const oldShip = deal.ship || 0;
     const tooDear = deal.kind === "deal" && (deal.type === "AUC" ? out.price >= (deal.maxBid || 0) : out.price + out.ship > (deal.maxPay || 0));
     if (tooDear) { try { await dealOut(env, [id], () => (deal.type === "AUC" ? "bid passed max bid" : "price went up")); } catch (e) {} await D.prepare("DELETE FROM deals WHERE id=?").bind(id).run(); return { ...out, live: true, tooDear: true }; }
-    Object.assign(deal, { price: out.price, ship: out.ship, bids: out.bids, end: out.end || deal.end });
+    const moved = deal.price !== out.price || deal.ship !== out.ship;
+    Object.assign(deal, { price: out.price, ship: out.ship, post: out.post, shipAllow: postUnknown(out) || undefined, bids: out.bids, end: out.end || deal.end });
+    // a new price or postage (e.g. the bid went up): work every money figure out again, so nothing shows an old bid's profit
+    if (moved && deal.kind === "deal") reprice(deal, cleanConfig(await kvGet(env, "config", null)).rules, oldShip);
+    // the app takes these figures as they are (one source of truth for the money on the card)
+    out.deal = { price: deal.price, ship: deal.ship, post: deal.post, shipAllow: deal.shipAllow, bids: deal.bids, cost: deal.cost, extra: deal.extra, profit: deal.profit,
+      lowProfit: deal.lowProfit, roi: deal.roi, maxBid: deal.maxBid, maxItem: deal.maxItem, profitAtMax: deal.profitAtMax };
     // the description says it's faulty: keep it visible (with the words) but never above 49 and never alerted
     const f = descFaults(String(d.conditionDescription || "") + "\n" + plainText(d.description || d.shortDescription));
     if (!pre || d.description != null || d.shortDescription != null || d.conditionDescription != null) deal.descAt = now;

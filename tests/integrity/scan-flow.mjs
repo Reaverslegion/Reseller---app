@@ -24,7 +24,7 @@ export function soldRows(seed = 1) {
   return rows;
 }
 // a fake eBay search result (Browse API item summary) for a listing
-export function listing({ id, title, price, ship, type = "BIN", bids = 0, endsIn = 3, cat = "27386", noShip = false, calcShip = false, pickup = false, business = false, created = Date.now() - 5 * 60000 }) {
+export function listing({ id, title, price, ship, type = "BIN", bids = 0, endsIn = 3, cat = "27386", noShip = false, calcShip = false, estShip = false, unknownShip = false, pickup = false, business = false, created = Date.now() - 5 * 60000 }) {
   const it = { itemId: `v1|${id}|0`, legacyItemId: String(id), title, categoryId: cat, categories: [{ categoryId: cat }], condition: "Used", conditionId: "3000",
     itemWebUrl: `https://www.ebay.co.uk/itm/${id}`, buyingOptions: [type === "AUC" ? "AUCTION" : "FIXED_PRICE"], itemLocation: { country: "GB" },
     seller: { username: "seller" + id, feedbackPercentage: "99.6", feedbackScore: 250, sellerAccountType: business ? "BUSINESS" : "INDIVIDUAL" },
@@ -33,6 +33,8 @@ export function listing({ id, title, price, ship, type = "BIN", bids = 0, endsIn
   else it.price = { value: String(price), currency: "GBP" };
   if (pickup) it.pickupOptions = [{ pickupLocationType: "STORE" }];
   if (calcShip) it.shippingOptions = [{ shippingCostType: "CALCULATED" }];
+  else if (estShip) it.shippingOptions = [{ shippingCostType: "CALCULATED", shippingCost: { value: String(ship), currency: "GBP" } }];
+  else if (unknownShip) it.shippingOptions = [{ shippingServiceCode: "Other" }];
   else if (!noShip) it.shippingOptions = [{ shippingCostType: "FIXED", shippingCost: { value: String(ship), currency: "GBP" } }];
   return it;
 }

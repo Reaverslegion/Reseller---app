@@ -8,6 +8,27 @@ const money = (n) => Math.abs(+n || 0).toLocaleString("en-GB", { minimumFraction
 export const gbp = (n) => (n < 0 ? "-£" : "£") + money(n);
 export const gbp0 = (n) => (n < 0 ? "-£" : "£") + Math.round(Math.abs(+n || 0)).toLocaleString("en-GB");
 export const signed = (v) => (v >= 0 ? "+" : "−") + gbp(Math.abs(v));
+export const known = (n) => n != null && n !== "" && Number.isFinite(+n);
+const cap2 = (x) => Math.floor(x * 100) / 100;
+// postage wording (fixed 4 Nov): free, fixed, eBay's estimate, calculated/not stated with the careful allowance, or unknown
+export function postText(d) {
+  if (d.collect) return "collection only" + (d.where ? " · " + d.where : "");
+  if (!known(d.ship)) return "postage unknown";
+  if (d.post === "calc") return `postage calculated by eBay · ${gbp(d.ship)} allowed`;
+  if (d.post === "unknown") return `postage not stated · ${gbp(d.ship)} allowed`;
+  if (d.post === "est") return `+ about ${gbp(d.ship)} post (eBay estimate)`;
+  return +d.ship ? "+ " + gbp(d.ship) + " post" : "free post";
+}
+// the spend limit lowers max bids / max item prices to fit, and "profit at your max" follows (fixed 4 Nov)
+export function limited(d, s = SETTINGS) {
+  const m = s.maxSpend || 0; if (!(m > 0) || d.kind === "spares") return d;
+  const ship = d.ship || 0, fee = (x) => (feeOn(d, s) ? buyerFee(x) : 0), x = { ...d }; let capped = false;
+  if (isAuction(d) && d.maxBid != null) { const c = cap2(m - ship); if (d.maxBid > c) { x.maxBid = c; x.maxItem = d.maxItem != null ? Math.min(d.maxItem, c) : c; capped = true; } }
+  else if (!isAuction(d) && d.maxItem != null) { let c = cap2(m - ship - fee(m)); while (c > 0 && c + ship + fee(c) > m + 1e-9) c = Math.floor(c * 100 - 1) / 100; if (d.maxItem > c) { x.maxItem = c; capped = true; } }
+  if (capped && d.med != null) { const out = d.out != null ? d.out : d.med - (d.sellFee || 0) - d.cost - d.profit, it = isAuction(d) ? x.maxBid : x.maxItem;
+    x.profitAtMax = Math.round((d.med - (d.sellFee || 0) - out - (it + ship + fee(it))) * 100) / 100; }
+  return x;
+}
 export const STARTER = ["27386", "139971", "9355", "171485", "177", "164", "80053", "170083", "175669"];
 
 // the settings the app has during the audit (set through the app's own screens)
@@ -18,6 +39,7 @@ export const shownProfit = (d) => (isAuction(d) && d.profitAtMax != null ? d.pro
 const feeOn = (d, s) => (d.bpfOn != null ? !!d.bpfOn && s.bpf : s.bpf && !(d.seller && d.seller.biz));
 export function returnPct(d, s = SETTINGS) {
   const item = isAuction(d) ? (d.maxItem != null ? d.maxItem : d.maxBid) : d.price;
+  if (!known(item) || !known(shownProfit(d))) return null;
   const pay = (item || 0) + (d.ship || 0) + (feeOn(d, s) ? buyerFee(item || 0) : 0) + s.pack;
   return pay > 0 ? Math.round(shownProfit(d) / pay * 100) : null;
 }
@@ -41,19 +63,20 @@ export function groups(d) {
   return g;
 }
 // what one deal card should say
-export function card(d, s = SETTINGS) {
-  const auc = isAuction(d), mx = d.maxItem != null ? d.maxItem : auc ? d.maxBid : null, under = !auc && mx != null && d.price <= mx;
-  const post = d.collect ? "collection only" + (d.where ? " · " + d.where : "") : d.ship ? "+ " + gbp(d.ship) + " post" : "free post";
+export function card(d0, s = SETTINGS) {
+  const d = limited(d0, s), auc = isAuction(d), mx = d.maxItem != null ? d.maxItem : auc ? d.maxBid : null, under = !auc && mx != null && d.price <= mx;
+  const post = postText(d);
   const lo = auc && d.profitAtMax != null ? d.profitAtMax : d.profit, hi = d.profit, range = auc && hi != null && lo != null && hi - lo >= 0.5;
-  const profit = range ? `${signed(lo)} to ${signed(hi)}` : signed(shownProfit(d));
-  const second = auc || (!under && mx != null) ? [auc ? "Your max bid" : "Max offer", mx != null ? gbp(mx) : "—"] : mx != null ? ["Max item price", gbp(mx)] : ["Sells for about", gbp0(d.med)];
+  const profit = range ? `${signed(lo)} to ${signed(hi)}` : known(shownProfit(d)) ? signed(shownProfit(d)) : "Not calculated";
+  const second = auc || (!under && mx != null) ? [auc ? "Your max bid" : "Max offer", mx != null ? gbp(mx) : "—"] : mx != null ? ["Max item price", gbp(mx)] : ["Sells for about", known(d.med) ? gbp0(d.med) : "Not available"];
   const src = d.src === "book" ? (d.fill ? `From ${d.bookN ? Number(d.bookN).toLocaleString("en-GB") + " sales" : "your category check"}` : "From sold prices you checked")
     : d.src === "sold" ? `From ${d.n} sale${d.n === 1 ? "" : "s"} in 30 days` : `Guess from ${d.n} asking prices, no sales yet`;
   const r = returnPct(d, s);
-  return { title: String(d.title), label: d.kind === "spares" ? "Spares or repairs" : auc ? "Auction" : "Buy It Now", score: d.kind === "spares" ? null : String(d.score),
-    profit: d.kind === "spares" ? null : profit, priceLabel: auc ? "Current bid" : "Buy it now", price: gbp(d.price), post,
+  return { title: String(d.title), shownTitle: d.title ? String(d.title) : "(No title)", label: d.kind === "spares" ? "Spares or repairs" : auc ? "Auction" : "Buy It Now",
+    score: d.kind === "spares" ? null : known(d.score) ? String(d.score) : "–",
+    profit: d.kind === "spares" ? null : profit, priceLabel: auc ? "Current bid" : "Buy it now", price: known(d.price) ? gbp(d.price) : "Unknown", post,
     bids: auc ? (d.bids ? d.bids + " bid" + (d.bids > 1 ? "s" : "") : "no bids yet") : null,
-    secondLabel: second[0], second: second[1], sells: gbp0(d.med), ret: r == null ? null : r + "%", src };
+    secondLabel: second[0], second: second[1], sells: known(d.med) ? gbp0(d.med) : "Not available", ret: r == null ? null : r + "%", src, allow: !d.collect && (d.shipAllow || d.post === "calc" || d.post === "unknown") };
 }
 // order checks: each sort's key (bigger first), or "ending" (auctions by end time, soonest first, then the rest)
 export const SORT_KEYS = {

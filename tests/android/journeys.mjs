@@ -186,7 +186,7 @@ await U("Wrong key is handled clearly", async (step) => {
 await U("Wrong key typed into the admin connection box", async (step) => {
   const openBox = async () => { if (!(await app.eval(`!!document.getElementById("s_url")&&document.getElementById("s_url").offsetParent!==null`))) await app.tap({ sel: "#adv summary" }); };
   await step("open admin tools and the connection box", async () => { await menu(); await app.tap("Open admin tools"); await app.waitText("Admin tools", 8000); await app.netQuiet(); await openBox(); });
-  await step("type a setup code with a WRONG key", async () => { await app.fill({ sel: "#s_url" }, "http://localhost:8787#wrongkey0000000000", undefined, openBox);
+  await step("type a setup code with a WRONG key (on the emulator, taps into this box haven't opened the keyboard; cause not yet confirmed: app or emulator)", async () => { await app.fill({ sel: "#s_url" }, "http://localhost:8787#wrongkey0000000000", undefined, openBox);
     await app.waitFor(`(()=>{try{return JSON.parse(localStorage.getItem("resell_helper_v1")).set.key==="wrongkey0000000000"}catch(e){return false}})()`, 8000, "wrong key saved"); });
   await step("Deals shows a clear 'wrong key' message, not a crash", async () => { await dealsTab(); await app.tap("Scan now"); await app.waitText("wrong key", 20000); await app.shot("wrong key message"); });
   await step("putting the right key back fixes it", async () => { await menu(); await app.tap("Open admin tools"); await app.netQuiet(); await openBox();

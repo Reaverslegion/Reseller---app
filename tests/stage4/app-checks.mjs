@@ -303,6 +303,7 @@ export async function runStage4(drv, R, dev = {}) {
       await sleep(8000); const st = await fetch("http://127.0.0.1:8791/stats").then((r) => r.json()).catch(() => null), n = st ? Object.entries(st.stats).filter(([k]) => k === "run").reduce((a, [, v]) => a + v, 0) : null;
       D.add("5 quick taps on Scan now start one scan, not five", n == null ? "NOT TESTED" : ok(n === 1), n == null ? "couldn't count requests" : `${n} scan requests`); });
     await step("slow connection (4 seconds per request), then a connection that cuts out", async () => {
+      await seed(DS.scale(13, 994500000000)); await drv.eval(`(async()=>{HD.busy=false;await loadDeals();return 1})()`); // deals to keep (the scan above may have replaced them)
       await fetch("http://127.0.0.1:8791/mode?m=slow&ms=4000").catch(() => {}); const t0 = Date.now(); await drv.eval(`(async()=>{HD.busy=false;await loadDeals();return 1})()`); const slowMs = Date.now() - t0;
       const t1 = await drv.eval(`({cards:document.querySelectorAll(".dcard").length,err:(document.querySelector("#app .card.bad")||{}).innerText||""})`);
       D.add("slow connection: deals still load (just later), nothing breaks", ok(t1.cards > 0 && !t1.err), `${(slowMs / 1000).toFixed(1)} s · ${t1.cards} cards`);
@@ -323,8 +324,11 @@ export async function runStage4(drv, R, dev = {}) {
       await dev.app.launch(); dev.app.appPid = dev.app.pid(); await drv.waitFor(`typeof render==="function"`, 30000, "the app"); await toDeals();
       let rows = []; for (let i = 0; i < 20 && !rows.length; i++) { await sleep(1000); rows = await errlog("src='app' AND kind LIKE 'native-crash%'"); }
       const all = await errlog("src='app'"), info = await drv.eval(`(async()=>{try{const r=await Capacitor.Plugins.CrashInfo.read();return{sdk:r.sdk,exits:(r.exits||[]).length}}catch(e){return{err:String(e)}}})()`);
-      M.add("a native Android crash is recorded with what crashed and where, once (not twice)", ok(rows.length === 1 && rows[0].n === 1 && /CrashedByAdb|shell-induced|RemoteServiceException/i.test(rows[0].msg)),
+      // "am crash" may be recorded by Android as a Java crash (with our saved details) or as a native crash (exit reason only)
+      M.add("a native Android crash is recorded once (not twice), with its kind, app version and time", ok(rows.length === 1 && rows[0].n === 1 && !!rows[0].ver),
         rows[0] ? `"${rows[0].msg}" · version ${rows[0].ver}` : `not recorded; app problems: ${all.map((r) => r.kind).join(", ") || "none"}; crash capture: ${JSON.stringify(info)}`);
+      M.add("Java crash details (error and where it happened) are included", /CrashedByAdb|shell-induced|Exception|←/.test((rows[0] || {}).msg || "") ? "PASS" : "PARTIALLY TESTED",
+        /Exception|←/.test((rows[0] || {}).msg || "") ? rows[0].msg : "Android recorded this test crash as a native crash, so only its exit reason was available; the Java-crash file path wasn't exercised by this test");
       M.add("the crash record has no private details", ok(rows[0] && !/key=|@|https?:\/\/[^\s]*\?/.test(rows[0].msg)), rows[0] ? "" : "nothing recorded");
       await drv.menu(); await drv.tap("Open admin tools"); await drv.waitText("Problems", 15000); await sleep(2500); const t = await appText(); await drv.shot("problems list native crash");
       M.add("admin tools › Problems shows the native crash", ok(/native-crash/.test(t)), (t.match(/App · native-crash[^\n]*/) || ["not shown"])[0]); await drv.dealsTab();

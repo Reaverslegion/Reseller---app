@@ -25,9 +25,11 @@ let shots = 0;
 const look = async (name) => {
   const L = await app.eval(LAYOUT), wv = app.webviewBounds(), sb = statusBarPx(), dpr = L.dpr || 1;
   // the first words of the app, in real screen pixels; hidden if they start inside the status bar
-  const textScreenY = wv.t + (L.firstTextTop || 0) * dpr, hidden = sb != null && textScreenY < sb - 2;
+  // if Android starts the app's area below the status bar (top > 0), nothing of the app can be under it; if the area starts at
+  // the very top (edge-to-edge), the app's first words must start below the status bar (or 24dp when its size can't be read)
+  const textScreenY = wv.t + (L.firstTextTop || 0) * dpr, bar = sb != null ? sb : Math.round(24 * dpr), hidden = wv.t === 0 && textScreenY < bar - 2;
   await app.shot(`${++shots} ${name}`);
-  R.add(AREA, `${name}: top of the app not hidden under the status bar`, hidden ? "FAIL" : sb == null ? "PARTIALLY TESTED" : "PASS",
+  R.add(AREA, `${name}: top of the app not hidden under the status bar`, hidden ? "FAIL" : wv.t > 0 || sb != null ? "PASS" : "PARTIALLY TESTED",
     `app area starts at ${wv.t}px, status bar ends at ${sb ?? "?"}px, first words "${L.firstText}" at ${Math.round(textScreenY)}px; safe-area inset ${L.inset}px`);
   R.add(AREA, `${name}: nothing runs off the side`, L.over ? "FAIL" : "PASS", `width ${L.w}`);
 };

@@ -28,6 +28,10 @@ const exported = blocks.filter((b) => /:exported\([^)]*\)=(true|\(type 0x12\)0xf
   .map((b) => ((b.match(/:name\([^)]*\)="([^"]+)"/) || [])[1] || "?").split(".").pop());
 console.log("app parts:", blocks.length, "exported:", exported.join(", "));
 add("parts of the app other apps can open are only the expected ones", exported.every((n) => /MainActivity|FirebaseMessagingService|Receiver$/.test(n)) ? "PASS" : "PARTIALLY TESTED", exported.join(", ") || "none");
+// the app's own web view setting, read from inside the built file
+let capCfg = {}; try { capCfg = JSON.parse(run(`unzip -p "${apk}" assets/capacitor.config.json`)); } catch (e) {}
+const wvd = (capCfg.android || {}).webContentsDebuggingEnabled;
+add("the app's own setting keeps its web view closed to inspection (release builds)", wvd === false ? "PASS" : debuggable ? "PARTIALLY TESTED" : "FAIL", `webContentsDebuggingEnabled: ${wvd === undefined ? "not set (follows debug mode)" : wvd}`);
 let cert = ""; try { cert = run(`${tool("apksigner")} verify --print-certs "${apk}"`); } catch (e) { cert = e.stdout || e.message; }
 const dn = (cert.match(/certificate DN: (.+)/) || [])[1] || "unknown"; console.log("signing:", cert.split("\n").slice(0, 4).join(" | "));
 add("signing (this test build uses a throwaway key; the live build's key and password are checked in the workflow review)", "PARTIALLY TESTED",

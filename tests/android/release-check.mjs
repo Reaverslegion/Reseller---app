@@ -18,7 +18,11 @@ else {
   let ui = ""; for (let i = 0; i < 3 && !/24\/7 bargain hunter|FlipScout|flipscout/i.test(ui); i++) { safe(() => sh("uiautomator dump /sdcard/ui.xml >/dev/null 2>&1")); ui = safe(() => sh("cat /sdcard/ui.xml")); await sleep(3000); }
   add("release build starts and shows its first screen", !!pid && /24\/7 bargain hunter|Welcome|FlipScout/i.test(ui), pid ? (ui.match(/text="([^"]{4,60})"/g) || []).slice(0, 4).join(" ") : "not running");
   const sockets = safe(() => sh("cat /proc/net/unix")), dev = new RegExp(`webview_devtools_remote_${pid}\\b`).test(sockets);
-  add("its web view can't be inspected over USB (no debugging socket)", !!pid && !dev, dev ? "debugging socket found" : "no debugging socket for the app");
+  // emulator system images are developer builds (ro.debuggable=1), where Android's web view lets ANY app be inspected;
+  // ordinary phones are not. The app's own setting is checked inside the built file (tests/ci/apk-check.mjs).
+  const sysDebug = safe(() => sh("getprop ro.debuggable")).trim() === "1";
+  if (dev && sysDebug) add("its web view can't be inspected over USB (no debugging socket)", true, "socket present, but this emulator's Android is a developer build that opens every app's web view; the app's own setting (off) is checked in the built file — confirm on a real phone", "PARTIALLY TESTED");
+  else add("its web view can't be inspected over USB (no debugging socket)", !!pid && !dev, dev ? "debugging socket found on a normal Android build" : "no debugging socket for the app");
   const runas = safe(() => sh(`run-as ${PKG} ls`));
   add("it can't be debugged or have its private files read over USB (run-as refused)", /not debuggable|is not an application|Permission denied|package not debuggable/i.test(runas), runas.trim().slice(0, 120));
   const pk = safe(() => sh(`dumpsys package ${PKG}`)), flags = (pk.match(/(?:pkgFlags|flags)=\[([^\]]*)\]/) || [])[1] || "";

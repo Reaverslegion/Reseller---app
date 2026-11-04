@@ -134,7 +134,7 @@ jobs:
     name: Real app on Android emulator
     needs: [build-e2e]
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -168,12 +168,12 @@ jobs:
           disk-size: 4096M
           ram-size: 3072M
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -no-metrics
-          script: APK=apk/app-debug.apk node tests/android/journeys.mjs
+          script: APK=apk/app-debug.apk bash tests/android/run-all.sh
       - name: Small copies of the screenshots (readable from the log)
         if: always()
         run: |
           command -v convert >/dev/null || sudo apt-get install -y -qq imagemagick >/dev/null
-          for f in screenshots/*.png; do [ -f "$f" ] || continue; convert "$f" -resize 320x -quality 50 /tmp/t.jpg; echo "SHOT $(basename "$f") $(base64 -w0 /tmp/t.jpg)"; done
+          for f in screenshots/*.png screenshots/*/*.png; do [ -f "$f" ] || continue; convert "$f" -resize 320x -quality 50 /tmp/t.jpg; echo "SHOT $(echo "${f#screenshots/}" | tr / _) $(base64 -w0 /tmp/t.jpg)"; done
       - name: Logs (if anything failed)
         if: failure()
         run: |
@@ -192,6 +192,7 @@ jobs:
           path: |
             screenshots/
             logcat.txt
+            logcat-integrity.txt
           retention-days: 14
 
   report:

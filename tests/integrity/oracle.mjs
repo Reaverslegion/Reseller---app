@@ -1,0 +1,72 @@
+// EXPECTED RESULTS, worked out independently of the app's code: which deals should be on screen, in which filter, in
+// what order, and exactly what each card should say. Written from FlipScout's documented rules (deal card layout, eBay
+// buyer protection fee, "profit = sells for − selling fee − postage out − packing − (price + postage in + buyer fee)").
+// Where the app does something different, the audit reports it as a discrepancy for a person to judge.
+
+export const buyerFee = (p) => 0.1 + Math.min(p, 20) * 0.07 + Math.max(0, Math.min(p, 300) - 20) * 0.04 + Math.max(0, Math.min(p, 4000) - 300) * 0.02;
+const money = (n) => Math.abs(+n || 0).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export const gbp = (n) => (n < 0 ? "-£" : "£") + money(n);
+export const gbp0 = (n) => (n < 0 ? "-£" : "£") + Math.round(Math.abs(+n || 0)).toLocaleString("en-GB");
+export const signed = (v) => (v >= 0 ? "+" : "−") + gbp(Math.abs(v));
+export const STARTER = ["27386", "139971", "9355", "171485", "177", "164", "80053", "170083", "175669"];
+
+// the settings the app has during the audit (set through the app's own screens)
+export const SETTINGS = { cats: STARTER, maxSpend: 0, bpf: true, pack: 1, hidden: [] };
+
+export const isAuction = (d) => /^AUC/i.test(String(d.type || ""));
+export const shownProfit = (d) => (isAuction(d) && d.profitAtMax != null ? d.profitAtMax : d.profit);
+const feeOn = (d, s) => (d.bpfOn != null ? !!d.bpfOn && s.bpf : s.bpf && !(d.seller && d.seller.biz));
+export function returnPct(d, s = SETTINGS) {
+  const item = isAuction(d) ? (d.maxItem != null ? d.maxItem : d.maxBid) : d.price;
+  const pay = (item || 0) + (d.ship || 0) + (feeOn(d, s) ? buyerFee(item || 0) : 0) + s.pack;
+  return pay > 0 ? Math.round(shownProfit(d) / pay * 100) : null;
+}
+// can this deal be on screen at all (any filter)?
+export function visible(d, s = SETTINGS) {
+  if (s.hidden.includes(d.id)) return false;
+  const p = shownProfit(d);
+  if (!(d.kind === "spares" || (p != null && p > 0))) return false;                 // never list a deal that loses money
+  if (s.maxSpend > 0) { const t = isAuction(d) ? d.price + d.ship : d.price + d.ship + (feeOn(d, s) ? buyerFee(d.price) : 0); if (t > s.maxSpend) return false; }
+  if (s.cats.length && !s.cats.includes(String(d.cat))) return false;             // category not ticked
+  return true;
+}
+// which filter chip(s) a visible deal belongs to
+export function groups(d) {
+  const guess = d.kind !== "spares" && d.src === "asking", g = [];
+  if (guess) return ["guess"];
+  if (d.collect) return ["col"];
+  if (d.kind === "spares") return ["spares"];
+  g.push("all", isAuction(d) ? "auc" : "bin");
+  if ((d.tags || []).includes("Misspelt title")) g.push("mis");
+  return g;
+}
+// what one deal card should say
+export function card(d, s = SETTINGS) {
+  const auc = isAuction(d), mx = d.maxItem != null ? d.maxItem : auc ? d.maxBid : null, under = !auc && mx != null && d.price <= mx;
+  const post = d.collect ? "collection only" + (d.where ? " · " + d.where : "") : d.ship ? "+ " + gbp(d.ship) + " post" : "free post";
+  const lo = auc && d.profitAtMax != null ? d.profitAtMax : d.profit, hi = d.profit, range = auc && hi != null && lo != null && hi - lo >= 0.5;
+  const profit = range ? `${signed(lo)} to ${signed(hi)}` : signed(shownProfit(d));
+  const second = auc || (!under && mx != null) ? [auc ? "Your max bid" : "Max offer", mx != null ? gbp(mx) : "—"] : mx != null ? ["Max item price", gbp(mx)] : ["Sells for about", gbp0(d.med)];
+  const src = d.src === "book" ? (d.fill ? `From ${d.bookN ? Number(d.bookN).toLocaleString("en-GB") + " sales" : "your category check"}` : "From sold prices you checked")
+    : d.src === "sold" ? `From ${d.n} sale${d.n === 1 ? "" : "s"} in 30 days` : `Guess from ${d.n} asking prices, no sales yet`;
+  const r = returnPct(d, s);
+  return { title: String(d.title), label: d.kind === "spares" ? "Spares or repairs" : auc ? "Auction" : "Buy It Now", score: d.kind === "spares" ? null : String(d.score),
+    profit: d.kind === "spares" ? null : profit, priceLabel: auc ? "Current bid" : "Buy it now", price: gbp(d.price), post,
+    bids: auc ? (d.bids ? d.bids + " bid" + (d.bids > 1 ? "s" : "") : "no bids yet") : null,
+    secondLabel: second[0], second: second[1], sells: gbp0(d.med), ret: r == null ? null : r + "%", src };
+}
+// order checks: each sort's key (bigger first), or "ending" (auctions by end time, soonest first, then the rest)
+export const SORT_KEYS = {
+  score: (d) => d.score, profit: (d) => shownProfit(d), roi: (d) => returnPct(d), newest: (d) => d.created || d.found || 0,
+};
+export function sortProblems(list, key) {
+  const out = [];
+  if (key === "ending") {
+    const k = (d) => (isAuction(d) && d.end ? d.end : 9e15);
+    for (let i = 1; i < list.length; i++) if (k(list[i]) < k(list[i - 1])) out.push(`${list[i - 1].id} before ${list[i].id}`);
+    return out;
+  }
+  const f = SORT_KEYS[key], v = (d) => { const x = f(d); return x == null || Number.isNaN(x) ? -1e9 : x; };
+  for (let i = 1; i < list.length; i++) if (v(list[i]) > v(list[i - 1]) + 1e-9) out.push(`${list[i - 1].id} (${v(list[i - 1])}) before ${list[i].id} (${v(list[i])})`);
+  return out;
+}

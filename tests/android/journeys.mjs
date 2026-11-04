@@ -43,34 +43,15 @@ await J("First-time welcome guide", async (step) => {
   await step("Start using FlipScout closes the guide", async () => { await app.tap("Start using FlipScout"); await app.waitFor(`getComputedStyle(document.getElementById("onb")).display==="none"`, 5000, "guide closed"); await app.waitText("Connect your Scan service"); await app.shot("deals not connected"); });
 });
 
-await U("Wrong key is handled clearly", async (step) => {
-  await step("Connect now opens the connection box", async () => { await app.tap("Connect now"); await app.waitFor(`!!document.getElementById("s_url")`, 8000, "address box"); });
-  await step("typing a setup code with a WRONG key saves it", async () => {
-    await app.fill({ sel: "#s_url" }, "http://localhost:8787#wrongkey0000000000");
-    await app.waitFor(`(()=>{try{const s=JSON.parse(localStorage.getItem("resell_helper_v1")).set;return s.url==="http://localhost:8787"&&s.key==="wrongkey0000000000"}catch(e){return false}})()`, 8000, "the address and key saved on the phone"); await app.shot("wrong key saved"); });
-  await step("Deals asks to pick categories", async () => { await dealsTab(); await app.waitText("Pick what to hunt"); });
-  await step("Start with popular categories shows a clear 'wrong key' message, not a crash", async () => {
-    await app.tap("Start with popular categories"); await app.waitText("wrong key", 20000); await app.shot("wrong key message"); });
-  await step("the wrong key can be corrected from Menu (without hidden admin tools)", async () => { await menu(); await sleep(1000);
-    const t = await app.text(); ok(/Service address|setup code|Connect your Scan service/i.test(t) && !!(await app.eval(`!!document.getElementById("s_url")`)),
-      "APP FINDING: once a key is saved, Menu has no way to change it (the connection box only appears in hidden admin tools), so a user with a wrong key is stuck"); });
-});
-
 await J("Connect to the Scan service", async (step) => {
-  await step("turn on admin tools (tap the version 7 times): with a key saved, the connection box is only in admin tools", async () => { await menu();
-    const p = await app.locate({ text: "FlipScout version", sel: "div[onclick]" }); for (let i = 0; i < 7; i++) { await app.tapXY(p.x, p.y); await sleep(150); }
-    await app.waitText("Admin tools on", 6000); });
-  await step("open admin tools and the connection box", async () => { await app.tap("Open admin tools"); await app.waitText("Admin tools", 8000); await app.netQuiet();
-    if (!(await app.eval(`!!document.getElementById("s_url")&&document.getElementById("s_url").offsetParent!==null`))) await app.tap({ sel: "#adv summary" });
-    await app.waitFor(`!!document.getElementById("s_url")&&document.getElementById("s_url").offsetParent!==null`, 6000, "address box"); });
-  await step("replace the setup code with the right one", async () => {
-    const openBox = async () => { if (!(await app.eval(`!!document.getElementById("s_url")&&document.getElementById("s_url").offsetParent!==null`))) await app.tap({ sel: "#adv summary" }); };
-    await app.fill({ sel: "#s_url" }, `http://localhost:8787#${KEY}`, undefined, openBox);
-    await app.waitFor(`(()=>{try{const s=JSON.parse(localStorage.getItem("resell_helper_v1")).set;return s.url==="http://localhost:8787"&&s.key.length===48}catch(e){return false}})()`, 8000, "the new address and key saved on the phone"); });
-  await step("Deals opens with no error", async () => { await dealsTab(); await sleep(3000); const t = await app.eval(`document.getElementById("app").innerText`); ok(!/wrong key|no connection|error/i.test(t), "error on screen: " + t.slice(0, 120)); });
-  await step("categories are picked (Start with popular categories)", async () => {
-    if (/Pick what to hunt/.test(await app.text())) { await app.tap("Start with popular categories"); await app.waitText("Added \\d+ popular categor|already have these", 15000); }
-    await app.waitFor(`/No deals right now|\\d+ deals?/.test(document.getElementById("app").innerText)`, 25000, "the deals screen (no categories prompt)"); await app.shot("connected"); });
+  await step("Connect now opens the connection box", async () => { await app.tap("Connect now"); await app.waitFor(`!!document.getElementById("s_url")`, 8000, "address box"); });
+  await step("typing the setup code (address#key) saves the connection on the phone", async () => {
+    await app.fill({ sel: "#s_url" }, `http://localhost:8787#${KEY}`);
+    await app.waitFor(`(()=>{try{const s=JSON.parse(localStorage.getItem("resell_helper_v1")).set;return s.url==="http://localhost:8787"&&s.key.length===48}catch(e){return false}})()`, 8000, "the address and key saved on the phone"); await app.shot("connected"); });
+  await step("Deals asks what to hunt, with no error", async () => { await dealsTab(); await app.waitText("Pick what to hunt", 15000); const t = await app.text(); ok(!/wrong key|no connection/i.test(t), "error on screen"); });
+  await step("Start with popular categories adds them and the Scan service gets them", async () => { await app.tap("Start with popular categories"); await app.waitText("Added \\d+ popular categor", 15000);
+    await app.waitFor(`/No deals right now|\\d+ deals?/.test(document.getElementById("app").innerText)`, 25000, "the deals screen");
+    await app.netQuiet(); const c = await query("SELECT v FROM kv WHERE k='config'"); ok(c[0] && /27386/.test(c[0].v), "categories didn't reach the test Scan service"); });
 });
 
 await U("Empty data: no deals yet", async (step) => {
@@ -114,6 +95,11 @@ await J("Menu and settings", async (step) => {
   await step("Dark theme applies", async () => { await app.tap({ text: "Dark", exact: true }); await app.waitFor(`document.documentElement.dataset.theme==="dark"`, 4000, "dark theme"); await app.shot("dark theme"); await app.tap({ text: "Auto", exact: true }); });
 });
 
+await J("Turn on admin tools", async (step) => {
+  await step("tapping the version in Menu 7 times turns on admin tools", async () => { await menu(); const p = await app.locate({ text: "FlipScout version", sel: "div[onclick]" });
+    for (let i = 0; i < 7; i++) { await app.tapXY(p.x, p.y); await sleep(150); } await app.waitText("Admin tools on", 6000); await app.waitText("Open admin tools", 5000); });
+});
+
 await J("Refresh (Scan now)", async (step) => {
   await step("Deals shows Scan now for admin", async () => { await dealsTab(); await app.waitText("Scan now", 8000); });
   await step("while scanning the button says Checking… and can't be pressed again (5 fast taps = 1 scan)", async () => {
@@ -130,8 +116,8 @@ await J("Fill prices for a category (fake eBay sold pages)", async (step) => {
   await step("Fill opens the sold-listings browser", async () => { await app.tap({ text: "Fill", exact: true, nth: 0, wait: 3000 });
     iab = await app.connect((t) => /:8790\//.test(t.url), false); await app.waitFor(`!!document.getElementById("fs_bar")`, 25000, "FlipScout's bar on the sold page", iab); await sleep(4000); await app.shot("fill page 1"); });
   await step("the bar counts the sold prices read on page 1", async () => { await app.waitFor(`/24 sold|read 24|24 /.test(document.getElementById("fs_bar").innerText)`, 15000, "24 sold read", iab); });
-  await step("Next page reads page 2 as well", async () => { await app.tap({ sel: "#fs_next", wait: 4000 }, iab); await iab.close();
-    iab = await app.connect((t) => /:8790\/.*_pgn=2/.test(t.url), false); await app.waitFor(`!!document.getElementById("fs_bar")&&/48/.test(document.getElementById("fs_bar").innerText)`, 25000, "48 sold read", iab); await app.shot("fill page 2"); });
+  await step("Next page reads page 2 as well", async () => { await app.tap({ sel: "#fs_next", wait: 4000 }, iab);
+    await app.waitFor(`/_pgn=2/.test(location.href)`, 20000, "page 2 open", iab); await app.waitFor(`!!document.getElementById("fs_bar")&&/48/.test(document.getElementById("fs_bar").innerText)`, 25000, "48 sold read", iab); await app.shot("fill page 2"); });
   await step("Save all closes the browser and saves the prices", async () => { await app.tap({ sel: "#fs_save", wait: 3000 }, iab); iab.close();
     await app.waitText("Saved \\d+ prices", 40000); await app.shot("fill saved"); });
   await step("the TEST database has the 48 sold items", async () => { const n = (await query("SELECT COUNT(*) n FROM fillseen WHERE id LIKE '3000000%'"))[0].n; ok(n === 48, `${n} of 48 sold items saved`); });
@@ -180,6 +166,20 @@ await U("Leaving and coming back", async (step) => {
   await step("going to the home screen and back keeps the app where it was", async () => { await app.home(); await app.resume(); ok(app.alive(), "app restarted or died"); await app.waitFor(`!!document.querySelector(".dcard")`, 10000, "deals list"); await app.shot("resumed"); });
   await step("rotating the phone doesn't lose anything", async () => { sh("settings put system accelerometer_rotation 0"); sh("settings put system user_rotation 1"); await sleep(2500); app.cal = null; await app.shot("landscape");
     sh("settings put system user_rotation 0"); await sleep(2000); app.cal = null; ok(app.alive(), "app died on rotation"); await app.connect().catch(() => {}); await app.waitFor(`!!document.querySelector(".dcard")`, 10000, "deals list after rotation"); });
+});
+
+await U("Wrong key is handled clearly", async (step) => {
+  await step("Menu offers a way to change the address and key after connecting (without hidden admin tools)", async () => { await menu(); await sleep(1000);
+    ok(!!(await app.eval(`!!document.getElementById("s_url")`)), "APP FINDING: once connected, Menu has no way to change the address or key (the connection box only appears in hidden admin tools), so a user who typed a wrong key is stuck"); });
+});
+await U("Wrong key typed into the admin connection box", async (step) => {
+  const openBox = async () => { if (!(await app.eval(`!!document.getElementById("s_url")&&document.getElementById("s_url").offsetParent!==null`))) await app.tap({ sel: "#adv summary" }); };
+  await step("open admin tools and the connection box", async () => { await menu(); await app.tap("Open admin tools"); await app.waitText("Admin tools", 8000); await app.netQuiet(); await openBox(); });
+  await step("type a setup code with a WRONG key", async () => { await app.fill({ sel: "#s_url" }, "http://localhost:8787#wrongkey0000000000", undefined, openBox);
+    await app.waitFor(`(()=>{try{return JSON.parse(localStorage.getItem("resell_helper_v1")).set.key==="wrongkey0000000000"}catch(e){return false}})()`, 8000, "wrong key saved"); });
+  await step("Deals shows a clear 'wrong key' message, not a crash", async () => { await dealsTab(); await app.tap("Scan now"); await app.waitText("wrong key", 20000); await app.shot("wrong key message"); });
+  await step("putting the right key back fixes it", async () => { await menu(); await app.tap("Open admin tools"); await app.netQuiet(); await openBox();
+    await app.fill({ sel: "#s_url" }, `http://localhost:8787#${KEY}`, undefined, openBox); await dealsTab(); await app.tap("Scan now"); await app.waitText("Checked|new deal|Check had problems|Just scanned", 40000); });
 });
 
 finish();

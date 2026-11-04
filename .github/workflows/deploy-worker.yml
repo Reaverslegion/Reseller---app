@@ -25,7 +25,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           FCM_SA_B64: ${{ secrets.FCM_SA_B64 }}
         run: |
-          npm i -g wrangler@3
+          npm i -g wrangler@3.114.17
           pick() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const i=s.search(/^\[/m);const a=i<0?[]:JSON.parse(s.slice(i));const n=a.find(x=>(x.title||x.name||"").endsWith(process.argv[1]));console.log(n?(n.id||n.uuid):"")})' "$1"; }
           KV=$(wrangler kv namespace list | pick flipscout-backup)
           if [ -z "$KV" ]; then wrangler kv namespace create flipscout-backup; KV=$(wrangler kv namespace list | pick flipscout-backup); fi

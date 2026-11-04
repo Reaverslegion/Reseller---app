@@ -26,7 +26,7 @@ try {
 // 2. npm packages: exactly what the live workflows install
 const wf = (f) => fs.readFileSync(`.github/workflows/${f}`, "utf8");
 const pkgs = (wf("build.yml").match(/npm install ([^\n]+)/) || [, ""])[1].trim().split(/\s+/).filter((p) => /^@?[a-z]/.test(p));
-const sets = [["phone build (build.yml)", pkgs], ["Scan service deploy (deploy-worker.yml)", ["wrangler@3"]]];
+const sets = [["phone build (build.yml)", pkgs], ["Scan service deploy (deploy-worker.yml)", [(wf("deploy-worker.yml").match(/npm i -g (wrangler@[^\s]+)/) || [, "wrangler@3"])[1]]]];
 for (const [label, list] of sets) {
   if (!list.length) { add(`${label}: packages found`, "FAIL", "couldn't read the install line"); continue; }
   const d = fs.mkdtempSync(`${tmp}/np-`);

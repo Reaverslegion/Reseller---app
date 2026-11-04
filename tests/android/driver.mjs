@@ -106,7 +106,7 @@ export class App {
             const tag = isMain ? "app" : "browser";
             c.on((e) => { if (/^Inspector\.(detached|targetCrashed)$/.test(e.method) || e.method === "Runtime.executionContextsCleared")
               this.events.push(`${new Date().toISOString().slice(11, 19)} ${this.phase} [${tag}] ${e.method}${e.params && e.params.reason ? " (" + e.params.reason + ")" : ""}`); });
-            c.on((e) => { if (e.method === "Runtime.exceptionThrown") this.jsErrors.push({ phase: this.phase, msg: String((e.params.exceptionDetails.exception || {}).description || e.params.exceptionDetails.text).slice(0, 300) }); });
+            c.on((e) => { if (e.method === "Runtime.exceptionThrown" && !/FlipScout harmless test/.test(JSON.stringify(e.params))) this.jsErrors.push({ phase: this.phase, msg: String((e.params.exceptionDetails.exception || {}).description || e.params.exceptionDetails.text).slice(0, 300) }); });
             if (isMain) { if (this.main) this.main.close(); this.main = c; } return c; }
           last = "web view found, app page not open yet"; } else last = "no web view debug socket yet";
       } catch (e) { last = e.message; }

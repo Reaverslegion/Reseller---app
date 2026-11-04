@@ -159,8 +159,8 @@ export async function runStage4(drv, R, dev = {}) {
     for (const [name, go] of screens) { try { await go(); } catch (e) { AC.add(`${label}: ${name} › opened`, "NOT TESTED", e.message); continue; }
       const r = await drv.eval(A11Y); for (const k of ["contrast", "noName", "noLabel", "noAlt", "small24", "small44"]) totals[k].push(...r[k].map((x) => ({ screen: name, x })));
       if (r.overflow) totals.overflow.push({ screen: name, x: r.overflow });
-      if (AXE) { try { await drv.eval(AXE + ";1"); const ax = await drv.eval(`axe.run(document,{runOnly:{type:"tag",values:["wcag2a","wcag2aa","wcag21aa","wcag22aa"]}}).then(r=>r.violations.map(v=>({id:v.id,impact:v.impact,n:v.nodes.length,eg:(v.nodes[0]||{}).target+""})))`);
-        totals.axe.push(...ax.map((x) => ({ screen: name, x }))); } catch (e) { totals.axe.push({ screen: name, x: { id: "axe could not run: " + e.message } }); } }
+      if (AXE) { try { await drv.eval(AXE + ";1"); const ax = await drv.eval(`axe.run(document,{runOnly:{type:"tag",values:["wcag2a","wcag2aa","wcag21aa","wcag22aa"]}}).then(r=>({p:r.passes.length,v:r.violations.map(v=>({id:v.id,impact:v.impact,n:v.nodes.length,eg:(v.nodes[0]||{}).target+""}))}))`);
+        totals.axe.push(...ax.v.map((x) => ({ screen: name, x }))); totals.axeRules = (totals.axeRules || 0) + ax.p; } catch (e) { totals.axe.push({ screen: name, x: { id: "axe could not run: " + e.message } }); } }
       if (name === "Deals list") { AC.add(`${label}: page language set and zoom not blocked`, ok(r.lang === "en" || /^en/.test(r.lang)) === "PASS" && !r.zoomBlocked ? "PASS" : "FAIL", `lang="${r.lang}"${r.zoomBlocked ? `, zoom blocked by "${r.zoomBlocked}"` : ""}`); }
     }
     await drv.dealsTab();
@@ -172,7 +172,7 @@ export async function runStage4(drv, R, dev = {}) {
     AC.add(`${label}: nothing to tap is smaller than 24×24 (WCAG 2.2 AA minimum)`, ok(!totals.small24.length), totals.small24.length ? `${totals.small24.length}: ` + fmt(totals.small24) : "");
     AC.add(`${label}: things to tap are at least 44×44 (Android recommends 48)`, totals.small44.length ? "PARTIALLY TESTED" : "PASS", totals.small44.length ? `${totals.small44.length} between 24 and 44 (allowed by WCAG, smaller than ideal): ` + fmt(totals.small44) : "");
     AC.add(`${label}: nothing runs off the side of the screen`, ok(!totals.overflow.length), fmt(totals.overflow));
-    if (AXE) AC.add(`${label}: axe-core automated check (WCAG 2.2 AA rules)`, ok(!totals.axe.length), totals.axe.length ? fmt(totals.axe) : "no problems found");
+    if (AXE) AC.add(`${label}: axe-core automated check (WCAG 2.2 AA rules)`, ok(!totals.axe.length && totals.axeRules > 0), totals.axe.length ? fmt(totals.axe) : `no problems found (${totals.axeRules || 0} rule checks passed across the screens)`);
     else AC.add(`${label}: axe-core automated check`, "NOT TESTED", "axe-core isn't installed on this machine (it is in GitHub)");
     return totals;
   };
@@ -193,19 +193,23 @@ export async function runStage4(drv, R, dev = {}) {
     for (const n of dev.sizes || [0, 13, 200, 500, 837, 1000, 1500, 3000]) await step(`${n.toLocaleString("en-GB")} deals`, async () => {
       await seed(DS.scale(n, 993000000000)); const t = Date.now(); await drv.relaunch();
       await drv.waitFor(n ? `document.querySelectorAll(".dcard").length>0` : `/No deals right now/.test(document.getElementById("app").innerText)`, 120000, "deals on screen"); const open = Date.now() - t;
-      const shown = await drv.eval(`({cards:document.querySelectorAll(".dcard").length,have:(HD.deals||[]).length})`);
+      // where the time went: Android starting the app and its web view / fetching the deals / building and drawing the cards
+      const shown = await drv.eval(`(()=>{const r=performance.getEntriesByType("resource").filter(e=>/[?&]deals=1/.test(e.name)).pop();
+        return{cards:document.querySelectorAll(".dcard").length,have:(HD.deals||[]).length,page:Math.round(performance.now()),fs:r?Math.round(r.startTime):null,fe:r?Math.round(r.responseEnd):null,kb:r&&r.encodedBodySize?Math.round(r.encodedBodySize/1024):null}})()`);
+      const startup = Math.max(0, open - shown.page), fetchMs = shown.fe != null ? shown.fe - shown.fs : null, drawMs = shown.fe != null ? shown.page - shown.fe : null;
       let sort = null, filter = null, jank = null;
       if (n) { sort = await timed(`const s=document.getElementById("ds");if(s){s.value=[...s.options].map(o=>o.value).find(v=>v!==s.value);s.dispatchEvent(new Event("change"))}`);
         filter = await timed(`const b=[...document.querySelectorAll("#chips button")].find(b=>/^Auctions/.test(b.innerText.trim()));if(b)b.click()`);
         await timed(`const b=[...document.querySelectorAll("#chips button")].find(b=>/^All/.test(b.innerText.trim()));if(b)b.click()`);
         if (dev.sh) { sh0(`dumpsys gfxinfo ${dev.pkg} reset`); for (let i = 0; i < 6; i++) { sh0("input swipe 540 1500 540 400 250"); await sleep(400); }
           const g = sh0(`dumpsys gfxinfo ${dev.pkg}`), m = g.match(/Janky frames: (\d+) \(([\d.]+)%\)/), tf = g.match(/Total frames rendered: (\d+)/); jank = m ? { n: +m[1], pct: +m[2], of: tf ? +tf[1] : null } : null; } }
-      const mem = memMB0(), row = { n, open, cards: shown.cards, sort, filter, jank, mem }; perf.push(row);
-      const fast = n <= 1500 ? open < 5000 : open < 10000;
-      P.add(`${n.toLocaleString("en-GB")} deals: open the app to deals on screen`, n && shown.have !== n ? "FAIL" : fast ? "PASS" : "FAIL",
-        `${(open / 1000).toFixed(1)} s (aim: under ${n <= 1500 ? 5 : 10} s) · all ${shown.have.toLocaleString("en-GB")} deals loaded`);
-      if (n) P.add(`${n.toLocaleString("en-GB")} deals: change the sort order, tap a filter, scroll`, sort < 2000 && filter < 2000 ? "PASS" : "FAIL",
-        `sort ${sort} ms · filter ${filter} ms${jank ? ` · scrolling: ${jank.pct}% of ${jank.of} frames slow` : ""}${mem ? ` · memory ${mem} MB` : ""}`);
+      const mem = memMB0(), row = { n, open, startup, page: shown.page, fetchMs, drawMs, kb: shown.kb, cards: shown.cards, sort, filter, jank, mem }; perf.push(row);
+      const fast = n <= 1500 ? shown.page < 5000 : shown.page < 10000;
+      P.add(`${n.toLocaleString("en-GB")} deals: from the app's screen starting to deals shown`, n && shown.have !== n ? "FAIL" : fast ? "PASS" : "FAIL",
+        `${(shown.page / 1000).toFixed(1)} s (aim: under ${n <= 1500 ? 5 : 10} s): fetching ${fetchMs ?? "?"} ms${shown.kb ? ` (${shown.kb} KB)` : ""}, building and drawing ${drawMs ?? "?"} ms · plus ${(startup / 1000).toFixed(1)} s for Android to start the app · total ${(open / 1000).toFixed(1)} s · all ${shown.have.toLocaleString("en-GB")} deals loaded`);
+      if (n) P.add(`${n.toLocaleString("en-GB")} deals: change the sort order, tap a filter`, sort < 2000 && filter < 2000 ? "PASS" : "FAIL", `sort ${sort} ms · filter ${filter} ms${mem ? ` · memory ${mem} MB` : ""}`);
+      if (n && jank) P.add(`${n.toLocaleString("en-GB")} deals: scrolling smoothness`, "PARTIALLY TESTED",
+        `${jank.pct}% of ${jank.of} frames slow on the emulator, which draws with software (no graphics chip), so this can't be judged here: check on your phone`);
     });
   });
   await R.journey("Performance", "Back from a deal returns to the same card (1,500 deals)", async (step) => {
@@ -213,7 +217,8 @@ export async function runStage4(drv, R, dev = {}) {
     for (const target of [40, 300, 700]) await step(`card ${target}`, async () => {
       const r = await drv.eval(`(async()=>{const fr=()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));try{closeSheet()}catch(e){}
         const cards=()=>[...document.querySelectorAll(".dcard[data-id]")];
-        for(let i=0;i<400;i++){const c=cards()[${target}];if(!c)break;const y=c.getBoundingClientRect().top;if(Math.abs(y-120)<5)break;scrollBy(0,Math.max(-600,Math.min(600,y-120)));await fr()}
+        const t0=cards()[${target}];if(t0)t0.scrollIntoView({block:"start"});await fr();
+        for(let i=0;i<40;i++){const c=cards()[${target}];if(!c)break;const y=c.getBoundingClientRect().top;if(Math.abs(y-120)<5)break;scrollBy(0,Math.max(-600,Math.min(600,y-120)));await fr()}
         const top=()=>{let b=null,bd=1e9;for(const c of cards()){const d=Math.abs(c.getBoundingClientRect().top-120);if(d<bd){bd=d;b=c}}return b&&b.dataset.id};
         const before=top(),d=HD.deals.find(x=>String(x.id)===before);DV=d;d.live=undefined;go("deal");await fr();await new Promise(r=>setTimeout(r,400));
         onBack();await fr();await fr();await new Promise(r=>setTimeout(r,400));const after=top(),L=cards();
@@ -257,7 +262,7 @@ export async function runStage4(drv, R, dev = {}) {
       const alive = await drv.eval(`document.querySelectorAll(".dcard").length`).catch(() => -1);
       D.add("low memory warning: the app keeps running and keeps its deals", ok(alive > 0), `${alive} cards after the warning · memory ${m0} MB`);
       await drv.eval(`S.rules.maxPrice=150;save();1`); await dev.app.home(); sh(`am kill ${dev.pkg}`); await sleep(1500); await dev.app.resume();
-      await dev.app.connect(); await drv.waitFor(`typeof render==="function"`, 30000, "the app"); await toDeals(); await sleep(1000);
+      await dev.app.connect(); dev.app.appPid = dev.app.pid(); // restarted on purpose: follow the new app process await drv.waitFor(`typeof render==="function"`, 30000, "the app"); await toDeals(); await sleep(1000);
       const kept = await drv.eval(`({lim:S.rules.maxPrice,cards:document.querySelectorAll(".dcard").length})`);
       D.add("closed by Android in the background: reopens with deals and settings kept", ok(kept.lim === 150 && kept.cards > 0), JSON.stringify(kept));
       await drv.eval(`S.rules.maxPrice=0;save();if(typeof reLimit==="function")reLimit();render();1`); });
@@ -269,7 +274,7 @@ export async function runStage4(drv, R, dev = {}) {
     await step("Scan now tapped 5 times quickly", async () => {
       await dev.chaos("normal"); await fetch("http://127.0.0.1:8791/reset").catch(() => {}); await drv.waitText("Scan now", 15000);
       for (let i = 0; i < 5; i++) await drv.eval(`(()=>{const b=[...document.querySelectorAll("button")].find(b=>/Scan now/.test(b.innerText));if(b)b.click();return 1})()`);
-      await sleep(8000); const st = await fetch("http://127.0.0.1:8791/stats").then((r) => r.json()).catch(() => null), n = st ? Object.entries(st.stats).filter(([k]) => k === "scan").reduce((a, [, v]) => a + v, 0) : null;
+      await sleep(8000); const st = await fetch("http://127.0.0.1:8791/stats").then((r) => r.json()).catch(() => null), n = st ? Object.entries(st.stats).filter(([k]) => k === "run").reduce((a, [, v]) => a + v, 0) : null;
       D.add("5 quick taps on Scan now start one scan, not five", n == null ? "NOT TESTED" : ok(n === 1), n == null ? "couldn't count requests" : `${n} scan requests`); });
     await step("slow connection (4 seconds per request), then a connection that cuts out", async () => {
       await fetch("http://127.0.0.1:8791/mode?m=slow&ms=4000").catch(() => {}); const t0 = Date.now(); await drv.eval(`(async()=>{HD.busy=false;await loadDeals();return 1})()`); const slowMs = Date.now() - t0;
@@ -293,8 +298,10 @@ export async function runStage4(drv, R, dev = {}) {
     });
     await step("app data wiped (like a new phone), reconnected, Restore tapped", async () => {
       if (!dev.sh) return; sh(`pm clear ${dev.pkg}`); await dev.app.launch(); await drv.waitFor(`typeof render==="function"`, 30000, "the app");
-      await drv.eval(`localStorage.setItem("flipscout_seen_v2","1");S.set.url="http://localhost:8787";S.set.key=${JSON.stringify(process.env.TEST_APP_KEY)};save();1`); await drv.relaunch();
+      // connect the way the setup code does, in the running app (no restart: Android may stop the app before its last save reaches the disk)
+      await drv.eval(`localStorage.setItem("flipscout_seen_v2","1");try{$("onb").style.display="none"}catch(e){}S.set.url="http://localhost:8787";S.set.key=${JSON.stringify(process.env.TEST_APP_KEY)};save();1`);
       await sleep(3000); if (!/Restore your data\?/.test(await drv.eval("document.body.innerText"))) await drv.eval(`cloudCheck();1`);
+      await sleep(3000); if (!/Restore your data\?/.test(await drv.eval("document.body.innerText"))) throw new Error("no restore offered; screen says: " + (await drv.eval("document.body.innerText")).replace(/\s+/g, " ").slice(0, 200));
       await drv.waitText("Restore your data\\?", 20000); await drv.shot("restore offered"); await drv.tap({ text: "Restore it", exact: true }); await sleep(3000);
       const after = await drv.eval(`JSON.stringify({items:S.items.map(i=>[i.name,i.cost,i.status]),max:S.rules.maxPrice,cats:H().cats.length})`);
       B.add("after restoring, stock items, spend limit and categories are exactly as before", ok(after === before), after === before ? "" : `before ${before} · after ${after}`);

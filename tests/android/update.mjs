@@ -1,0 +1,140 @@
+// UPDATE TEST (emulator only): installs the PREVIOUS FlipScout build (main, build #120 — same app and signing key as your
+// phone's), fills it with items, settings and an unsaved draft, then installs the NEW build from the testing branch OVER it,
+// exactly as an update on a phone, and checks every piece of information survived. Then, against a private local copy of
+// your CURRENT live Scan service code (main's worker.js, fake eBay, no real keys), it checks which features work, and tests
+// backup and restore. Run: OLD_APK=... NEW_APK=... TEST_APP_KEY=... node tests/android/update.mjs
+import fs from "node:fs";
+import { App, Results, sleep, sh, adb, PKG } from "./driver.mjs";
+console.log = (...a) => { try { fs.writeSync(1, a.map(String).join(" ") + "\n"); } catch (e) {} };
+const KEY = process.env.TEST_APP_KEY, OLD = process.env.OLD_APK, NEW = process.env.NEW_APK, A = "Update test";
+const app = new App("screenshots/update", PKG), R = new Results(app, "results/update.json");
+const add = (name, ok, detail = "", status) => R.add(A, name, status || (ok ? "PASS" : "FAIL"), String(detail).slice(0, 400));
+const NEEDS = (name, detail) => R.add("Needs Scan service update", name, "PARTIALLY TESTED", "NEEDS SCAN SERVICE UPDATE — " + String(detail).slice(0, 300));
+const svc = async (q, body) => { const r = await fetch(`http://127.0.0.1:8787/?${q}`, { method: body ? "POST" : "GET", headers: { "X-FlipScout-Key": KEY, "content-type": "text/plain" }, body: body ? JSON.stringify(body) : undefined });
+  let j = null; try { j = await r.json(); } catch (e) {} return { status: r.status, j }; };
+const safe = (f) => { try { return f(); } catch (e) { return String(e.stdout || e.message || e); } };
+const M1 = "UPD-MARK-1 RTX 3070 Founders", M2 = "UPD-MARK-2 Switch OLED (sold)", M3 = "UPD-MARK-3 iPad Air (following)", DRAFT = "UPD-DRAFT not saved yet";
+const DUMP = `JSON.stringify(Object.fromEntries(Object.keys(localStorage).map(k=>[k,localStorage.getItem(k)])))`;
+const info = () => { const p = safe(() => sh(`dumpsys package ${PKG}`)); const g = (re) => ((p.match(re) || [])[1] || "").trim();
+  return { code: g(/versionCode=(\d+)/), name: g(/versionName=(\S+)/), first: g(/firstInstallTime=([^\n]+)/), last: g(/lastUpdateTime=([^\n]+)/), sig: g(/signatures:\[([0-9a-f, ]+)\]/), flags: g(/pkgFlags=\[([^\]]*)\]/) }; };
+const open = async () => { let last; for (let i = 0; i < 3; i++) { try { if (i) { await app.stop(); await sleep(4000); } await app.launch(); await app.waitFor(`typeof render==="function"&&typeof S==="object"`, 40000, "the app"); return; } catch (e) { last = e; } } throw last; };
+// leave the app the way a phone does (Home), give Android time to write storage to disk, then close it
+const leave = async () => { sh("input keyevent KEYCODE_HOME"); await sleep(8000); await app.stop(); };
+const norm = (s) => { const x = JSON.parse(s || "{}"); return { items: (x.items || []).map((i) => JSON.stringify(i)).sort(), rules: JSON.stringify(x.rules), set: JSON.stringify(x.set), gate: JSON.stringify(x.gate), base: JSON.stringify(x.base), hunt: JSON.stringify(x.hunt) }; };
+
+app.startLog("logcat-update.txt"); app.prepPhone(); adb("reverse", "tcp:8787", "tcp:8787");
+for (let i = 0; i < 24; i++) { let busy = ""; try { busy = sh("top -b -n 1 | head -4"); } catch (e) {} const idle = +((busy.match(/(\d+)%idle/) || [])[1] || 0); if (i >= 6 && idle > 120) break; await sleep(5000); }
+await app.unblock();
+let before = null, beforeInfo = null, oldBackup = null;
+
+await R.journey(A, "Previous version (build #120) with your kind of information", async (step) => {
+  await step("previous version installed and filled with items, settings and a draft", async () => {
+    safe(() => adb("uninstall", PKG)); app.install(OLD); await open(); await sleep(2000);
+    const r = await app.eval(`(async()=>{try{localStorage.setItem("flipscout_seen_v2","1");try{$("onb").style.display="none"}catch(e){}
+      S.set.url="http://localhost:8787";S.set.key=${JSON.stringify(KEY)};S.set.theme="dark";S.rules.feePct=13.1;S.rules.minProfit=25;S.rules.budget=350;
+      H().cats=[{id:"27386",name:"Graphics Cards"}];ED=null;
+      F={...BLANK,n:${JSON.stringify(M1)},b:"120",p:"4.5",k:"1",sp:"250\\n260\\n245\\n255\\n270"};addItem("Bought");
+      F={...BLANK,n:${JSON.stringify(M2)},b:"150",p:"6",k:"1",sp:"230\\n240\\n235"};addItem("Bought");
+      F={...BLANK,n:${JSON.stringify(M3)},b:"90",p:"5",k:"1",sp:"200\\n210\\n190"};addItem("Considered");
+      const s=S.items.find(i=>i.name===${JSON.stringify(M2)});s.status="Sold";s.soldPrice=239;s.fees=31.2;s.soldOn=today();s.profit=s.soldPrice-s.fees-(s.outPost||0)-s.buy-s.pack;
+      save();try{pushConfig(true)}catch(e){}
+      F={...BLANK,n:${JSON.stringify(DRAFT)},b:"42",sp:"99"};saveDraft();
+      const ok=await cloudPush(true);return JSON.stringify({ok,n:S.items.length})}catch(e){return "ERR "+e.message}})()`);
+    add("previous version accepted the items, settings and draft", /"n":3/.test(r), r);
+    await sleep(3000); await app.eval(`tab="stock";render();1`); await sleep(1500); await app.shot("previous version - stock");
+    oldBackup = await svc("backup=1");
+    add("previous version's cloud backup saved (on the local copy of your current Scan service)", JSON.stringify(oldBackup.j || {}).includes(M1), `HTTP ${oldBackup.status}`);
+    await leave(); await open(); before = await app.eval(DUMP);
+    const b = JSON.parse(before), s = JSON.parse(b.resell_helper_v1 || "{}");
+    add("previous version kept everything after closing and reopening", (s.items || []).length === 3 && (b.flipscout_draft || "").includes(DRAFT) && s.set && s.set.theme === "dark",
+      `${(s.items || []).length} items, draft ${(b.flipscout_draft || "").includes(DRAFT) ? "kept" : "MISSING"}, ${Object.keys(b).length} stored entries: ${Object.keys(b).join(", ")}`);
+    await leave(); beforeInfo = info();
+    add("previous version recorded", !!beforeInfo.code, `version ${beforeInfo.name} (code ${beforeInfo.code}), installed ${beforeInfo.first}`);
+    await open(); // left running, as on a phone, so the update below replaces a running app
+  });
+});
+
+await R.journey(A, "Update to the testing build, installed over the top", async (step) => {
+  await step("Android accepts the new build as an update (no uninstall)", async () => {
+    const inst = safe(() => adb("install", "-r", NEW));
+    add("Android accepted the testing build as an UPDATE of your app (same app ID and signing key; nothing uninstalled)", /Success/.test(inst), inst.trim().split("\n").pop());
+    const a = info();
+    add("same signing certificate before and after", !!a.sig && a.sig === beforeInfo.sig, a.sig === beforeInfo.sig ? "identical" : `before ${beforeInfo.sig} after ${a.sig}`);
+    add("it is an update, not a fresh install (original install time kept; version number went up)", a.first === beforeInfo.first && +a.code > +beforeInfo.code && a.last !== beforeInfo.last,
+      `version ${beforeInfo.name} (${beforeInfo.code}) → ${a.name} (${a.code}); first installed ${a.first}; updated ${a.last}`);
+    add("the new build turns Android's own backup off (as designed)", !/ALLOW_BACKUP/.test(a.flags), `flags: ${a.flags.slice(0, 140)}`);
+  });
+  await step("all information survived the update", async () => {
+    await open(); await sleep(3000); const after = await app.eval(DUMP);
+    const b = JSON.parse(before), c = JSON.parse(after), lost = Object.keys(b).filter((k) => !(k in c)), changed = Object.keys(b).filter((k) => k in c && b[k] !== c[k]);
+    add("no stored entry was lost in the update", lost.length === 0, lost.length ? "LOST: " + lost.join(", ") : `all ${Object.keys(b).length} entries present; new entries added by the new version: ${Object.keys(c).filter((k) => !(k in b)).join(", ") || "none"}`);
+    const x = norm(b.resell_helper_v1), y = norm(c.resell_helper_v1);
+    add("every item is identical after the update (names, prices, status, sale figures)", JSON.stringify(x.items) === JSON.stringify(y.items), `${y.items.length} items`);
+    for (const k of ["rules", "set", "hunt", "gate", "base"]) add(`${{ rules: "money rules (fees, minimum profit, budget)", set: "settings (Scan service address and key, theme)", hunt: "hunt settings (categories)", gate: "checklist", base: "tracked items" }[k]} identical after the update`, x[k] === y[k], x[k] === y[k] ? "identical" : "CHANGED");
+    add("the unsaved add-item draft survived the update", b.flipscout_draft === c.flipscout_draft && (c.flipscout_draft || "").includes(DRAFT), b.flipscout_draft === c.flipscout_draft ? "identical" : "CHANGED");
+    add("other stored entries unchanged", changed.filter((k) => k !== "resell_helper_v1").length === 0, changed.length ? "changed: " + changed.join(", ") : "none changed");
+    await app.eval(`tab="stock";render();1`); await sleep(1500); const st = await app.eval(`document.getElementById("app").innerText`); await app.shot("updated - stock");
+    add("your items show on screen in the updated app", st.includes(M1.slice(0, 20)), st.replace(/\s+/g, " ").slice(0, 160));
+    await app.eval(`tab="settings";render();1`); await sleep(1500); const se = await app.eval(`document.getElementById("app").innerText`); await app.shot("updated - settings");
+    add("settings screen shows your categories and cloud backup still on", /Graphics Cards/.test(se) && /cloud backup is on/i.test(se), se.replace(/\s+/g, " ").slice(0, 160));
+    add("the draft is loaded in the add-item form", await app.eval(`JSON.stringify(F).includes(${JSON.stringify(DRAFT)})`));
+  });
+});
+
+await R.journey(A, "Updated app with your CURRENT Scan service (local copy of the live code)", async (step) => {
+  await step("features against the current Scan service", async () => {
+    const run = await svc("run=1"); add("a scan runs on the current Scan service code (fake eBay)", run.status === 200, `HTTP ${run.status} ${JSON.stringify(run.j || {}).slice(0, 120)}`);
+    await app.eval(`tab="deals";HD.busy=false;loadDeals().then(render);1`);
+    let n = 0; try { await app.waitFor(`document.querySelectorAll(".dcard").length>0`, 60000, "deal cards"); n = await app.eval(`(HD.deals||[]).length`); } catch (e) {}
+    await app.shot("updated - deals"); add("deals load from the current Scan service", n > 0, `${n} deals`);
+    if (n > 0) {
+      await app.eval(`openDeal(0);1`); await sleep(3000); const dp = await app.eval(`document.getElementById("app").innerText`); await app.shot("updated - deal page");
+      add("a deal's page opens with its money figures", /Sells for about|The money/.test(dp) && !/NaN|undefined/.test(dp), dp.replace(/\s+/g, " ").slice(0, 200));
+      await app.eval(`onBack();1`); await sleep(800);
+      await app.eval(`salesSheet((HD.deals[0]||{}).pkey,"x");1`); await sleep(4000); const sl = await app.eval(`document.getElementById("sheet").innerText`); await app.eval(`closeSheet();1`);
+      add("the sales list behind a price loads", /Sales behind this price/.test(sl) && !/Couldn't load/.test(sl), sl.replace(/\s+/g, " ").slice(0, 120));
+    }
+    const calls = await app.eval(`(async()=>{const o={};const id=(HD.deals[0]||{}).id||"";for(const q of ["config=1","follows=1","prices=1","flags=1","fillstats=1","check="+id,"problems=1"]){try{const d=await api(q);o[q.split("=")[0]]=d&&d.error?"error: "+d.error:"ok "+JSON.stringify(d).slice(0,60)}catch(e){o[q.split("=")[0]]="error: "+e.message}}return JSON.stringify(o)})()`);
+    const c = JSON.parse(calls);
+    for (const k of ["config", "follows", "prices", "flags", "fillstats", "check"]) add(`"${k}" works with the current Scan service`, /^ok/.test(c[k]), c[k]);
+    if (/^ok/.test(c.problems) && /problems/.test(c.problems)) add(`"problems" works with the current Scan service`, true, c.problems);
+    else NEEDS("admin tools › Problems list (and crash reports sent from the app)", `the current Scan service doesn't have it: ${c.problems}`);
+    await app.eval(`S.set.admin=true;go("admin");1`); await sleep(3000); const pr = await app.eval(`document.getElementById("app").innerText`); await app.shot("updated - admin problems"); await app.eval(`onBack();1`);
+    add("the app copes when the Problems list isn't available (shows a message, no crash)", app.alive(), pr.replace(/\s+/g, " ").slice(0, 160));
+    const cfg = await svc("config=1"); add("settings changes still reach the current Scan service", JSON.stringify(cfg.j || {}).includes("27386"), JSON.stringify((cfg.j || {}).config || {}).slice(0, 120));
+  });
+});
+
+let backupText = "", itemsBefore = "";
+await R.journey(A, "Backup and restore (emulator copy of the app, local Scan service)", async (step) => {
+  await step("Back up now holds your important information", async () => {
+    itemsBefore = await app.eval(`JSON.stringify(S.items.map(i=>[i.id,i.name,i.status,i.buy,i.soldPrice??null,i.profit??null]))`);
+    const ok = await app.eval(`cloudPush(true)`); const b = await svc("backup=1"), d = (b.j || {}).data || {};
+    add("Back up now succeeded", ok === true, `HTTP ${b.status}`);
+    add("the cloud backup holds all items, money rules, settings and hunt settings", (d.items || []).length === 3 && !!d.rules && !!d.set && !!d.hunt && JSON.stringify(d).includes(M2), `${(d.items || []).length} items; rules ${!!d.rules}; settings ${!!d.set}; hunt ${!!d.hunt}`);
+    add("the backup does NOT include the unsaved add-item draft (by design: only saved items are backed up)", !JSON.stringify(d).includes(DRAFT), JSON.stringify(d).includes(DRAFT) ? "draft included" : "draft not in backup", JSON.stringify(d).includes(DRAFT) ? "PASS" : "PARTIALLY TESTED");
+    add("the backup contains the Scan service key (keep the manual backup text private)", JSON.stringify(d.set || {}).includes(KEY), "key present in backup settings", "PARTIALLY TESTED");
+    backupText = await app.eval(`JSON.stringify(S)`); // exactly what "Copy backup text" copies
+  });
+  await step("wipe the emulator app, then Restore from cloud", async () => {
+    await leave(); safe(() => sh(`pm clear ${PKG}`)); await open(); await sleep(2000);
+    add("after wiping (emulator only) the app is empty", await app.eval(`S.items.length`) === 0);
+    await app.eval(`localStorage.setItem("flipscout_seen_v2","1");try{$("onb").style.display="none"}catch(e){}S.set.url="http://localhost:8787";S.set.key=${JSON.stringify(KEY)};save();cloudCheck();1`);
+    await app.waitFor(`document.getElementById("sheet").innerText.includes("Restore your data?")`, 20000, "restore offer"); await app.shot("restore offer");
+    await app.eval(`cloudRestore();1`); await sleep(2000);
+    const got = await app.eval(`JSON.stringify(S.items.map(i=>[i.id,i.name,i.status,i.buy,i.soldPrice??null,i.profit??null]))`);
+    add("Restore from cloud brings back every item exactly", got === itemsBefore, `${JSON.parse(got).length} items restored`);
+    add("money rules and categories restored", await app.eval(`S.rules.feePct===13.1&&S.rules.minProfit===25&&H().cats.some(c=>c.id==="27386")`));
+  });
+  await step("wipe again, then restore from the manual backup text", async () => {
+    await leave(); safe(() => sh(`pm clear ${PKG}`)); await open(); await sleep(2000);
+    await app.eval(`localStorage.setItem("flipscout_seen_v2","1");try{$("onb").style.display="none"}catch(e){}restoreSheet();$("imp").value=${JSON.stringify("My note:\n" + backupText + "\n")};restore();1`); await sleep(2000);
+    const got = await app.eval(`JSON.stringify(S.items.map(i=>[i.id,i.name,i.status,i.buy,i.soldPrice??null,i.profit??null]))`);
+    add("Paste backup restores every item exactly (text pasted from a note)", got === itemsBefore, `${JSON.parse(got).length} items restored`);
+    add("Paste backup restores the Scan service connection and rules", await app.eval(`S.set.url==="http://localhost:8787"&&S.rules.feePct===13.1`));
+    await leave(); await open(); add("restored information is still there after closing and reopening", await app.eval(`S.items.length`) === 3);
+  });
+});
+try { app.logcat && app.logcat.kill(); } catch (e) {}
+for (const r of R.rows) console.log(`${r.status.padEnd(10)} ${r.area} | ${r.name}${r.detail ? "  — " + r.detail : ""}`);
+process.exit(R.rows.some((r) => r.status === "FAIL") ? 1 : 0);

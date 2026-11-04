@@ -151,8 +151,12 @@ await J("Following tab", async (step) => {
 });
 
 await U("Lost connection while deals are showing", async (step) => {
-  await step("with the Scan service unreachable, Scan now shows a calm message and keeps the deals", async () => { await seedDeals(DEALS); await dealsTab();
-    await CHAOS("down"); await app.tap("Scan now"); await app.waitText("Couldn't refresh just now|no connection", 20000); ok(!!(await app.eval(`document.querySelector(".dcard")`)) || /No deals/.test(await app.text()), "deals disappeared"); await app.shot("offline"); await CHAOS("normal"); });
+  await step("fake deals reloaded", freshDeals);
+  await step("with the Scan service unreachable, Scan now shows a calm message and keeps the deals on screen", async () => { await sleep(46000);
+    const before = await app.eval(`document.querySelectorAll(".dcard").length`); ok(before > 0, "no deals on screen to begin with");
+    await CHAOS("down"); await app.tap("Scan now"); await app.waitText("Couldn't refresh just now|no connection", 25000);
+    const after = await app.eval(`document.querySelectorAll(".dcard").length`); await app.shot("offline"); await CHAOS("normal");
+    ok(after === before, `deals on screen went from ${before} to ${after} when the connection failed`); });
   await step("when the connection comes back, Scan now works again", async () => { await sleep(46000); await app.tap("Scan now"); await app.waitText("Checked|new deal|Check had problems|Just scanned", 40000); });
 });
 

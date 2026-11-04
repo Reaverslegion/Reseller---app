@@ -34,6 +34,7 @@ for (let i = 0; i < 5; i++) await req("price=1", { method: "POST", body: "{garbl
 add("Monitoring", "requests with bad data are answered 'bad request' and not logged as faults (no false alarms)", ok(!(await errlog()).length), `${(await errlog()).length} recorded`);
 
 // 3. the problem list itself
+await F.seedSql([], { rate: { h: 0, n: {} } }); // the security test used up this hour's report allowance
 await req("report=1", { method: "POST", body: JSON.stringify({ kind: "test", msg: "stage 4 check", ver: "2.0" }) });
 const pr = await req("problems=1").then((r) => r.json());
 add("Monitoring", "the problem list can be read (newest first) with the key, and not without it", ok(Array.isArray(pr.problems) && pr.problems[0].kind === "test" && (await fetch(`${URL_}/?problems=1`)).status === 401), `${pr.problems.length} problems listed`);

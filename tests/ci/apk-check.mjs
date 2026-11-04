@@ -8,9 +8,12 @@ const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || "/usr/lo
 const bt = fs.readdirSync(`${sdk}/build-tools`).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).pop(), tool = (t) => `${sdk}/build-tools/${bt}/${t}`;
 const run = (c) => execSync(c, { encoding: "utf8", maxBuffer: 64 << 20, stdio: ["ignore", "pipe", "pipe"] });
 const x = run(`${tool("aapt2")} dump xmltree --file AndroidManifest.xml "${apk}"`), badging = run(`${tool("aapt2")} dump badging "${apk}"`);
-const attr = (name) => { const m = x.match(new RegExp(`android:${name}\\([^)]*\\)=\\(type 0x12\\)(0x[0-9a-f]+)`)); return m ? m[1] !== "0x0" : null; };
-const debuggable = attr("debuggable"), backup = attr("allowBackup"), clear = attr("usesCleartextTraffic");
-const target = +(badging.match(/targetSdkVersion:'(\d+)'/) || [])[1], min = +(badging.match(/sdkVersion:'(\d+)'/) || [])[1];
+// aapt2 writes a yes/no setting either as "=true"/"=false" or as "=(type 0x12)0xffffffff"/"0x0"
+const attr = (name) => { const m = x.match(new RegExp(`:${name}\\(0x[0-9a-f]+\\)=(?:\\(type 0x12\\)(0x[0-9a-f]+)|(true|false))`)); return !m ? null : m[2] ? m[2] === "true" : m[1] !== "0x0"; };
+console.log("raw manifest settings:", (x.match(/:(debuggable|allowBackup|usesCleartextTraffic|exported|fullBackupContent|dataExtractionRules)\([^\n]*/g) || []).join(" | "));
+console.log("raw badging:", (badging.match(/^(package|sdkVersion|minSdkVersion|targetSdkVersion|application-debuggable).*$/gm) || []).join(" | "));
+const debuggable = attr("debuggable") || /application-debuggable/.test(badging), backup = attr("allowBackup"), clear = attr("usesCleartextTraffic");
+const target = +(badging.match(/targetSdkVersion:'(\d+)'/) || [])[1], min = +(badging.match(/(?:^|\n)(?:min)?sdkVersion:'(\d+)'/) || [])[1];
 const perms = [...badging.matchAll(/uses-permission: name='([^']+)'/g)].map((m) => m[1].replace("android.permission.", ""));
 add("the app is built in debug mode (anyone with a USB cable can inspect it, and the Play Store refuses it)", debuggable ? "FAIL" : "PASS",
   debuggable ? "android:debuggable is on: the build workflow uses 'assembleDebug'. Changing this changes the live build, so it needs your approval" : "off");
@@ -20,11 +23,13 @@ add("the app doesn't allow unencrypted (http) web traffic to the internet", clea
 add(`Android version targeted (Google Play needs 35 for new apps from 31 Aug 2025)`, target >= 35 ? "PASS" : "PARTIALLY TESTED", `targets Android API ${target}, runs on ${min}+${target < 35 ? ": fine for installing it yourself, but Play would refuse it" : ""}`);
 const risky = perms.filter((p) => /READ_|WRITE_|LOCATION|CAMERA|RECORD_AUDIO|CONTACTS|SMS|CALL|ACCOUNTS|QUERY_ALL|INSTALL|SYSTEM_ALERT/.test(p));
 add(`permissions asked for: only what the app uses (${perms.length})`, risky.length ? "PARTIALLY TESTED" : "PASS", perms.join(", ") + (risky.length ? ` · worth checking: ${risky.join(", ")}` : ""));
-const exported = [...x.matchAll(/E: (activity|receiver|service|provider)[\s\S]*?A: android:name\([^)]*\)="([^"]+)"[\s\S]*?(?=E: (?:activity|receiver|service|provider|application)|$)/g)]
-  .filter((m) => /android:exported\([^)]*\)=\(type 0x12\)0xffffffff/.test(m[0])).map((m) => m[2].split(".").pop());
+const blocks = x.split(/\n(?=\s*E: (?:activity|activity-alias|receiver|service|provider) )/).slice(1);
+const exported = blocks.filter((b) => /:exported\([^)]*\)=(true|\(type 0x12\)0xffffffff)/.test(b.split(/\n\s*E: (?!intent-filter|action|category|data|meta-data)/)[0]))
+  .map((b) => ((b.match(/:name\([^)]*\)="([^"]+)"/) || [])[1] || "?").split(".").pop());
+console.log("app parts:", blocks.length, "exported:", exported.join(", "));
 add("parts of the app other apps can open are only the expected ones", exported.every((n) => /MainActivity|FirebaseMessagingService|Receiver$/.test(n)) ? "PASS" : "PARTIALLY TESTED", exported.join(", ") || "none");
 let cert = ""; try { cert = run(`${tool("apksigner")} verify --print-certs "${apk}"`); } catch (e) { cert = e.stdout || e.message; }
-const dn = (cert.match(/Signer #1 certificate DN: (.+)/) || [])[1] || "unknown";
+const dn = (cert.match(/certificate DN: (.+)/) || [])[1] || "unknown"; console.log("signing:", cert.split("\n").slice(0, 4).join(" | "));
 add("signing (this test build uses a throwaway key; the live build's key and password are checked in the workflow review)", "PARTIALLY TESTED",
   `signed by "${dn}". The live workflow writes the key's password ('android', the standard debug password) into the build file`);
 fs.mkdirSync("results", { recursive: true });

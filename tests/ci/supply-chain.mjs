@@ -37,8 +37,12 @@ for (const [label, list] of sets) {
     const names = Object.entries(audit.vulnerabilities || {}).map(([n, x]) => `${n} (${x.severity})`);
     add(`${label}: known vulnerabilities in ${list.length} packages and their ${(audit.metadata && audit.metadata.dependencies && audit.metadata.dependencies.total) || "?"} sub-packages`,
       v.critical || v.high ? "FAIL" : total ? "PARTIALLY TESTED" : "PASS", total ? `${v.critical || 0} critical, ${v.high || 0} high, ${v.moderate || 0} moderate, ${v.low || 0} low: ${names.slice(0, 8).join(", ")}` : "npm audit found none");
+    // each problem in full in the log: which advisory, which versions, and whether a fix exists
+    for (const [nm, x] of Object.entries(audit.vulnerabilities || {})) console.log(`   ${nm} (${x.severity}, ${x.isDirect ? "installed directly" : "inside " + (x.effects || []).join(", ")}): ` +
+      (x.via || []).map((v) => (typeof v === "string" ? "via " + v : `${v.title} [${v.url}] affects ${v.range}`)).join(" | ") + ` · fix: ${x.fixAvailable === true ? "update available" : x.fixAvailable ? `${x.fixAvailable.name}@${x.fixAvailable.version}${x.fixAvailable.isSemVerMajor ? " (major upgrade)" : ""}` : "none"}`);
     const lock = JSON.parse(fs.readFileSync(`${d}/package-lock.json`, "utf8")).packages || {};
     const resolved = list.map((p) => { const n = p.replace(/@[^@/]+$/, ""); return `${n}@${(lock["node_modules/" + n] || {}).version}`; });
+    console.log(`   resolved today: ${resolved.join(" ")}`);
     const floating = list.filter((p) => !/@\d+\.\d+\.\d+$/.test(p));
     add(`${label}: every package pinned to an exact version`, floating.length ? "PARTIALLY TESTED" : "PASS",
       floating.length ? `${floating.length} follow the newest release automatically (${floating.join(", ")}); today they resolve to ${resolved.join(", ")}` : "");

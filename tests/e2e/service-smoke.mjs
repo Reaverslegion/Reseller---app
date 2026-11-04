@@ -30,6 +30,9 @@ await t("cloud backup saves and restores the same data", async () => {
   assert.ok(JSON.stringify(r.body).includes(String(data.testRun)), "restored backup doesn't match what was saved");
 });
 await t("a scan runs without crashing (talks only to fake eBay)", async () => {
+  // a category to hunt first: without one the service (correctly) answers "Add some categories first." and no scan runs
+  const c = await call("config=1", { method: "POST", headers: { "content-type": "text/plain" }, body: JSON.stringify({ cats: [{ id: "27386", name: "Graphics Cards" }], rules: { seller: "private" } }) });
+  assert.equal(c.status, 200, "config save " + c.status);
   const r = await call("run=1"); assert.ok(r.status === 200 && typeof r.body.checked === "number" && Array.isArray(r.body.errors), "status " + r.status + " " + JSON.stringify(r.body).slice(0, 200));
 });
 await t("a keyword search works (answered by fake eBay)", async () => {

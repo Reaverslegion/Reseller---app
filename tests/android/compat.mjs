@@ -36,7 +36,9 @@ const look = async (name) => {
 };
 await R.journey(AREA, `App on ${LABEL} (Android API ${sdk})`, async (step) => {
   await step("installed on a clean phone and opened", async () => { try { adb("uninstall", PKG); } catch (e) {} app.install(process.env.APK);
-    await app.launch(); await app.waitFor(`typeof render==="function"`, 40000, "the app"); await sleep(1500); });
+    // a freshly booted Android 15 emulator can take a while to open the app's page: up to 3 tries (each try is noted)
+    let last = null; for (let i = 0; i < 3; i++) { try { if (i) { await app.stop(); await sleep(5000); } await app.launch(); await app.waitFor(`typeof render==="function"`, 40000, "the app"); last = null; break; } catch (e) { last = e; } }
+    if (last) throw last; await sleep(1500); });
   await step("welcome screen", async () => { await app.waitText("Your 24/7 bargain hunter", 20000); await look("welcome screen"); });
   await step("connected to the test service with 30 fake deals", async () => {
     await seedDeals(makeDeals(30));

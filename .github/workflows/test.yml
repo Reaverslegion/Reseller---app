@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       part:
-        description: "Emulator part to run: all, journeys, integrity (Stage 3) or stage4"
+        description: "Emulator part to run: all, journeys, integrity (Stage 3), stage4, or none (skip the main emulator suites)"
         default: all
 permissions:
   contents: read
@@ -123,6 +123,9 @@ jobs:
         env:
           TEST_URL: http://127.0.0.1:8787
         run: node tests/security/service-security.mjs
+      - name: Back-end gap tests (other currencies, simultaneous scans, eBay throttling/errors/garbage keep deals)
+        if: always()
+        run: node tests/stage4/backend-gaps.mjs
       - name: Monitoring and restart tests (failed background job, false alarms, restart keeps data)
         if: always()
         env:

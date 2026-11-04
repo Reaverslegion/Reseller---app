@@ -15,6 +15,9 @@ adb("reverse", "tcp:8787", "tcp:8789");
 fs.mkdirSync("results", { recursive: true });
 app.startLog("logcat-integrity.txt");
 app.prepPhone();
+// let a freshly started virtual phone finish starting up (same as the journeys do)
+for (let i = 0; i < 24; i++) { let busy = ""; try { busy = sh("top -b -n 1 | head -4"); } catch (e) {} const idle = +((busy.match(/(\d+)%idle/) || [])[1] || 0); if (i >= 6 && idle > 120) break; await sleep(5000); }
+await app.unblock();
 
 const tabs = (n) => app.tap({ sel: "#nav button", nth: n });
 const drv = {
@@ -29,7 +32,8 @@ const ready = await R.journey("Android emulator", "Stage 3 set-up (clean app)", 
   await step("app data cleared and app opened", async () => { if (!sh("pm list packages").includes(PKG)) app.install(process.env.APK || "apk/app-debug.apk");
     try { sh(`pm clear ${PKG}`); } catch (e) {} try { sh(`pm grant ${PKG} android.permission.POST_NOTIFICATIONS`); } catch (e) {}
     await app.launch(); await app.waitFor(`typeof render==="function"`, 30000, "the app"); });
-  await step("welcome guide", async () => { await app.waitText("Your 24/7 bargain hunter", 20000); for (let i = 0; i < 3; i++) await app.tap({ text: "Next", exact: true });
+  await step("welcome guide", async () => { await app.waitText("Your 24/7 bargain hunter", 20000); for (let i = 0; i < 3; i++) { const dot = () => app.eval(`[...document.querySelectorAll("#onb .dots i")].findIndex(x=>x.classList.contains("on"))`);
+      const was = await dot(); for (let a = 0; a < 3 && (await dot()) === was; a++) { await app.tap({ text: "Next", exact: true }); await sleep(800); } }
     await app.tap("Private seller"); await app.tap("Start using FlipScout"); });
   await step("connect to the test Scan service", async () => { await app.tap("Connect now"); await app.waitFor(`!!document.getElementById("s_url")`, 8000, "address box");
     await app.fill({ sel: "#s_url" }, `http://localhost:8787#${KEY}`);

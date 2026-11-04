@@ -31,6 +31,14 @@ for s in steps:
         print("::endgroup::", flush=True)
     if s.get("name") in want:
         script = s["run"].replace("${{ github.run_number }}", RUN)
+        # PHONE TEST BUILD (never the live build): a separate app, "FlipScout TEST", with its own package name, so it installs
+        # NEXT TO your real app and can't touch it or its data. Push alerts are off in it (Firebase only knows the real app).
+        if os.environ.get("PHONE_TEST") and s.get("name") == "Prepare app":
+            script, k = re.subn(r'npx cap init "FlipScout" com\.reaverslegion\.flipscout\b', 'npx cap init "FlipScout TEST" com.reaverslegion.flipscout.test', script)
+            if k != 1: sys.exit("PHONE_TEST: the app name/package line in build.yml changed; update live-build-steps.py")
+            print("PHONE TEST: app named 'FlipScout TEST', package com.reaverslegion.flipscout.test", flush=True)
+        if os.environ.get("PHONE_TEST") and s.get("name") == "Notifications" and os.path.exists("google-services.json"):
+            os.remove("google-services.json"); print("PHONE TEST: Firebase file left out (alerts off in the test app)", flush=True)
         # TRIAL ONLY (never the live build): CAP_TRIAL=8 builds with Capacitor 8 to see what an upgrade would change
         if os.environ.get("CAP_TRIAL") and s.get("name") == "Prepare app":
             v = os.environ["CAP_TRIAL"]
@@ -40,5 +48,11 @@ for s in steps:
             sys.exit(f"Step {s['name']} uses a GitHub value this script doesn't fill in")
         print(f"::group::{s['name']}", flush=True)
         subprocess.run(["bash", "-e", "-o", "pipefail", "-c", script], check=True, env=env)
+        if os.environ.get("PHONE_TEST") and s.get("name") == "Prepare app":
+            # a clear "TEST" label on every screen and in the version, so it can't be mistaken for the real app
+            f = "www/index.html"; h = open(f).read()
+            h, k = re.subn(r'VER="2\.0\.(\d+)"', r'VER="2.0.\1-TEST"', h)
+            h = h.replace("</body>", '<div style="position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 64px);text-align:center;pointer-events:none;z-index:99999"><span style="background:#b42318;color:#fff;font:700 12px sans-serif;padding:3px 10px;border-radius:10px">TEST BUILD</span></div></body>', 1)
+            open(f, "w").write(h); print(f"PHONE TEST: TEST label added (version changed: {k})", flush=True)
         print("::endgroup::", flush=True)
 print("Test app built with the live build steps")

@@ -982,7 +982,13 @@ function cleanConfig(c) {
   return {
     // off: kept in your list but not searched, so eBay calls go to the categories you've ticked
     cats: Array.isArray(c.cats) ? c.cats.filter((x) => x && /^\d+$/.test(String(x.id))).slice(0, 15).map((x) => ({ id: String(x.id), name: String(x.name || "").slice(0, 80), off: !!x.off })) : [],
-    rules: (() => { const r = { ...DEFAULT_RULES, ...(c.rules || {}) }; r.maxSpend = Math.max(0, Math.min(100000, +r.maxSpend || 0)); return r; })(),
+    // every setting that feeds the money sums is checked here too (old app versions, restores, anyone with the key):
+    // numbers in range, never text or negative; anything unusable falls back to the default
+    rules: (() => { const r = { ...DEFAULT_RULES, ...(c.rules || {}) }, D0 = DEFAULT_RULES;
+      const num = (k, lo, hi) => { const v = +r[k]; r[k] = Number.isFinite(v) && v >= lo && v <= hi ? v : D0[k]; };
+      r.maxSpend = Math.max(0, Math.min(100000, +r.maxSpend || 0));
+      num("minProfit", 0, 10000); num("minRoi", 0, 1000); num("feePct", 0, 50); num("feeFixed", 0, 10); num("post", 0, 200); num("pack", 0, 100); num("alertScore", 0, 100); num("minScore", 0, 100);
+      r.seller = r.seller === "private" ? "private" : "business"; r.bpf = r.bpf !== false; r.cheap = r.cheap !== false; return r; })(),
     types: { bin: true, auction: true, misspelt: true, spares: false, ...(c.types || {}) },
     region: c.region === "any" ? "any" : "uk",
     alerts: c.alerts !== false,
@@ -1126,6 +1132,8 @@ function toListing(it, c, type) {
   if (!id) return null;
   const auction = type === "AUC";
   const pr = auction && it.currentBidPrice ? it.currentBidPrice : it.price;
+  // eBay UK normally gives every price in pounds; a price in another currency would be read as pounds, so skip it
+  if (pr && pr.currency && pr.currency !== "GBP") return null;
   const price = pr ? parseFloat(pr.value) : 0;
   const { ship, post } = postageOf(it);
   // collection only: eBay sends no postage option (or only local pickup). Not "free post"
@@ -1673,10 +1681,14 @@ async function sweep(env, manual) {
       if (d.kind !== "deal" || !VERIFIED_CATS[String(d.cat)]) continue; // never alert on unchecked categories
       const v = await checkLive(env, d.id);
       if (v.fault) continue; // the description mentions a fault: no alert
-      if (!v.live) continue; // sold or ended since we found it: no alert
-      const msg = d.type === "AUC"
-        ? `Bid up to £${d.maxBid.toFixed(2)} (now £${d.price.toFixed(2)}). Score ${d.score}.`
-        : `£${d.cost.toFixed(2)} now, about £${d.profit.toFixed(0)} profit. Score ${d.score}.`;
+      if (!v.live || v.tooDear) continue; // sold, ended or now too dear (and removed): no alert
+      // claim it first: if another scan running at the same moment already took it, don't send it again
+      const claim = await D.prepare("UPDATE deals SET notified=1 WHERE id=? AND notified=0").bind(d.id).run();
+      if (!(claim && claim.meta && claim.meta.changes)) continue;
+      const c = v.deal ? { ...d, ...v.deal } : d; // the figures just re-checked, not the ones from before
+      const msg = c.type === "AUC"
+        ? `Bid up to £${c.maxBid.toFixed(2)} (now £${c.price.toFixed(2)}). Score ${c.score}.`
+        : `£${c.cost.toFixed(2)} now, about £${c.profit.toFixed(0)} profit. Score ${c.score}.`;
       await push(env, d.title.slice(0, 80), msg, { url: d.url, id: d.id, kind: "deal" });
     }
     await D.prepare("UPDATE deals SET notified=1 WHERE notified=0").run();
@@ -1735,7 +1747,7 @@ async function fcmAccess(env) {
 const ERR_KEEP = 300;
 function cleanMsg(s) {
   return String(s == null ? "" : s)
-    .replace(/((?:^|[?&\s,;:"'({])(?:key|token|code|access_token|refresh_token|sig|password|passwd|pwd|secret|api_?key|auth)["']?\s*[=:]\s*["']?)[^&\s"',;)}]+/gi, "$1[hidden]")
+    .replace(/((?:^|[?&\s,;:"'({])(?:[\w-]*key|token|code|access_token|refresh_token|sig|password|passwd|pwd|secret|auth)["']?\s*[=:]\s*["']?)[^&\s"',;)}]+/gi, "$1[hidden]")
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=-]+/gi, "$1 [hidden]")
     .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[email]")
     .replace(/https?:\/\/[^\s"'<>]+/g, (u) => u.split(/[?#]/)[0])
@@ -1831,17 +1843,24 @@ async function checkLive(env, id, pre, full) {
   // an auction can also have a Buy It Now price (eBay lists both options until the first bid): it's still an auction,
   // so compare the current bid, not the Buy It Now price (that was deleting good auction deals as "too dear")
   const row = await D.prepare("SELECT data FROM deals WHERE id=?").bind(id).first(), deal0 = row ? JSON.parse(row.data) : null;
-  const auction = (deal0 ? deal0.type === "AUC" : false) || (d.buyingOptions || []).includes("AUCTION");
+  // a deal judged on its Buy It Now price stays a Buy It Now deal (its price must not be swapped for the auction's bid)
+  const auction = deal0 ? deal0.type === "AUC" : (d.buyingOptions || []).includes("AUCTION");
   const pr = auction && d.currentBidPrice ? d.currentBidPrice : auction && !d.currentBidPrice && deal0 ? null : d.price;
   const po = postageOf(d);
-  const out = { live: true, price: pr ? parseFloat(pr.value) : null, ship: po.ship, post: po.post, bids: +d.bidCount || 0, end };
+  const pv = pr ? parseFloat(pr.value) : NaN; // an unreadable price is treated as "no price", never stored as NaN
+  const out = { live: true, price: Number.isFinite(pv) && !(pr.currency && pr.currency !== "GBP") ? pv : null, ship: po.ship, post: po.post, bids: +d.bidCount || 0, end };
   if (full) out.info = listingInfo(d);
   if (row && out.price != null) {
     const deal = deal0;
     // postage not known: keep the careful allowance this deal was judged with (never £0)
     if (postUnknown(out)) out.ship = deal.shipAllow ? deal.ship : POST_ALLOW;
     const oldShip = deal.ship || 0;
-    const tooDear = deal.kind === "deal" && (deal.type === "AUC" ? out.price >= (deal.maxBid || 0) : out.price + out.ship > (deal.maxPay || 0));
+    // keep the stored listing up to date too, so a later scan can't bring back a removed deal from its old price
+    try { await D.prepare("UPDATE listings SET price=?, ship=? WHERE id=?").bind(out.price, out.ship || 0, id).run(); } catch (e) {}
+    // too dear now? Buy It Now: the whole cost (price + postage + buyer fee) against the most to pay; auction: the bid against
+    // the max bid, lowered first by any extra postage (reprice does the same), so a kept deal never has bid ≥ max bid
+    const fee0 = (p) => (deal.bpfOn ? bpf(p) : 0), maxBidNow = deal.maxBid != null ? Math.floor((deal.maxBid + oldShip - out.ship) * 100) / 100 : 0;
+    const tooDear = deal.kind === "deal" && (deal.type === "AUC" ? out.price >= maxBidNow : out.price + out.ship + fee0(out.price) > (deal.maxPay || 0) + 0.005);
     if (tooDear) { try { await dealOut(env, [id], () => (deal.type === "AUC" ? "bid passed max bid" : "price went up")); } catch (e) {} await D.prepare("DELETE FROM deals WHERE id=?").bind(id).run(); return { ...out, live: true, tooDear: true }; }
     const moved = deal.price !== out.price || deal.ship !== out.ship;
     Object.assign(deal, { price: out.price, ship: out.ship, post: out.post, shipAllow: postUnknown(out) || undefined, bids: out.bids, end: out.end || deal.end });
@@ -1905,10 +1924,12 @@ async function verifyDeals(env, n) {
 
 async function checkFollows(env, cfg) {
   const D = env.DB, now = Date.now();
-  const rows = await D.prepare("SELECT id, data, max, alerted FROM follows ORDER BY created DESC LIMIT 10").all();
+  // 10 a run (eBay calls are limited), least recently checked first, so every followed listing gets its turn
+  const rows = await D.prepare("SELECT id, data, max, alerted FROM follows WHERE COALESCE(json_extract(data,'$.status'),'') NOT IN ('ended','sold') ORDER BY COALESCE(json_extract(data,'$.chk'),0) ASC, created DESC LIMIT 10").all();
   for (const row of rows.results || []) {
     const f = JSON.parse(row.data);
     if (f.status === "ended" || f.status === "sold") continue;
+    f.chk = now;
     try {
       const d = await ebay(env, `/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id=${row.id}`);
       if (d.notFound) { f.status = "ended"; }
@@ -1939,7 +1960,7 @@ async function checkFollows(env, cfg) {
           alert === "under" ? `Now £${((f.price || 0) + (f.ship || 0)).toFixed(2)}, under your max of £${row.max.toFixed(2)}.`
             : `Ends within the hour. Current bid £${f.price.toFixed(2)}, your max £${row.max.toFixed(2)}.`, { url: f.url, id: row.id, kind: "follow" });
       }
-    } catch (e) {}
+    } catch (e) { try { await D.prepare("UPDATE follows SET data=? WHERE id=?").bind(JSON.stringify(f), row.id).run(); } catch (x) {} } // still counts as its turn
   }
 }
 
@@ -1949,7 +1970,7 @@ export default {
     if (!env.DB) return;
     ctx.waitUntil((async () => {
       // errors here used to vanish; keep the latest one so it can be looked at ("lastCrash" in the kv table)
-      const crash = (where) => (e) => Promise.all([kvSet(env, "lastCrash", { at: Date.now(), where, msg: String((e && e.message) || e).slice(0, 300) }).catch(() => {}),
+      const crash = (where) => (e) => Promise.all([kvSet(env, "lastCrash", { at: Date.now(), where, msg: cleanMsg((e && e.message) || e) }).catch(() => {}),
         logProblem(env, /D1_ERROR|SQLITE/i.test(String(e && e.message)) ? "database" : "job", "background job failed", (e && e.message) || e, { where })]);
       const r = await sweep(env, false).catch(async (e) => { await crash("scan")(e); return {}; });
       // a scan that ran but couldn't reach eBay for some categories
@@ -1967,6 +1988,8 @@ export default {
     let res;
     try { res = await this.handle(request, env, ctx); }
     catch (e) { const m = String((e && e.message) || e); await logProblem(env, /D1_ERROR|SQLITE/i.test(m) ? "database" : "service", "exception", m, { where: endpointOf(request) }); return json({ error: "internal error" }, 500); }
+    // eBay calls made by searches, live checks and suggestions count towards the daily limit too (were only saved by scans)
+    if (CALLS) { const w = saveQuota(env).catch(() => {}); if (ctx && ctx.waitUntil) ctx.waitUntil(w); else await w; }
     if (res && res.status >= 500) { let m = ""; try { m = (await res.clone().json()).error || ""; } catch (e) {} await logProblem(env, /D1_ERROR|SQLITE/i.test(m) ? "database" : "service", "failed request (" + res.status + ")", m, { where: endpointOf(request) }); }
     return res;
   },

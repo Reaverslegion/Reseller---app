@@ -33,6 +33,8 @@ await t("postage not known is never counted as £0 when judging (a careful allow
   assert.ok(W.POST_ALLOW >= 5);
   assert.match(app, /postage calculated by eBay · \$\{gbp\(d\.ship\)\} allowed/); assert.match(app, /postage not stated · \$\{gbp\(d\.ship\)\} allowed/);
   assert.match(app, /postage allowed for, not known/);
+  // the help text must not promise the allowance is enough (heavier parcels often cost more than £5)
+  assert.doesNotMatch(app, /so the profit isn't overstated/); assert.match(app, /the real profit can be lower than shown/);
 });
 // an auction deal as the Scan service stores it (bid £120, postage £6.50, private seller, buyer fee on)
 const auction = () => { const fee = W.bpf, med = 256.99, out = 5.99, price = 120, ship = 6.5, maxBid = 214.56;

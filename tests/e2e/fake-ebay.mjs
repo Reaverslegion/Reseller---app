@@ -10,6 +10,7 @@ import fs from "node:fs";
 const LOG = process.env.FAKE_EBAY_LOG || "fake-ebay.log";
 const PORT = +(process.env.FAKE_EBAY_PORT || 8788), SOLD_PORT = +(process.env.FAKE_SOLD_PORT || 8790);
 const items = new Map();
+let mode = "normal"; // misbehaviour switch for tests (see /__fake/mode)
 let search = []; // listings the fake eBay search returns (set by tests with POST /__fake/search)
 const send = (res, code, body) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
 const log = (o) => fs.appendFileSync(LOG, JSON.stringify({ at: Date.now(), ...o }) + "\n");
@@ -33,6 +34,13 @@ http.createServer((req, res) => {
     log({ port: PORT, method: req.method, path: u.pathname, query: u.search });
     if (u.pathname === "/__fake/items" && req.method === "POST") { for (const it of JSON.parse(body || "[]")) items.set(String(it.legacyItemId), it); return send(res, 200, { ok: true, n: items.size }); }
     if (u.pathname === "/__fake/items" && req.method === "DELETE") { items.clear(); return send(res, 200, { ok: true }); }
+    // TEST CONTROL: make the fake eBay misbehave for its Browse API answers (POST /__fake/mode {"mode": "429"|"500"|"garbage"|"slow"|"normal"})
+    if (u.pathname === "/__fake/mode" && req.method === "POST") { mode = (JSON.parse(body || "{}").mode) || "normal"; return send(res, 200, { mode }); }
+    if (mode !== "normal" && u.pathname.includes("/buy/browse/")) {
+      if (mode === "429") { res.writeHead(429, { "content-type": "application/json", "retry-after": "60" }); return res.end(JSON.stringify({ errors: [{ errorId: 2001, message: "Too many requests (fake eBay)" }] })); }
+      if (mode === "500") return send(res, 500, { errors: [{ errorId: 10001, message: "System error (fake eBay)" }] });
+      if (mode === "garbage") { res.writeHead(200, { "content-type": "application/json" }); return res.end("{\"itemSummaries\": [{\"title\": "); }
+    }
     if (u.pathname.includes("/oauth2/token") || u.pathname.includes("/identity/v1/oauth2")) return send(res, 200, { access_token: "fake-token", expires_in: 7200, token_type: "Bearer" });
     if (u.pathname === "/__fake/search" && req.method === "POST") { search = JSON.parse(body || "[]"); for (const it of search) items.set(String(it.legacyItemId), it); return send(res, 200, { ok: true, n: search.length }); }
     if (u.pathname.includes("/buy/browse/v1/item_summary/search")) {

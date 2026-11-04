@@ -9,6 +9,10 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      part:
+        description: "Emulator part to run: all, journeys or integrity"
+        default: all
 permissions:
   contents: read
 concurrency:
@@ -168,7 +172,7 @@ jobs:
           disk-size: 4096M
           ram-size: 3072M
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -no-metrics
-          script: APK=apk/app-debug.apk bash tests/android/run-all.sh
+          script: APK=apk/app-debug.apk PART=${{ inputs.part || 'all' }} bash tests/android/run-all.sh
       - name: Small copies of the screenshots (readable from the log)
         if: always()
         run: |

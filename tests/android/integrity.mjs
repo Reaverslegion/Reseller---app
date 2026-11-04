@@ -26,13 +26,16 @@ const drv = {
 
 // a clean app, set up through its own screens the way a new user would
 const ready = await R.journey("Android emulator", "Stage 3 set-up (clean app)", async (step) => {
-  await step("app data cleared and app opened", async () => { try { sh(`pm clear ${PKG}`); } catch (e) {} try { sh(`pm grant ${PKG} android.permission.POST_NOTIFICATIONS`); } catch (e) {}
+  await step("app data cleared and app opened", async () => { if (!sh("pm list packages").includes(PKG)) app.install(process.env.APK || "apk/app-debug.apk");
+    try { sh(`pm clear ${PKG}`); } catch (e) {} try { sh(`pm grant ${PKG} android.permission.POST_NOTIFICATIONS`); } catch (e) {}
     await app.launch(); await app.waitFor(`typeof render==="function"`, 30000, "the app"); });
   await step("welcome guide", async () => { await app.waitText("Your 24/7 bargain hunter", 20000); for (let i = 0; i < 3; i++) await app.tap({ text: "Next", exact: true });
     await app.tap("Private seller"); await app.tap("Start using FlipScout"); });
   await step("connect to the test Scan service", async () => { await app.tap("Connect now"); await app.waitFor(`!!document.getElementById("s_url")`, 8000, "address box");
     await app.fill({ sel: "#s_url" }, `http://localhost:8787#${KEY}`);
-    await app.waitFor(`(()=>{try{return JSON.parse(localStorage.getItem("resell_helper_v1")).set.key.length===48}catch(e){return false}})()`, 8000, "connection saved"); });
+    await app.waitFor(`(()=>{try{return JSON.parse(localStorage.getItem("resell_helper_v1")).set.key.length===48}catch(e){return false}})()`, 8000, "connection saved");
+    // a fresh install that connects to a Scan service with a cloud backup is offered a restore (correct): keep this app clean
+    await sleep(3000); if (/Restore your data\?/.test(await app.text())) { await app.tap({ text: "Not now", exact: true }); await sleep(800); } });
   await step("popular categories", async () => { await tabs(0); await app.waitText("Pick what to hunt", 15000); await app.tap("Start with popular categories"); await app.waitText("Added \\d+ popular categor", 15000); });
   await step("admin tools on (for Scan now)", async () => { await tabs(2); const p = await app.locate({ text: "FlipScout version", sel: "div[onclick]" });
     for (let i = 0; i < 7; i++) { await app.tapXY(p.x, p.y); await sleep(150); } await app.waitText("Admin tools on", 6000); await tabs(0); });

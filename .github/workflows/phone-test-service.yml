@@ -149,6 +149,14 @@ jobs:
           pip install -q pyyaml
           python3 tests/ci/live-build-steps.py
           mv FlipScout.apk FlipScout-TEST.apk
+          # read the finished APK itself: refuse to continue unless the lock to the test service and the TEST label are inside it
+          unzip -p FlipScout-TEST.apk assets/public/index.html > apk-page.html
+          test "$(grep -c 'url=TEST_SVC;key=TEST_KEY;' apk-page.html)" = 1 || { echo "REFUSED: the lock to the test service is not inside the APK"; exit 1; }
+          grep -q "const TEST_SVC=\"$TEST_SVC_URL\"" apk-page.html || { echo "REFUSED: the APK is not locked to the test service address"; exit 1; }
+          grep -q 'VER="2.0.[0-9]*-TEST"' apk-page.html && grep -q "TEST BUILD" apk-page.html || { echo "REFUSED: TEST label missing inside the APK"; exit 1; }
+          ! grep -q "google-services\|flipscout-search" apk-page.html || { echo "REFUSED: live names found in the APK page"; exit 1; }
+          unzip -l FlipScout-TEST.apk | grep -q google-services && { echo "REFUSED: Firebase file inside the TEST APK"; exit 1; } || true
+          rm apk-page.html; echo "Checked inside the APK: locked to the test service, TEST label present"
           AAPT=$(ls $ANDROID_HOME/build-tools/*/aapt2 | sort -V | tail -1); B=$($AAPT dump badging FlipScout-TEST.apk)
           P=$(echo "$B" | grep -o "package: name='[^']*'" | cut -d"'" -f2); V=$(echo "$B" | grep -o "versionName='[^']*'" | cut -d"'" -f2); L=$(echo "$B" | grep -o "application-label:'[^']*'" | cut -d"'" -f2)
           SUM=$(sha256sum FlipScout-TEST.apk | cut -d' ' -f1)

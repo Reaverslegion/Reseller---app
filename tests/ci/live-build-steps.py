@@ -48,6 +48,11 @@ for s in steps:
             sys.exit(f"Step {s['name']} uses a GitHub value this script doesn't fill in")
         print(f"::group::{s['name']}", flush=True)
         subprocess.run(["bash", "-e", "-o", "pipefail", "-c", script], check=True, env=env)
+        if os.environ.get("PHONE_TEST") and s.get("name") == "Version number":
+            g = "android/app/build.gradle"; t = open(g).read()
+            t, k = re.subn(r'versionName "(2\.0\.\d+)"', r'versionName "\1-TEST"', t)
+            if k != 1: sys.exit("PHONE TEST: versionName not found; update live-build-steps.py")
+            open(g, "w").write(t); print("PHONE TEST: Android version name ends in -TEST (shown in the phone's App info)", flush=True)
         if os.environ.get("PHONE_TEST") and s.get("name") == "Prepare app":
             # a clear "TEST" label on every screen and in the version, so it can't be mistaken for the real app
             f = "www/index.html"; h = open(f).read()
@@ -65,6 +70,12 @@ for s in steps:
             old2 = 'let S=load(),'
             if h.count(old2) != 1: sys.exit("PHONE TEST: S=load() not found exactly once; update live-build-steps.py")
             h = h.replace(old2, f'const TEST_SVC={json.dumps(tu)},TEST_KEY={json.dumps(tk)};let S=load();S.set.url=TEST_SVC;S.set.key=TEST_KEY;S.set.admin=true;let ', 1)
-            open(f, "w").write(h); print(f"PHONE TEST: TEST label added (version changed: {k}); locked to the test service {tu}", flush=True)
+            open(f, "w").write(h)
+            # the app files were already copied into the Android project by "npx cap sync" above, so copy the changed page there too
+            pub = "android/app/src/main/assets/public/index.html"
+            if not os.path.exists(pub): sys.exit("PHONE TEST: Android copy of the page not found; refusing to build an unlocked TEST app")
+            open(pub, "w").write(h)
+            if open(pub).read().count("url=TEST_SVC;key=TEST_KEY;") != 1: sys.exit("PHONE TEST: lock not in the Android copy; refusing")
+            print(f"PHONE TEST: TEST label added (version changed: {k}); locked to the test service {tu}", flush=True)
         print("::endgroup::", flush=True)
 print("Test app built with the live build steps")

@@ -20,8 +20,10 @@ await R.journey(AREA, "Your real app (stand-in) with its data", async (step) => 
   await step("stand-in real app installed and holding a data marker", async () => {
     try { adb("uninstall", TPKG); } catch (e) {} real.install(process.env.REAL_APK); await open(real);
     await real.eval(`localStorage.setItem("flipscout_seen_v2","1");S.items.push({id:1,name:${JSON.stringify(MARK)},cost:1,status:"Listed"});S.set.url="https://real-scan-service.invalid";S.set.key="real-key-stand-in";save();1`);
-    await real.stop(); await open(real);
-    add("the stand-in real app keeps its data marker after reopening", (await real.eval(`JSON.stringify(S.items)`)).includes(MARK)); await real.stop();
+    // give Android time to write the page's storage to disk before the forced close (as a phone does when you leave the app)
+    sh("input keyevent KEYCODE_HOME"); await sleep(8000); await real.stop(); await open(real);
+    add("the stand-in real app keeps its data marker after reopening", (await real.eval(`JSON.stringify(S.items)`)).includes(MARK));
+    sh("input keyevent KEYCODE_HOME"); await sleep(3000);
   });
 });
 R.app = test;

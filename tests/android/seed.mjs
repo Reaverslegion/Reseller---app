@@ -10,7 +10,9 @@ async function post(url, body) {
   return d;
 }
 export const query = async (q, args = []) => (await post(SVC + "/?__testquery=1", { q, args })).rows;
-export const runSql = (sql, kv) => post(SVC + "/?__testseed=1", { sql, kv });
+export const runSql = (sql, kv, ensure) => post(SVC + "/?__testseed=1", { sql, kv, ensure });
+// add the extra price-book columns a first Fill normally creates (so the sales list can be tested before any Fill)
+export const ensureFillColumns = () => runSql([], null, true);
 
 const GPU = [["NVIDIA GeForce RTX 3070 8GB Founders Edition", "gpu:rtx 3070", 255], ["MSI GeForce RTX 3060 Ventus 12GB", "gpu:rtx 3060", 185],
   ["Sapphire Pulse Radeon RX 6700 XT 12GB", "gpu:rx 6700 xt", 220], ["ASUS Dual GeForce RTX 4060 8GB OC", "gpu:rtx 4060", 230],

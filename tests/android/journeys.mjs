@@ -3,11 +3,12 @@
 // Run (inside the emulator job): APK=app.apk TEST_APP_KEY=... node tests/android/journeys.mjs
 import fs from "node:fs";
 import { App, Results, sleep, sh, adb } from "./driver.mjs";
-import { makeDeals, seedDeals, query } from "./seed.mjs";
+import { makeDeals, seedDeals, query, ensureFillColumns } from "./seed.mjs";
 
 const KEY = process.env.TEST_APP_KEY, APK = process.env.APK || "app-debug.apk";
 const CHAOS = (m, ms) => fetch(`http://127.0.0.1:8791/${m === "reset" ? "reset" : m === "stats" ? "stats" : "mode?m=" + m + (ms ? "&ms=" + ms : "")}`).then((r) => r.json());
 const app = new App("screenshots"), R = new Results(app);
+app.beforeJourney = () => CHAOS("normal");   // every journey starts with a normal connection
 // "the app has stopped loading": no new request to the test Scan service for 3 seconds
 app.netQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 30; i++) { let n = 0; try { n = Object.values((await CHAOS("stats")).stats).reduce((a, b) => a + b, 0); } catch (e) { return; }
   if (n === last) { if (++same >= 3) return; } else { same = 0; last = n; } await sleep(1000); } };
@@ -66,7 +67,7 @@ await J("Deals list", async (step) => {
     await app.waitFor(`/\\d+ deals?/.test(document.getElementById("app").innerText)&&!!document.querySelector(".dcard")`, 30000, "the deal cards"); await app.shot("deals list"); });
   await step("deal cards show titles, prices and profit", async () => { const t = await app.text(); ok(/\(test \d+\)/.test(t), "no deal titles"); ok(/profit/i.test(t) && /[+−-]£\d/.test(t), "no profit figures"); ok(/£\d/.test(t), "no prices"); });
   await step("nothing on screen says undefined / NaN / null (deals with missing details)", async () => { const t = await app.text(); ok(!/\bundefined\b|\bNaN\b|\bnull\b/.test(t), "found: " + (t.match(/.{0,30}(undefined|NaN|null).{0,30}/) || [])[0]); });
-  await step("sort menu opens and sorting by Most profit works", async () => { await app.tap({ sel: "#ds" }); await app.waitFor(`document.getElementById("pick").style.display==="block"`, 5000, "sort choices"); await app.shot("sort choices");
+  await step("sort menu opens and sorting by Most profit works", async () => { await app.tap({ sel: "#ds" }); await app.waitFor(`document.getElementById("pick").style.display==="block"`, 5000, "sort choices"); await sleep(1500); await app.shot("sort choices");
     await app.tap({ text: "Most profit" }); await app.waitFor(`/Most profit/.test(document.getElementById("ds").selectedOptions[0].text)`, 5000, "sorted by profit"); });
 });
 
@@ -80,7 +81,15 @@ await J("Deal details", async (step) => {
     await app.back(); await app.waitFor(`!!document.querySelector(".dcard")`, 6000, "the deals list"); ok(app.alive(), "Back closed the app"); });
 });
 
+await U("Sales list on a database that has never been filled", async (step) => {
+  await step("'From 24 sales ›' opens without an error before any Fill has been done", async () => { await app.tap({ text: "From 24 sales" }); await app.waitText("Sales behind this price");
+    await app.waitFor(`/Sells for about|Couldn't load/.test(document.getElementById("sheet").innerText)`, 25000, "the sales list or an error"); await app.shot("sales list fresh database");
+    const t = await app.eval(`document.getElementById("sheet").innerText`); await app.back();
+    ok(!/Couldn't load/.test(t), "APP FINDING: on a database where Fill has never run, the sales list fails: " + (t.match(/Couldn't load[^\n]*/) || [""])[0]); });
+});
+
 await J("Sales list (From N sales ›)", async (step) => {
+  await step("(test set-up) add the price-book columns a first Fill creates", ensureFillColumns);
   await step("'From 24 sales ›' opens the sales behind the price", async () => { await app.tap({ text: "From 24 sales" }); await app.waitText("Sales behind this price");
     await app.waitFor(`/Sells for about/.test(document.getElementById("sheet").innerText)`, 25000, "the sales list loaded"); await app.shot("sales list"); });
   await step("it lists the sales with prices and dates", async () => { const n = await app.eval(`document.querySelectorAll("#sheet a.li").length`); ok(n >= 20, `only ${n} sales listed (24 expected)`); });

@@ -170,9 +170,13 @@ export class App {
   // watches). If the screen had shifted (e.g. the keyboard pushed it up), correct the position and tap once more.
   async tap(spec, c) { if (typeof spec === "string") spec = { text: spec }; c = c || this.main;
     const p = await this.locate(spec, c);
-    await this.eval(`(()=>{window.__lt=null;addEventListener("pointerdown",e=>{window.__lt={x:e.clientX,y:e.clientY}},{capture:true,once:true,passive:true});return 1})()`, c).catch(() => {});
+    const mark = String(Math.random());
+    await this.eval(`(()=>{window.__lt=null;window.__tm=${JSON.stringify(mark)};addEventListener("pointerdown",e=>{window.__lt={x:e.clientX,y:e.clientY}},{capture:true,once:true,passive:true});return 1})()`, c).catch(() => {});
     await this.tapXY(p.x, p.y); await sleep(150);
-    let lt = await this.eval("window.__lt", c).catch(() => null), b = this.cal && this.cal.get(c);
+    // if the tap opened a new page (the marker is gone), it clearly arrived: never tap again
+    const st = await this.eval("({lt:window.__lt,same:window.__tm===" + JSON.stringify(mark) + "})", c).catch(() => ({ lt: null, same: false }));
+    let lt = st.lt, b = this.cal && this.cal.get(c);
+    if (!st.same) { await sleep(spec.wait ?? 700); return p; }
     if (!lt && !spec._again) { // the touch never reached the app (e.g. the keyboard was over it): close the keyboard, try again
       this.missed = (this.missed || 0) + 1; await this.hideKeyboard(c); await sleep(500); return this.tap({ ...spec, _again: true }, c); }
     if (lt && b) { const off = Math.hypot(lt.x - p.px, lt.y - p.py);
@@ -188,7 +192,11 @@ export class Results {
   async journey(area, name, fn) {
     const app = this.app, logAt = app.logSize(), errAt = app.jsErrors.length; app.phase = name;
     // start each journey from a clean screen: close a list or picker left open by an earlier journey (phone's Back button)
-    try { await app.unblock(); await app.hideKeyboard();
+    try { await app.unblock(); if (app.beforeJourney) await app.beforeJourney();
+      // the in-app browser (Fill) left open on top of the app: close it with its own Done button
+      for (let i = 0; i < 2; i++) { let f = ""; try { f = sh("dumpsys window | grep mCurrentFocus"); } catch (e) {} if (!/InAppBrowser|cordova/i.test(f)) break;
+        const d = app.nativeButton("Done"); if (d) await app.tapXY(d.x, d.y); else await app.back(); await sleep(2000); }
+      await app.hideKeyboard();
       for (let i = 0; i < 2 && await app.eval(`document.getElementById("sheet").classList.contains("on")||document.getElementById("pick").style.display==="block"`); i++) { await app.back(); await sleep(600); } } catch (e) {}
     let failed = null, steps = 0, passed = 0;
     const step = async (what, f) => {

@@ -21,7 +21,7 @@ for (const h of hosts) src = src.split(h).join(FAKE + "/" + h.slice(8));
 // test database so tests can compare what the app shows with what is stored. Still need the test key.
 const HOOK = "    const huntCall = [";
 if (src.split(HOOK).length !== 2) { console.error("REFUSED: couldn't find where to add the test-only endpoints"); process.exit(1); }
-src = src.replace(HOOK, `    if (P("__testseed") && request.method === "POST") { await schema(env); const b = JSON.parse(await request.text());
+src = src.replace(HOOK, `    if (P("__testseed") && request.method === "POST") { await schema(env); const b = JSON.parse(await request.text()); if (b.ensure) await ensureSrc(env);
       for (const s of b.sql || []) await env.DB.prepare(s[0]).bind(...(s[1] || [])).run();
       for (const [k, v] of Object.entries(b.kv || {})) await kvSet(env, k, v);
       return json({ ok: true, ran: (b.sql || []).length }); }

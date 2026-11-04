@@ -3,6 +3,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+# the GitHub token here can only read the code (it never needs to change the repository)
+permissions:
+  contents: read
 jobs:
   build:
     # safety lock: only ever runs for main, so untested branches can never reach the live service or your phone build

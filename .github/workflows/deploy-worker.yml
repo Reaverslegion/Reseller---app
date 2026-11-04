@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
     paths: [worker.js, .github/workflows/deploy-worker.yml]
+# the GitHub token here can only read the code (it never needs to change the repository)
+permissions:
+  contents: read
 jobs:
   deploy:
     # safety lock: only ever runs for main, so untested branches can never reach the live service or your phone build

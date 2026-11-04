@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import { App, Results, sleep, sh, adb, PKG } from "./driver.mjs";
 import { runAudit } from "../integrity/audit.mjs";
+import { runStage4 } from "../stage4/app-checks.mjs";
 
 const KEY = process.env.TEST_APP_KEY;
 const CHAOS = (m) => fetch(`http://127.0.0.1:8791/mode?m=${m}`).then((r) => r.json()).catch(() => null);
@@ -45,7 +46,9 @@ const ready = await R.journey("Android emulator", "Stage 3 set-up (clean app)", 
     for (let i = 0; i < 7; i++) { await app.tapXY(p.x, p.y); await sleep(150); } await app.waitText("Admin tools on", 6000); await tabs(0); });
 });
 let log = [];
-if (ready) log = await runAudit(drv, R);
+if (ready && process.env.PART !== "stage4") log = await runAudit(drv, R);
+// Stage 4 (monitoring, harmful data, accessibility, speed, phone conditions, backup) on the same virtual phone
+if (ready && process.env.PART !== "integrity") await runStage4(drv, R, { sh, app, pkg: PKG, chaos: CHAOS });
 try { app.logcat && app.logcat.kill(); } catch (e) {}
 fs.writeFileSync("results/integrity.json", JSON.stringify(R.rows, null, 1));
 const c = (s) => R.rows.filter((r) => r.status === s).length;

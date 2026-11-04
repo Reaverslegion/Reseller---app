@@ -49,6 +49,8 @@ main{padding:4px 14px 14px;max-width:680px;margin:auto}
 h2{font-size:20px;margin:6px 4px 12px}
 .pt{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;flex:none;width:40px;height:40px;border:3px solid;border-radius:50%;font-weight:800;font-size:14px;line-height:1;background:var(--card)}.pt small{font-size:9px;font-weight:700;opacity:.8;margin-top:1px}
 .newb{display:inline-block;vertical-align:2px;background:var(--ac);color:var(--onbtn);font-size:11px;font-weight:800;letter-spacing:.04em;padding:2px 7px;border-radius:99px!important}.newtx{color:var(--ac)}
+/* cards off the screen aren't laid out or drawn until you scroll near them (every card is still in the list) */
+.dcard{content-visibility:auto;contain-intrinsic-size:auto 470px}
 .dcard .dhead{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px 8px;padding:7px 10px;border-radius:10px 10px 0 0!important}
 .dcard .dbody{background:var(--card);padding:12px 14px;border-radius:0 0 10px 10px!important}
 .dcard .pill{display:inline-block;background:rgba(0,0,0,.7);padding:4px 11px;font-weight:800;font-size:14px;line-height:1.25;white-space:nowrap}
@@ -115,7 +117,7 @@ button:disabled{opacity:.55}
 .chip{display:inline-block;font-size:13px;font-weight:700;padding:3px 10px;border-radius:99px;background:var(--card2);color:var(--mu);border:1px solid var(--bd)}
 .chip.ok{background:var(--okbg);color:var(--ok);border-color:transparent}.chip.bad{background:var(--badbg);color:var(--bad);border-color:transparent}.chip.warn{background:var(--warnbg);color:var(--warn);border-color:transparent}
 .li{display:flex;gap:8px;margin:7px 0;font-size:15px}
-.tip{display:inline-grid;place-items:center;width:22px;height:22px;min-height:0;padding:0;margin:0 0 0 4px;border-radius:50%;background:var(--card2);color:var(--mu);border:1px solid var(--bd);font-size:13px;font-weight:800;vertical-align:middle}
+.tip{display:inline-grid;place-items:center;width:26px;height:26px;min-height:0;padding:0;margin:0 0 0 4px;border-radius:50%;background:var(--card2);color:var(--mu);border:1px solid var(--bd);font-size:13px;font-weight:800;vertical-align:middle}
 details summary{cursor:pointer;color:var(--ac);font-weight:700;padding:10px 0;min-height:44px;list-style:none}
 details summary::-webkit-details-marker{display:none}
 nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--nav);border-top:1px solid var(--navbd);padding-bottom:env(safe-area-inset-bottom);z-index:5}
@@ -242,9 +244,11 @@ function loadDraft(){try{return{...BLANK,...JSON.parse(localStorage.getItem(DKEY
 function saveDraft(){try{localStorage.setItem(DKEY,JSON.stringify(F))}catch(e){}}
 
 /* ---------- helpers ---------- */
-const gbp=n=>(n<0?"-£":"£")+Math.abs(+n||0).toLocaleString("en-GB",{minimumFractionDigits:2,maximumFractionDigits:2});
+// one shared number formatter each (making a new one for every £ figure took ~0.7 s for 1,500 deal cards on a phone)
+const NF2=new Intl.NumberFormat("en-GB",{minimumFractionDigits:2,maximumFractionDigits:2}),NF0=new Intl.NumberFormat("en-GB");
+const gbp=n=>(n<0?"-£":"£")+NF2.format(Math.abs(+n||0));
 // estimates (what it sells for) in whole pounds: pence would suggest more precision than there is
-const gbp0=n=>(n<0?"-£":"£")+Math.round(Math.abs(+n||0)).toLocaleString("en-GB");
+const gbp0=n=>(n<0?"-£":"£")+NF0.format(Math.round(Math.abs(+n||0)));
 // a money figure that may be missing: says "Unknown" (or the word given) instead of a made-up £0.00
 const known=n=>n!=null&&n!==""&&Number.isFinite(+n),gbpK=(n,w="Unknown")=>known(n)?gbp(n):w,gbp0K=(n,w="Not available")=>known(n)?gbp0(n):w;
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -253,7 +257,8 @@ const $=id=>document.getElementById(id);
 const today=()=>new Date().toISOString().slice(0,10);
 const median=a=>{const s=[...a].sort((x,y)=>x-y),m=s.length>>1;return s.length%2?s[m]:(s[m-1]+s[m])/2};
 const pct=(a,p)=>{const s=[...a].sort((x,y)=>x-y),i=(s.length-1)*p,l=Math.floor(i),h=Math.ceil(i);return s[l]+(s[h]-s[l])*(i-l)};
-const ukUrl=u=>String(u||"").replace(/\/\/(www\.)?ebay\.com\/itm\//,"//www.ebay.co.uk/itm/");
+// only real web addresses become links (a link saved in a backup or typed in can't run code in the app)
+const ukUrl=u=>{u=String(u||"").trim();return/^https?:\/\//i.test(u)?u.replace(/\/\/(www\.)?ebay\.com\/itm\//,"//www.ebay.co.uk/itm/"):"#"};
 const fee=x=>{const r=S.rules;if(r.seller==="private")return 0;return x*r.feePct/100+(x>10?r.feeFixed:Math.min(r.feeFixed,0.30))};
 const MON={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
 
@@ -379,7 +384,7 @@ function ebayConnect(){const IAB=window.cordova&&window.cordova.InAppBrowser;if(
      .catch(err=>{toast("Couldn't connect: "+errText(err));EBC=null;render()})};
   w.addEventListener("loadstart",grab);w.addEventListener("loadstop",grab)}
 let SPDCHK=null;async function loadFillStats(){try{const a=await api("fillstats=1");ADMS=a.stats||{};SPDCHK=a.speedCheck||null}catch(e){ADMS=ADMS||{}}if(tab==="admin")render()}
-const fmtN=n=>Number(n||0).toLocaleString("en-GB");
+const fmtN=n=>NF0.format(Number(n||0));
 function fillPicked(){if(!CAT.a||!CT||!CT[CAT.a]){toast('Pick a category first.');return}fillCat({id:CAT.a,name:CT[CAT.a].n})}
 function vAdmin(){if(!S.set.admin)return`<div class="card">Admin tools are off.</div>`;setTimeout(()=>{CAT.a=CAT.a||"";drawCat("a")},0);
   if(ADMS===null&&connected()){ADMS={};loadFillStats()}
@@ -396,6 +401,7 @@ function vAdmin(){if(!S.set.admin)return`<div class="card">Admin tools are off.<
    <div style="margin-top:8px;font-weight:700">${SPDCHK&&SPDCHK.n?`${fmtN(SPDCHK.hit)} of ${fmtN(SPDCHK.n)} checks held up (${Math.round(SPDCHK.hit/SPDCHK.n*100)}%)`:"No checks yet"}</div>
    <div class="mu" style="font-size:13px">${!SPDCHK||SPDCHK.n<30?"Too few checks to judge yet: refill categories a few days apart to build this up (30+ checks).":"Enough checks to trust this figure."}</div></div>
   ${ebayCard()}
+  ${problemsCard()}
   <div class="card"><b>Fill prices for a whole category</b><div class="mu">Opens eBay's sold listings for the category, newest first. Tap Next page as often as you like, then Save all. FlipScout sorts them into models and saves each one with 5+ sales.<br><b>New sales</b> starts at page 1 and tells you when you reach sales you already have. <b>Page…</b> lets you pick any page.</div>
    ${ADMC.map((c,i)=>{const f=fillPg(c.id);return`<div class="li" style="padding:8px 0;flex-wrap:wrap;gap:6px"><span style="flex:1;min-width:0">${esc(c.name)}${(()=>{const t=ADMS&&ADMS[c.id];return t&&t.sales?`<div style="font-size:14px;font-weight:700">${fmtN(t.sales)} sales saved · ${fmtN(t.models)} model${t.models===1?"":"s"} priced</div>`:""})()}${f?`<div class="mu" style="font-size:13px">Read up to page ${f.pg}, ${ago(f.at)}</div>`:""}</span>
     <span style="display:flex;gap:6px;flex:none;align-self:center;align-items:center">${f?`<button class="s sm" onclick="fillPageSheet(${i})">Page…</button><button class="sm" onclick="fillCat(ADMC[${i}])">New sales</button>`:`<button class="s sm" onclick="fillCat(ADMC[${i}])">Fill</button>`}</span></div>`}).join("")}
@@ -455,9 +461,12 @@ function applyTheme(){
 try{matchMedia("(prefers-color-scheme: dark)").addEventListener("change",applyTheme)}catch(e){}
 
 // remembers how far down each page you were, so Back returns you to the same spot (e.g. the deal you opened)
-const SCROLLS={};
+const SCROLLS={},ANCH={};
 function render(){
-  if(render.last&&tab!==render.last)SCROLLS[render.last]=window.scrollY;
+  // remember which deal card was at the top too: off-screen cards are only drawn when needed (for speed), so a saved
+  // pixel position alone can land on the wrong card when you come back
+  if(render.last&&tab!==render.last){SCROLLS[render.last]=window.scrollY;const c=[...document.querySelectorAll(".dcard[data-id]")].find(c=>c.getBoundingClientRect().bottom>70);
+    ANCH[render.last]=c&&window.scrollY>0?{id:c.dataset.id,top:c.getBoundingClientRect().top}:null}
   applyTheme();
   const sub=["settings","deal","cats","admin","plist"].includes(tab);
   // settings now lives in the bottom bar (Menu); the top button is only a Back button on pages opened from somewhere else
@@ -467,7 +476,9 @@ function render(){
   $("nav").innerHTML=TABS.map(t=>`<button class="${tab===t[0]||(t[0]==="settings"&&menuOn)?"on":""}" onclick="go('${t[0]}')" aria-label="${t[1]}"><span class="pill">${I[t[2]]}</span>${t[1]}</button>`).join("");
   $("app").innerHTML=({calc:vCalc,deals:vHunt,follow:vFollow,cats:vCats,deal:vDeal,book:vBook,stock:vStock,dash:vDash,settings:vSettings,admin:vAdmin,plist:vPList,scan:vScan,saved:vDeals})[tab]();
   if(tab==="calc")recalc();
-  if(tab!==render.last){const y=render.restore?SCROLLS[tab]||0:0;window.scrollTo(0,y);if(y)requestAnimationFrame(()=>window.scrollTo(0,y));render.last=tab}
+  if(tab!==render.last){const y=render.restore?SCROLLS[tab]||0:0,a=render.restore&&ANCH[tab];window.scrollTo(0,y);
+    const back=()=>{const c=a&&[...document.querySelectorAll(".dcard[data-id]")].find(c=>c.dataset.id===a.id);if(c)window.scrollBy(0,c.getBoundingClientRect().top-a.top);else if(y)window.scrollTo(0,y)};
+    if(y||a){back();requestAnimationFrame(()=>{back();requestAnimationFrame(back)})}render.last=tab}
   render.restore=false;
 }
 
@@ -849,6 +860,33 @@ let HD={cat:(()=>{try{const v=localStorage.getItem("flipscout_dcat")||"";return/
 const H=()=>{S.hunt={...HDEF,...(S.hunt||{}),types:{...HDEF.types,...((S.hunt||{}).types||{})}};return S.hunt};
 // Cloudflare's database has brief hiccups ("D1_ERROR … internal error"): try once more before showing an error
 const api=(q,body)=>api1(q,body).catch(e=>/D1_ERROR|internal error|reset/i.test(String(e&&e.message))?new Promise(r=>setTimeout(r,1500)).then(()=>api1(q,body)):Promise.reject(e));
+/* ---------- problem reports (Stage 4, 4 Nov 2026) ----------
+   Crashes and serious errors in the app, and repeated failures to load deals or sales, are sent to YOUR Scan service's
+   problem log (Menu › Admin tools › Problems) — no outside company. Messages are cleaned first: no keys, tokens, e-mail
+   addresses or web-address details. Reports wait on the phone (up to 20) while there's no connection. */
+const PRB="flipscout_problems";let prbN=0,prbBusy=false;
+const cleanMsg=s=>String(s==null?"":s).replace(/((?:^|[?&\s,;:"'({])(?:key|token|code|access_token|refresh_token|sig|password|passwd|pwd|secret|api_?key|auth)["']?\s*[=:]\s*["']?)[^&\s"',;)}]+/gi,"$1[hidden]")
+  .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=-]+/gi,"$1 [hidden]").replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,"[email]")
+  .replace(/https?:\/\/[^\s"'<>]+/g,u=>u.split(/[?#]/)[0]).replace(/[A-Za-z0-9_+\/=-]{24,}/g,"[hidden]").replace(/\s+/g," ").trim().slice(0,300);
+function report(kind,msg,where){try{if(prbN++>=20)return;const r={kind:String(kind).slice(0,40),msg:cleanMsg(msg),where:cleanMsg(where||(typeof tab!=="undefined"?tab:"")).slice(0,80),ver:VER,
+    ua:(navigator.userAgent.match(/Android [\d.]+|Chrome\/\d+/g)||[]).join(" ")};
+  let q=[];try{q=JSON.parse(localStorage.getItem(PRB)||"[]")}catch(e){}q.push(r);localStorage.setItem(PRB,JSON.stringify(q.slice(-20)));setTimeout(flushProblems,0)}catch(e){}}
+// the waiting list is read again before each send, so a problem noted while another is being sent isn't lost
+async function flushProblems(){if(prbBusy||!connected())return;prbBusy=true;const rd=()=>{try{return JSON.parse(localStorage.getItem(PRB)||"[]")}catch(e){return[]}};
+  try{for(let i=0;i<25;i++){const q=rd();if(!q.length)break;const one=JSON.stringify(q[0]);
+    const r=await kfetch(S.set.url,S.set.key,"report=1",{method:"POST",headers:{"Content-Type":"text/plain"},body:one}).catch(()=>null);
+    if(!r||!(r.ok||r.status===400))break;const q2=rd(),k=q2.findIndex(x=>JSON.stringify(x)===one);if(k>=0)q2.splice(k,1);localStorage.setItem(PRB,JSON.stringify(q2))}}finally{prbBusy=false}}
+window.addEventListener("error",e=>report("crash",(e.message||"script error")+(e.filename?" @"+String(e.filename).split("/").pop()+":"+e.lineno:"")));
+window.addEventListener("unhandledrejection",e=>report("crash",(e.reason&&(e.reason.message||e.reason))||"unhandled promise rejection"));
+// the app closing without going to the background first (a crash, or Android/the user stopping it) is noted next time
+try{if(localStorage.getItem("flipscout_running")==="1")setTimeout(()=>report("unclean-exit","the app closed last time without going to the background first (crash or forced stop)","start"),3000);localStorage.setItem("flipscout_running","1")}catch(e){}
+document.addEventListener("visibilitychange",()=>{try{localStorage.setItem("flipscout_running",document.hidden?"0":"1")}catch(e){}});
+let PROB=null;async function loadProblems(){try{PROB=(await api("problems=1")).problems||[]}catch(e){PROB={err:errText(e)}}if(tab==="admin")render()}
+function problemsCard(){if(PROB===null&&connected()){PROB=undefined;setTimeout(loadProblems,0)}const P=Array.isArray(PROB)?PROB:[],src={app:"App",service:"Scan service",database:"Database",job:"Background scan"};
+  return`<div class="card"><b>Problems</b><div class="mu">Crashes and errors in the app and the Scan service, newest first. Kept on your Scan service only; no keys or personal details are recorded.</div>
+   ${PROB&&PROB.err?`<div class="warn" style="margin-top:8px">Couldn't load: ${esc(PROB.err)}</div>`:P.length?P.slice(0,20).map(x=>`<div class="li" style="padding:7px 0;font-size:14px;align-items:flex-start"><span style="flex:1;min-width:0"><b>${esc(src[x.src]||x.src)} · ${esc(x.kind)}</b>${x.place?` <span class="mu">(${esc(x.place)})</span>`:""}<br><span class="mu">${esc(x.msg)}</span><br><span class="mu" style="font-size:12px">${x.n>1?`${fmtN(x.n)} times · `:""}last ${ago(x.at)}${x.ver?` · ${esc(x.ver)}`:""}</span></span></div>`).join(""):`<div style="margin-top:8px">${PROB===undefined?"Loading…":"No problems recorded."}</div>`}
+   <div class="btns"><button class="s" onclick="PROB=null;render()">Refresh</button></div></div>`}
+
 const api1=(q,body)=>kfetch(S.set.url,S.set.key,q,body!==undefined?{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(body)}:{}).then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok||d.error)throw new Error(d.error||("error "+r.status));return d});
 const errText=e=>e.message==="Failed to fetch"?"no connection":e.message;
 let pcT=null;
@@ -858,7 +896,7 @@ function pushConfig(now){clearTimeout(pcT);const go_=async()=>{if(!connected())r
   catch(e){toast("Couldn't save hunting settings: "+errText(e))}};
   if(now)return go_();pcT=setTimeout(go_,800)}
 async function loadDeals(){if(!connected()||HD.busy)return;HD.busy=true;HD.err="";HD.soft="";
-  try{const d=await api("deals=1");HD.deals=(d.deals||[]).map(normType);HD.dealsTotal=d.dealsTotal||null;HD.report=d.report;HD.learned=d.learned||[];HD.close=d.close||[];HD.later=(d.later||[]).map(normType);HD.aucLearn=d.aucLearn||{};HD.learning=d.learning||null;HD.crash=d.lastCrash||null;HD.whyDay=d.whyDay||null;HD.verified=d.verified||null;HD.at=Date.now();markSeen()}catch(e){softErr(e)}
+  try{const d=await api("deals=1");HD.deals=(d.deals||[]).map(normType);HD.dealsTotal=d.dealsTotal||null;HD.report=d.report;HD.learned=d.learned||[];HD.close=d.close||[];HD.later=(d.later||[]).map(normType);HD.aucLearn=d.aucLearn||{};HD.learning=d.learning||null;HD.crash=d.lastCrash||null;HD.whyDay=d.whyDay||null;HD.verified=d.verified||null;HD.at=Date.now();markSeen();HD.fails=0;flushProblems()}catch(e){softErr(e);HD.fails=(HD.fails||0)+1;if(HD.fails===3)report("deals-load-failed",errText(e)+" (3 times in a row)","deals")}
   HD.busy=false;if(FL.list==null)loadFollows();if(tab==="deals"||tab==="cats")render()}
 // a failed refresh while deals are already showing: a small grey note, not a red box
 function softErr(e){if((HD.deals||[]).length){HD.err="";HD.soft="Couldn't refresh just now · showing the last results"}else{HD.err=errText(e);HD.soft=""}}
@@ -945,9 +983,10 @@ function speedCard(d){const sp=d.speed;if(!sp||d.kind==="spares")return"";const 
   return`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>How fast it sells</b>${badge}</div>${body}
    ${b||sp.band===null?`<div class="mu" style="font-size:13px;margin-top:10px;line-height:1.45">An estimate at the typical price, not a promise. Cheaper usually goes faster, dearer slower, and condition and photos matter too.</div>`:""}</div>`}
 // "From 30 sales" opens every sale behind the price, newest first
-const salesLink=(d,txt)=>`<button class="link" style="margin:0;min-height:0;padding:0;font:inherit;color:var(--ac);text-decoration:underline" onclick="event.stopPropagation();salesSheet(${esc(JSON.stringify(d.pkey||""))},${esc(JSON.stringify(d.matchLabel||d.title||""))})">${txt} ›</button>`;
+const salesLink=(d,txt)=>`<button class="link" style="margin:0;min-height:26px;padding:3px 0;font:inherit;color:var(--ac);text-decoration:underline" onclick="event.stopPropagation();salesSheet(${esc(JSON.stringify(d.pkey||""))},${esc(JSON.stringify(d.matchLabel||d.title||""))})">${txt} ›</button>`;
+let salesFails=0;
 async function salesSheet(key,label){if(!key)return;openSheet(`<h2 style="margin-top:0">Sales behind this price</h2><div class="mu">${esc(label)}</div><div class="mu" style="margin-top:10px">Loading sales…</div>`);
-  let r;try{r=await api("sales="+encodeURIComponent(key))}catch(e){openSheet(`<h2 style="margin-top:0">Sales behind this price</h2><div class="mu">Couldn't load: ${esc(errText(e))}</div><div class="btns"><button onclick="closeSheet()">Close</button></div>`);return}
+  let r;try{r=await api("sales="+encodeURIComponent(key));salesFails=0}catch(e){if(++salesFails===2)report("sales-load-failed",errText(e)+" (2 times in a row)","sales list");openSheet(`<h2 style="margin-top:0">Sales behind this price</h2><div class="mu">Couldn't load: ${esc(errText(e))}</div><div class="btns"><button onclick="closeSheet()">Close</button></div>`);return}
   const L=r.sales||[],p=r.price,used=L.filter(x=>x.used).length,dt=t=>t?new Date(t).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"2-digit"}):"date unknown";
   openSheet(`<h2 style="margin-top:0">Sales behind this price</h2><div class="mu">${esc(p&&p.label||label)}</div>
    ${p?`<div class="card" style="margin:10px 0 0;padding:10px 12px"><b>Sells for about ${gbp(p.avg)}</b>${p.post!=null?` + ${gbp(p.post)} post`:""}<div class="mu" style="font-size:13px">${p.lo!=null&&p.hi!=null?`Most £${Math.round(p.lo)}–£${Math.round(p.hi)} · `:""}${used} of ${L.length} sales used, newest first below</div></div>`:""}
@@ -1010,7 +1049,7 @@ function dealCard(d,i){
   const lvl=confWord(d.score),lc=d.score>=70?"var(--pB)":d.score>=50?"var(--pA)":"var(--pR)";
   const label=sp?"Spares or repairs":auc?`Auction · ${left(d.end)}`:`Buy It Now${d.created?" · "+ago(d.created):""}`;
   const btn=(cls,txt,on,al,extra)=>`<button class="${cls}" style="margin:0;flex:1;min-height:40px;padding:6px 10px;font-size:15px;${extra||""}" onclick="event.stopPropagation();${on}" aria-label="${al}">${txt}</button>`;
-  return`<div class="dcard ds" style="cursor:pointer;margin-bottom:18px" onclick="openDeal(${i})" onkeydown="if(event.target===this&&(event.key==='Enter'||event.key===' ')){event.preventDefault();openDeal(${i})}" tabindex="0" aria-label="${esc(d.title)}">
+  return`<div class="dcard ds" data-id="${esc(d.id)}" style="cursor:pointer;margin-bottom:18px" onclick="openDeal(${i})" onkeydown="if(event.target===this&&(event.key==='Enter'||event.key===' ')){event.preventDefault();openDeal(${i})}" tabindex="0" aria-label="${esc(d.title)}">
   <div class="dhead" style="background:${hc};color:${ht};border:1px solid ${hc}">
    <span class="pill" style="color:${sp||auc?"var(--pA)":"var(--pB)"}">${esc(label)}</span>
    ${sp?`<span class="pill" style="color:var(--pA)">You judge it</span>`
@@ -1033,7 +1072,7 @@ function cardMoney(d){
   const lo=rg?rg[0]:prof,hi=rg?rg[1]:prof,loss=hi<0,good=lo>0;
   const lab=rg?(loss?"Est. loss if you win":"Est. profit if you win"):(loss?"Est. loss":"Est. profit");
   const sub=(rg?"at your max bid → at today's bid · after fees & postage":"after fees, postage & packing")+(postAllow(d)?" · postage allowed for, not known":"");
-  const val=rg?`${sgn(rg[0])} <span style="font-weight:600;opacity:.75">to</span> ${sgn(rg[1])}`:known(prof)?sgn(prof):"Not calculated";
+  const val=rg?`${sgn(rg[0])} <span style="font-weight:600">to</span> ${sgn(rg[1])}`:known(prof)?sgn(prof):"Not calculated";
   const cell=(label,v,note,cls)=>`<div style="min-width:0"><div class="mu" style="font-size:12px">${label}</div><div class="num-t ${cls||""}" style="font-weight:800;font-size:19px;line-height:1.25">${v}</div>${note?`<div class="mu" style="font-size:12px">${note}</div>`:""}</div>`;
   return`<div style="margin-top:10px;background:var(--inset,var(--card2))">
    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:2px 10px;padding:8px 12px;background:${good?"var(--okbg)":"var(--badbg)"}">

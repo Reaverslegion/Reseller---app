@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       part:
-        description: "Emulator part to run: all, journeys or integrity"
+        description: "Emulator part to run: all, journeys, integrity (Stage 3) or stage4"
         default: all
 permissions:
   contents: read
@@ -33,6 +33,25 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: results-unit
+          path: results/
+          retention-days: 7
+
+  supply:
+    name: Dependencies and secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node tests/ci/supply-chain.mjs
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-supply
           path: results/
           retention-days: 7
 
@@ -63,6 +82,9 @@ jobs:
           mkdir -p results
           if [ -s android/app/build/outputs/apk/debug/app-debug.apk ]; then S=PASS; D="test app built ($(du -k android/app/build/outputs/apk/debug/app-debug.apk | cut -f1) KB)"; else S=FAIL; D="the build failed: see the Build job log"; fi
           echo "[{\"area\":\"Build\",\"name\":\"test app builds with the live build steps\",\"status\":\"$S\",\"detail\":\"$D\"}]" > results/build.json
+      - name: Safety settings inside the built app (debug mode, backups, permissions, signing)
+        if: always()
+        run: test -s android/app/build/outputs/apk/debug/app-debug.apk && node tests/ci/apk-check.mjs android/app/build/outputs/apk/debug/app-debug.apk
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -96,6 +118,16 @@ jobs:
         env:
           TEST_URL: http://127.0.0.1:8787
         run: node tests/e2e/service-smoke.mjs
+      - name: Security tests (wrong keys, injection attempts, bad and oversized data, rate limits, leaks)
+        if: always()
+        env:
+          TEST_URL: http://127.0.0.1:8787
+        run: node tests/security/service-security.mjs
+      - name: Monitoring and restart tests (failed background job, false alarms, restart keeps data)
+        if: always()
+        env:
+          RESTART_CMD: bash tests/e2e/restart-test-service.sh
+        run: node tests/stage4/service-checks.mjs
       - name: Service log (if anything failed)
         if: failure()
         run: tail -60 service.out; tail -20 fake-ebay.out
@@ -156,13 +188,16 @@ jobs:
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /usr/local/lib/node_modules/@angular /opt/hostedtoolcache/CodeQL /usr/share/swift || true
           df -h / | tail -1
+      - name: Accessibility checker (axe-core, free and open source)
+        run: npm i --prefix /tmp/axe --no-fund --no-audit axe-core@4.10.2 && test -s /tmp/axe/node_modules/axe-core/axe.min.js
       - name: Let the emulator use hardware speed-up
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Run every journey on the emulator
-        uses: reactivecircus/android-emulator-runner@v2
+        # pinned to the fixed commit "v2" points at today, so a later change by its author can't run here unseen
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
           api-level: 33
           target: google_apis
@@ -172,7 +207,7 @@ jobs:
           disk-size: 4096M
           ram-size: 3072M
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -no-metrics
-          script: APK=apk/app-debug.apk PART=${{ inputs.part || 'all' }} bash tests/android/run-all.sh
+          script: APK=apk/app-debug.apk AXE_JS=/tmp/axe/node_modules/axe-core/axe.min.js PART=${{ inputs.part || 'all' }} bash tests/android/run-all.sh
       - name: Small copies of the screenshots (readable from the log)
         if: always()
         run: |
@@ -201,7 +236,7 @@ jobs:
 
   report:
     name: Testing report
-    needs: [unit, build, service, emulator]
+    needs: [unit, supply, build, service, emulator]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -215,7 +250,7 @@ jobs:
           node-version: 22
       - run: node tests/ci/report.mjs results
         env:
-          JOB_RESULTS: '{"Unit tests":"${{ needs.unit.result }}","Build":"${{ needs.build.result }}","Test Scan service":"${{ needs.service.result }}","Android emulator":"${{ needs.emulator.result }}"}'
+          JOB_RESULTS: '{"Unit tests":"${{ needs.unit.result }}","Dependencies":"${{ needs.supply.result }}","Build":"${{ needs.build.result }}","Test Scan service":"${{ needs.service.result }}","Android emulator":"${{ needs.emulator.result }}"}'
       - if: always()
         uses: actions/upload-artifact@v4
         with:

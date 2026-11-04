@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import { runAudit } from "./audit.mjs";
+import { runStage4 } from "../stage4/app-checks.mjs";
 const require = createRequire(import.meta.url), { chromium } = require(process.env.PW || "playwright");
 const KEY = process.env.TEST_APP_KEY, sizes = (process.argv[2] || "200").split(",").map(Number);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -42,7 +43,7 @@ for (let i = 0; i < 3; i++) await drv.tap({ text: "Next", exact: true });
 await drv.tap("Private seller"); await drv.tap("Start using FlipScout"); await drv.tap("Connect now");
 await drv.fill({ sel: "#s_url" }, `http://127.0.0.1:8787#${KEY}`); await drv.dealsTab(); await drv.tap("Start with popular categories"); await sleep(1500);
 await drv.menu(); for (let i = 0; i < 7; i++) await (await find({ sel: "div[onclick]", text: "FlipScout version" })).tap(); await drv.dealsTab();
-await runAudit(drv, R, { sizes });
+if (process.env.STAGE4) await runStage4(drv, R); else await runAudit(drv, R, { sizes });
 for (const r of rows) console.log(`${r.status.padEnd(16)} ${r.name}${r.detail ? "  — " + r.detail : ""}`);
 console.log("page errors:", errors.length ? errors.slice(0, 5) : "none");
 await b.close();

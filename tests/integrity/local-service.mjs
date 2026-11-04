@@ -29,6 +29,9 @@ http.createServer(async (req, res) => {
   let body = ""; for await (const c of req) body += c;
   const u = new URL(req.url, "http://127.0.0.1:" + PORT), cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "GET,POST,OPTIONS" };
   try {
+    // like "wrangler dev --test-scheduled": runs the background job once (test machine only)
+    if (u.pathname === "/__scheduled") { const w = []; await worker.scheduled({ cron: "test" }, env, { waitUntil: (p) => w.push(p) }); await Promise.allSettled(w);
+      res.writeHead(200, cors); return res.end("Ran scheduled event"); }
     if (u.searchParams.has("__testseed") || u.searchParams.has("__testquery")) {
       if (req.headers["x-flipscout-key"] !== KEY) { res.writeHead(401, cors); return res.end('{"error":"wrong key"}'); }
       await worker.fetch(new Request("http://x/?config=1", { headers: { "X-FlipScout-Key": KEY } }), env, { waitUntil() {} }); // makes the tables

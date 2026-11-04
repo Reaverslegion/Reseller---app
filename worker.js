@@ -1727,6 +1727,40 @@ async function fcmAccess(env) {
   await kvSet(env, "fcmtok", out);
   return out;
 }
+/* ---------------- problem log (Stage 4 monitoring, 4 Nov 2026) ----------------
+   App crashes and errors, failed Scan service requests, database errors and background-job failures go into the
+   "errlog" table of THIS Scan service only (no outside service). Messages are cleaned first: no keys, tokens, e-mail
+   addresses or web-address details, and cut short. The same problem counts up rather than adding rows; the newest
+   ERR_KEEP problems are kept. A problem that keeps happening sends one phone alert per 6 hours (existing alerts). */
+const ERR_KEEP = 300;
+function cleanMsg(s) {
+  return String(s == null ? "" : s)
+    .replace(/((?:^|[?&\s,;:"'({])(?:key|token|code|access_token|refresh_token|sig|password|passwd|pwd|secret|api_?key|auth)["']?\s*[=:]\s*["']?)[^&\s"',;)}]+/gi, "$1[hidden]")
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=-]+/gi, "$1 [hidden]")
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[email]")
+    .replace(/https?:\/\/[^\s"'<>]+/g, (u) => u.split(/[?#]/)[0])
+    .replace(/[A-Za-z0-9_+\/=-]{24,}/g, "[hidden]")
+    .replace(/\s+/g, " ").trim().slice(0, 300);
+}
+// a request's JSON body; garbled data is the sender's mistake (answered "bad request", 400), not a Scan service failure
+async function bodyJson(request) { const t = await request.text(); try { return JSON.parse(t); } catch (e) { const x = new Error("bad request: the data sent isn't valid JSON"); x.bad = true; throw x; } }
+const endpointOf = (request) => { try { return [...new URL(request.url).searchParams.keys()].find((k) => k !== "key") || "(none)"; } catch (e) { return "?"; } };
+async function logProblem(env, src, kind, msg, extra = {}) {
+  try {
+    if (!env.DB) return;
+    const D = env.DB, now = Date.now(), m = cleanMsg(msg), where = cleanMsg(extra.where || "").slice(0, 80), ver = cleanMsg(extra.ver || "").slice(0, 40);
+    const k = cleanMsg(kind).slice(0, 60), sig = (src + "|" + k + "|" + where + "|" + m.replace(/\d+/g, "#")).slice(0, 400);
+    await D.prepare("CREATE TABLE IF NOT EXISTS errlog (sig TEXT PRIMARY KEY, src TEXT, kind TEXT, msg TEXT, place TEXT, ver TEXT, n INTEGER, first INTEGER, at INTEGER, alerted INTEGER)").run();
+    await D.prepare("INSERT INTO errlog (sig,src,kind,msg,place,ver,n,first,at,alerted) VALUES (?,?,?,?,?,?,1,?,?,0) ON CONFLICT(sig) DO UPDATE SET n=n+1, at=excluded.at, ver=excluded.ver, msg=excluded.msg")
+      .bind(sig, src, k, m, where, ver, now, now).run();
+    const row = await D.prepare("SELECT n, alerted FROM errlog WHERE sig=?").bind(sig).first();
+    if (row && row.n >= (src === "app" ? 5 : 3) && now - (row.alerted || 0) > 6 * 3600e3) {
+      await D.prepare("UPDATE errlog SET alerted=? WHERE sig=?").bind(now, sig).run();
+      try { await push(env, "FlipScout problem", `${k}${where ? " (" + where + ")" : ""}: ${m.slice(0, 120)} · ${row.n} times`, { kind: "problem" }); } catch (e) {}
+    }
+    await D.prepare(`DELETE FROM errlog WHERE sig NOT IN (SELECT sig FROM errlog ORDER BY at DESC LIMIT ${ERR_KEEP})`).run();
+  } catch (e) { /* recording a problem must never cause another one */ }
+}
 async function push(env, title, body, data) {
   if (!env.FCM_SA) return { sent: 0, error: "alerts not set up on the service yet" };
   let devices = await kvGet(env, "devices", []);
@@ -1915,8 +1949,11 @@ export default {
     if (!env.DB) return;
     ctx.waitUntil((async () => {
       // errors here used to vanish; keep the latest one so it can be looked at ("lastCrash" in the kv table)
-      const crash = (where) => (e) => kvSet(env, "lastCrash", { at: Date.now(), where, msg: String((e && e.message) || e).slice(0, 300) }).catch(() => {});
-      const r = await sweep(env, false).catch((e) => (crash("scan")(e), {}));
+      const crash = (where) => (e) => Promise.all([kvSet(env, "lastCrash", { at: Date.now(), where, msg: String((e && e.message) || e).slice(0, 300) }).catch(() => {}),
+        logProblem(env, /D1_ERROR|SQLITE/i.test(String(e && e.message)) ? "database" : "job", "background job failed", (e && e.message) || e, { where })]);
+      const r = await sweep(env, false).catch(async (e) => { await crash("scan")(e); return {}; });
+      // a scan that ran but couldn't reach eBay for some categories
+      for (const x of ((r && r.errors) || []).slice(0, 3)) await logProblem(env, "job", "scan problem", x, { where: "scan" });
       await weeklyExport(env).catch(crash("weekly price export"));
       if (r && r.skipped) {
         await closing(env).catch(crash("auction learning"));
@@ -1925,13 +1962,21 @@ export default {
     })());
   },
 
+  // every request: any failure (an error, or a 5xx answer) is written to the problem log (see logProblem)
   async fetch(request, env, ctx) {
+    let res;
+    try { res = await this.handle(request, env, ctx); }
+    catch (e) { const m = String((e && e.message) || e); await logProblem(env, /D1_ERROR|SQLITE/i.test(m) ? "database" : "service", "exception", m, { where: endpointOf(request) }); return json({ error: "internal error" }, 500); }
+    if (res && res.status >= 500) { let m = ""; try { m = (await res.clone().json()).error || ""; } catch (e) {} await logProblem(env, /D1_ERROR|SQLITE/i.test(m) ? "database" : "service", "failed request (" + res.status + ")", m, { where: endpointOf(request) }); }
+    return res;
+  },
+  async handle(request, env, ctx) {
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     const u = new URL(request.url), P = (k) => u.searchParams.get(k);
     // the app sends the key in a header; older app versions put it in the address, which still works
     if (!env.APP_KEY || !sameKey(request.headers.get("X-FlipScout-Key") || P("key"), env.APP_KEY)) return json({ error: "wrong key" }, 401);
     // hourly limits on the calls that use eBay or write a lot, far above normal use, so a leaked key can't run up your eBay calls
-    const lim = P("q") ? ["search", 300] : P("check") ? ["check", 300] : P("fill") ? ["fill", 120] : P("suggest") ? ["suggest", 300] : P("flag") ? ["flag", 200] : null;
+    const lim = P("q") ? ["search", 300] : P("check") ? ["check", 300] : P("fill") ? ["fill", 120] : P("suggest") ? ["suggest", 300] : P("flag") ? ["flag", 200] : P("report") ? ["report", 120] : null;
     if (lim && env.DB) {
       try {
         await schema(env);
@@ -1944,6 +1989,18 @@ export default {
     }
 
     // ---- hunting (needs the database) ----
+    // problem reports from the app (cleaned again here) and the problem list for admin tools
+    if (P("report") && request.method === "POST") {
+      let b = {}; try { b = JSON.parse((await request.text()).slice(0, 4000)); } catch (e) { return json({ error: "bad report" }, 400); }
+      await logProblem(env, "app", b.kind || "error", b.msg, { where: b.where, ver: [b.ver, b.ua].filter(Boolean).join(" · ") });
+      return json({ ok: true });
+    }
+    if (P("problems")) {
+      if (!env.DB) return json({ problems: [] });
+      await env.DB.prepare("CREATE TABLE IF NOT EXISTS errlog (sig TEXT PRIMARY KEY, src TEXT, kind TEXT, msg TEXT, place TEXT, ver TEXT, n INTEGER, first INTEGER, at INTEGER, alerted INTEGER)").run();
+      const rows = (await env.DB.prepare("SELECT src, kind, msg, place, ver, n, first, at, alerted FROM errlog ORDER BY at DESC LIMIT 100").all()).results || [];
+      return json({ problems: rows });
+    }
     const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "flag", "unflag", "flags", "test", "device", "check", "price", "prices", "unprice", "needs", "lookfor", "fill", "fillstats", "seen", "sales", "ebayconnect", "ebaycode"].some((k) => u.searchParams.has(k));
     if (huntCall) {
       if (!env.DB) return json({ error: "hunting database not set up yet" }, 501);
@@ -1951,7 +2008,7 @@ export default {
         await schema(env);
         if (P("config")) {
           if (request.method === "POST") {
-            const c = cleanConfig(JSON.parse(await request.text()));
+            const c = cleanConfig(await bodyJson(request));
             await kvSet(env, "config", c);
             return json({ ok: true, config: c });
           }
@@ -1967,7 +2024,10 @@ export default {
           // every live deal goes to the app (was capped at the best-scoring 200, which silently hid hundreds: 3 Nov).
           // The total is sent too, so the app can say so if anything is ever left out.
           const rows = await env.DB.prepare("SELECT data, created FROM deals WHERE expires>? ORDER BY score DESC LIMIT ?").bind(Date.now(), DEALS_MAX).all();
-          const deals = (rows.results || []).map((r) => ({ ...JSON.parse(r.data), found: r.created }));
+          // one damaged record must not stop every other deal loading: it's skipped and written to the problem log
+          let broken = 0; const deals = [];
+          for (const r of rows.results || []) { try { deals.push({ ...JSON.parse(r.data), found: r.created }); } catch (e) { broken++; } }
+          if (broken) await logProblem(env, "database", "damaged deal record", `${broken} deal record${broken === 1 ? "" : "s"} couldn't be read and ${broken === 1 ? "was" : "were"} skipped`, { where: "deals" });
           const dealsTotal = (await env.DB.prepare("SELECT COUNT(*) n FROM deals WHERE expires>?").bind(Date.now()).first() || {}).n || 0;
           const lc = await kvGet(env, "learnCats", { cats: [] });
           const cnt = (await kvGet(env, "learnedCounts", null)) || (await refreshLearned(env));
@@ -1979,7 +2039,7 @@ export default {
           return json(await checkLive(env, id, null, true));
         }
         if (P("price") && request.method === "POST") {
-          const b = JSON.parse(await request.text());
+          const b = await bodyJson(request);
           const key = String(b.key || "").slice(0, 200), avg = parseFloat(b.avg);
           if (!key || !(avg > 0 && avg < 100000)) return json({ error: "need the average sold price" }, 400);
           const n = (v, max) => { const x = parseFloat(v); return x >= 0 && x <= max ? x : null; };
@@ -2002,7 +2062,7 @@ export default {
         if (P("fill") && request.method === "POST") {
           // the user read eBay's sold listings for a whole category on their phone: sort them into models and save each model's typical price
           await ensureSrc(env);
-          const b = JSON.parse(await request.text());
+          const b = await bodyJson(request);
           return json(await fillPrices(env, b));
         }
         if (P("sales")) {
@@ -2040,12 +2100,12 @@ export default {
             broken: u ? u.broken || null : null, today: use.n || 0, found: c ? c.found || 0 : 0, missing: c ? c.missing || 0 : 0, todo: c ? c.todo || 0 : 0 });
         }
         if (P("ebaycode") && request.method === "POST") {
-          const b = JSON.parse(await request.text());
+          const b = await bodyJson(request);
           return json(await ebayConnect(env, String(b.code || "").slice(0, 2000)));
         }
         if (P("seen") && request.method === "POST") {
           // which of these sold item numbers a fill has already saved (read only)
-          const b = JSON.parse(await request.text()), ids = (Array.isArray(b.ids) ? b.ids : []).map((x) => String(x).replace(/\D/g, "").slice(0, 20)).filter(Boolean).slice(0, 300), known = [];
+          const b = await bodyJson(request), ids = (Array.isArray(b.ids) ? b.ids : []).map((x) => String(x).replace(/\D/g, "").slice(0, 20)).filter(Boolean).slice(0, 300), known = [];
           for (let i = 0; i < ids.length; i += 90) {
             const chunk = ids.slice(i, i + 90), q = await env.DB.prepare(`SELECT id FROM fillseen WHERE id IN (${chunk.map(() => "?").join(",")})`).bind(...chunk).all();
             for (const r of q.results || []) known.push(r.id);
@@ -2091,7 +2151,7 @@ export default {
           return json({ follows: (rows.results || []).map((r) => ({ ...JSON.parse(r.data), id: r.id, max: r.max, created: r.created })) });
         }
         if (P("follow") && request.method === "POST") {
-          const b = JSON.parse(await request.text());
+          const b = await bodyJson(request);
           const id = String(b.id || "").replace(/\D/g, ""), max = parseFloat(b.max);
           if (!id || !(max > 0)) return json({ error: "need a listing and a max price" }, 400);
           const data = { title: String(b.title || "").slice(0, 200), url: "https://www.ebay.co.uk/itm/" + id, type: b.type === "AUC" ? "AUC" : "BIN", price: +b.price || 0, ship: +b.ship || 0, end: +b.end || null, status: "live",
@@ -2101,7 +2161,7 @@ export default {
         }
         if (P("flag") && request.method === "POST") {
           // one tap on Flag: keep a snapshot of the deal exactly as the Scan service judged it (taken here, not sent by the phone)
-          const b = JSON.parse(await request.text()), id = String(b.id || "").replace(/\D/g, "").slice(0, 20);
+          const b = await bodyJson(request), id = String(b.id || "").replace(/\D/g, "").slice(0, 20);
           if (!id) return json({ error: "need a deal" }, 400);
           const reason = ["model", "price", "faulty", "scam", "other"].includes(b.reason) ? b.reason : null;
           const ex = await env.DB.prepare("SELECT deal_id FROM flags WHERE deal_id=?").bind(id).first();
@@ -2126,7 +2186,7 @@ export default {
           return json({ ok: true });
         }
         if (P("device") && request.method === "POST") {
-          const b = JSON.parse(await request.text());
+          const b = await bodyJson(request);
           const t = String(b.token || "").slice(0, 400);
           if (t.length < 20) return json({ error: "bad device token" }, 400);
           let devices = (await kvGet(env, "devices", [])).filter((d) => d.t !== t);
@@ -2143,7 +2203,7 @@ export default {
           return json({ ok: true, delayed: 10 });
         }
       } catch (e) {
-        return json({ error: e.message }, 500);
+        return json({ error: e.message }, e && e.bad ? 400 : 500);
       }
     }
 
@@ -2154,7 +2214,7 @@ export default {
         if (request.method === "POST") {
           const body = await request.text();
           if (body.length > 5000000) return json({ error: "backup too big" }, 413);
-          JSON.parse(body);
+          try { JSON.parse(body); } catch (e) { return json({ error: "bad request: the backup isn't valid JSON (nothing was changed)" }, 400); }
           const prev = await env.BACKUP.get("backup-v1");
           if (prev) await env.BACKUP.put("backup-prev", prev);
           await env.BACKUP.put("backup-v1", body, { metadata: { at: Date.now() } });
@@ -2164,7 +2224,7 @@ export default {
         if (!r.value) return json({ none: true });
         return json({ at: (r.metadata && r.metadata.at) || null, data: JSON.parse(r.value) });
       } catch (e) {
-        return json({ error: e.message }, 500);
+        return json({ error: e.message }, e && e.bad ? 400 : 500);
       }
     }
 
@@ -2179,7 +2239,7 @@ export default {
         if (!r.ok) return json({ error: "category list failed (" + r.status + ")" }, 502);
         return new Response(r.body, { headers: { "Content-Type": "application/json", "Cache-Control": "max-age=86400", ...CORS } });
       } catch (e) {
-        return json({ error: e.message }, 500);
+        return json({ error: e.message }, e && e.bad ? 400 : 500);
       }
     }
     const sug = (P("suggest") || "").trim();
@@ -2193,7 +2253,7 @@ export default {
         }));
         return json({ cats });
       } catch (e) {
-        return json({ error: e.message }, 500);
+        return json({ error: e.message }, e && e.bad ? 400 : 500);
       }
     }
 
@@ -2221,7 +2281,7 @@ export default {
       });
       return json({ items });
     } catch (e) {
-      return json({ error: e.message }, 500);
+      return json({ error: e.message }, e && e.bad ? 400 : 500);
     }
   },
 };

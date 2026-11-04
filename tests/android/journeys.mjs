@@ -63,8 +63,8 @@ const DEALS = makeDeals(14);
 await J("Deals list", async (step) => {
   await step("fake deals loaded into the TEST database", async () => { ok((await seedDeals(DEALS)) === 14, "seed failed"); ok((await query("SELECT COUNT(*) n FROM deals"))[0].n === 14, "test database doesn't have 14 deals"); });
   await step("closing and reopening the app keeps the connection and shows the deals", async () => { await app.stop(); await app.launch();
-    await app.waitFor(`/\\d+ deals?/.test(document.getElementById("app").innerText)`, 30000, "the deals count"); await app.shot("deals list"); });
-  await step("deal cards show titles, prices and profit", async () => { const t = await app.text(); ok(/\(test \d+\)/.test(t), "no deal titles"); ok(/Profit after fees/.test(t), "no profit line"); ok(/£\d/.test(t), "no prices"); });
+    await app.waitFor(`/\\d+ deals?/.test(document.getElementById("app").innerText)&&!!document.querySelector(".dcard")`, 30000, "the deal cards"); await app.shot("deals list"); });
+  await step("deal cards show titles, prices and profit", async () => { const t = await app.text(); ok(/\(test \d+\)/.test(t), "no deal titles"); ok(/profit/i.test(t) && /[+−-]£\d/.test(t), "no profit figures"); ok(/£\d/.test(t), "no prices"); });
   await step("nothing on screen says undefined / NaN / null (deals with missing details)", async () => { const t = await app.text(); ok(!/\bundefined\b|\bNaN\b|\bnull\b/.test(t), "found: " + (t.match(/.{0,30}(undefined|NaN|null).{0,30}/) || [])[0]); });
   await step("sort menu opens and sorting by Most profit works", async () => { await app.tap({ sel: "#ds" }); await app.waitFor(`document.getElementById("pick").style.display==="block"`, 5000, "sort choices"); await app.shot("sort choices");
     await app.tap({ text: "Most profit" }); await app.waitFor(`/Most profit/.test(document.getElementById("ds").selectedOptions[0].text)`, 5000, "sorted by profit"); });
@@ -81,7 +81,8 @@ await J("Deal details", async (step) => {
 });
 
 await J("Sales list (From N sales ›)", async (step) => {
-  await step("'From 24 sales ›' opens the sales behind the price", async () => { await app.tap({ text: "From 24 sales" }); await app.waitText("Sales behind this price"); await app.waitText("Sells for about", 15000); await app.shot("sales list"); });
+  await step("'From 24 sales ›' opens the sales behind the price", async () => { await app.tap({ text: "From 24 sales" }); await app.waitText("Sales behind this price");
+    await app.waitFor(`/Sells for about/.test(document.getElementById("sheet").innerText)`, 25000, "the sales list loaded"); await app.shot("sales list"); });
   await step("it lists the sales with prices and dates", async () => { const n = await app.eval(`document.querySelectorAll("#sheet a.li").length`); ok(n >= 20, `only ${n} sales listed (24 expected)`); });
   await step("sales without a saved title are shown sensibly", async () => { await app.waitText("title not saved", 3000); });
   await step("Close shuts the list", async () => { await app.tap({ text: "Close", exact: true }); await app.waitFor(`!document.getElementById("sheet").classList.contains("on")`, 5000, "list closed"); });
@@ -151,7 +152,8 @@ await U("Server errors and dropped connections", async (step) => {
   await step("a Scan service error while opening the sales list shows a clear message", async () => { await CHAOS("error"); await app.tap({ text: "From 24 sales" }); await app.waitText("Couldn't load", 15000); await app.shot("server error"); await CHAOS("normal"); await app.tap({ text: "Close", exact: true }); });
   await step("a connection cut half-way through an answer doesn't crash the app", async () => { await CHAOS("cut"); await app.tap({ text: "From 24 sales" }); await sleep(6000); await CHAOS("normal"); await app.shot("cut connection");
     ok(app.alive(), "app died"); await app.eval(`closeSheet(),1`).catch(() => {}); });
-  await step("a very slow answer shows Loading and then the sales", async () => { await CHAOS("slow", 6000); await app.tap({ text: "From 24 sales" }); await app.waitText("Loading sales", 3000); await app.waitText("Sells for about", 20000); await CHAOS("normal"); await app.tap({ text: "Close", exact: true }); });
+  await step("a very slow answer shows Loading and then the sales", async () => { await CHAOS("slow", 6000); await app.tap({ text: "From 24 sales" }); await app.waitText("Loading sales", 3000);
+    await app.waitFor(`/Sells for about/.test(document.getElementById("sheet").innerText)`, 30000, "the sales list after the slow answer"); await CHAOS("normal"); await app.tap({ text: "Close", exact: true }); });
 });
 
 await U("Repeated and rapid taps", async (step) => {

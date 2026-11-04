@@ -187,6 +187,9 @@ export class Results {
   constructor(app) { this.app = app; this.rows = []; }
   async journey(area, name, fn) {
     const app = this.app, logAt = app.logSize(), errAt = app.jsErrors.length; app.phase = name;
+    // start each journey from a clean screen: close a list or picker left open by an earlier journey (phone's Back button)
+    try { await app.unblock(); await app.hideKeyboard();
+      for (let i = 0; i < 2 && await app.eval(`document.getElementById("sheet").classList.contains("on")||document.getElementById("pick").style.display==="block"`); i++) { await app.back(); await sleep(600); } } catch (e) {}
     let failed = null, steps = 0, passed = 0;
     const step = async (what, f) => {
       steps++;

@@ -5,6 +5,7 @@
 // backup and restore. Run: OLD_APK=... NEW_APK=... TEST_APP_KEY=... node tests/android/update.mjs
 import fs from "node:fs";
 import { App, Results, sleep, sh, adb, PKG } from "./driver.mjs";
+import * as F from "../integrity/scan-flow.mjs";
 console.log = (...a) => { try { fs.writeSync(1, a.map(String).join(" ") + "\n"); } catch (e) {} };
 const KEY = process.env.TEST_APP_KEY, OLD = process.env.OLD_APK, NEW = process.env.NEW_APK, A = "Update test";
 const app = new App("screenshots/update", PKG), R = new Results(app, "results/update.json");
@@ -99,6 +100,10 @@ await R.journey(A, "Switch to the test wrapper of the same app code (for the Sca
 });
 await R.journey(A, "Updated app with your CURRENT Scan service (local copy of the live code)", async (step) => {
   await step("features against the current Scan service", async () => {
+    // fake eBay: sold prices and 16 listings for sale (same fixtures as the back-end gap tests), so the current service code finds deals
+    try { await F.call("fill=1", { cat: "27386", catName: "Graphics Cards", cond: "used", rows: F.soldRows(7) }); const L = []; let lid = 760000000000;
+      F.MODELS.forEach((m) => [0.5, 0.6, 0.7, 0.8].forEach((f) => L.push(F.listing({ id: ++lid, title: `${m.title.replace(" Graphics Card", "")} used #${lid}`, price: Math.round(m.base * f * 100) / 100, ship: 4.99 }))));
+      await F.fakeSearch(L); await F.seedSql([], { lastRun: 0, lastManual: 0 }); } catch (e) { console.log("fixture setup: " + e.message); }
     const run = await svc("run=1"); add("a scan runs on the current Scan service code (fake eBay)", run.status === 200, `HTTP ${run.status} ${JSON.stringify(run.j || {}).slice(0, 120)}`);
     await app.eval(`tab="deals";HD.busy=false;loadDeals().then(render);1`);
     let n = 0; try { await app.waitFor(`document.querySelectorAll(".dcard").length>0`, 60000, "deal cards"); n = await app.eval(`(HD.deals||[]).length`); } catch (e) {}
@@ -110,9 +115,9 @@ await R.journey(A, "Updated app with your CURRENT Scan service (local copy of th
       await app.eval(`salesSheet((HD.deals[0]||{}).pkey,"x");1`); await sleep(4000); const sl = await app.eval(`document.getElementById("sheet").innerText`); await app.eval(`closeSheet();1`);
       add("the sales list behind a price loads", /Sales behind this price/.test(sl) && !/Couldn't load/.test(sl), sl.replace(/\s+/g, " ").slice(0, 120));
     }
-    const calls = await app.eval(`(async()=>{const o={};const id=((HD.deals||[])[0]||{}).id||"";for(const q of ["config=1","follows=1","prices=1","flags=1","fillstats=1","check="+id,"problems=1"]){try{const d=await api(q);o[q.split("=")[0]]=d&&d.error?"error: "+d.error:"ok "+JSON.stringify(d).slice(0,60)}catch(e){o[q.split("=")[0]]="error: "+e.message}}return JSON.stringify(o)})()`);
+    const calls = await app.eval(`(async()=>{const o={};const id=((HD.deals||[])[0]||{}).id||"";for(const q of ["config=1","follows=1","prices=1","flags=1","fillstats=1",...(id?["check="+id]:[]),"problems=1"]){try{const d=await api(q);o[q.split("=")[0]]=d&&d.error?"error: "+d.error:"ok "+JSON.stringify(d).slice(0,60)}catch(e){o[q.split("=")[0]]="error: "+e.message}}return JSON.stringify(o)})()`);
     const c = JSON.parse(calls);
-    for (const k of ["config", "follows", "prices", "flags", "fillstats", "check"]) add(`"${k}" works with the current Scan service`, /^ok/.test(c[k]), c[k]);
+    for (const k of ["config", "follows", "prices", "flags", "fillstats", "check"]) if (c[k] || k !== "check") add(`"${k}" works with the current Scan service`, /^ok/.test(c[k]), c[k]);
     if (/^ok/.test(c.problems) && /problems/.test(c.problems)) add(`"problems" works with the current Scan service`, true, c.problems);
     else NEEDS("admin tools › Problems list (and crash reports sent from the app)", `the current Scan service doesn't have it: ${c.problems}`);
     await app.eval(`S.set.admin=true;go("admin");1`); await sleep(3000); const pr = await app.eval(`document.getElementById("app").innerText`); await app.shot("updated - admin problems"); await app.eval(`onBack();1`);

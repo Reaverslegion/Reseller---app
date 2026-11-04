@@ -2,6 +2,8 @@
 // behaviour checks, tapping through Android itself. Uses ONLY the private test Scan service and fake data.
 // Run (inside the emulator job): APK=app.apk TEST_APP_KEY=... node tests/android/journeys.mjs
 import fs from "node:fs";
+// write each line straight out, so nothing is lost when the script ends right after a long list
+console.log = (...a) => { try { fs.writeSync(1, a.map(String).join(" ") + "\n"); } catch (e) {} };
 import { App, Results, sleep, sh, adb } from "./driver.mjs";
 import { makeDeals, seedDeals, query } from "./seed.mjs";
 

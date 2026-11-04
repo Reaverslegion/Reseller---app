@@ -2,6 +2,8 @@
 // Each check is PASS, FAIL, NOT TESTED or PARTIALLY TESTED. A check only counts as PASS if it actually ran and passed:
 // anything planned but not built yet, or whose job didn't run, is listed as NOT TESTED.
 import fs from "node:fs";
+// write each line straight out, so nothing is lost when the script ends right after a long list
+console.log = (...a) => { try { fs.writeSync(1, a.map(String).join(" ") + "\n"); } catch (e) {} };
 import path from "node:path";
 
 const dir = process.argv[2] || "results";

@@ -2,6 +2,8 @@
 // with real taps, against the private test Scan service, its throwaway database and the fake eBay only.
 // Run (inside the emulator job, after journeys.mjs): TEST_APP_KEY=... node tests/android/integrity.mjs
 import fs from "node:fs";
+// write each line straight out, so nothing is lost when the script ends right after a long list
+console.log = (...a) => { try { fs.writeSync(1, a.map(String).join(" ") + "\n"); } catch (e) {} };
 import { App, Results, sleep, sh, adb, PKG } from "./driver.mjs";
 import { runAudit } from "../integrity/audit.mjs";
 import { runStage4 } from "../stage4/app-checks.mjs";

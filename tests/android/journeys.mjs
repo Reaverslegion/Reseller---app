@@ -225,6 +225,8 @@ await R.journey("Android emulator", "Investigation: admin connection box on the 
       ["focusin","focusout","pointerdown","pointerup","click"].forEach(n=>document.addEventListener(n,e=>lg(n,e),{capture:true,passive:true}));
       const d=document.getElementById("adv");if(d)d.addEventListener("toggle",()=>window.__fe.push((Date.now()-t0)+"ms box "+(d.open?"opened":"closed")));
       window.addEventListener("resize",()=>window.__fe.push((Date.now()-t0)+"ms page resized to "+innerWidth+"x"+innerHeight));return 1})()`);
+    const calc = await app.locate({ sel: "#s_url" }), nb = app.nativeById("s_url"), geo = await app.eval(`(()=>{const r=document.getElementById("s_url").getBoundingClientRect();return Math.round(r.top)+"-"+Math.round(r.bottom)+" of "+innerHeight})()`);
+    R.add("Android emulator", "admin connection box: where it is", "PASS", `calculated tap ${Math.round(calc.x)},${Math.round(calc.y)}; Android says ${nb ? Math.round(nb.x) + "," + Math.round(nb.y) + " (" + nb.t + "-" + nb.b + ")" : "not listed"}; box in page ${geo}; screen ${sh("wm size").trim()}`);
     await app.tap({ sel: "#s_url", wait: 2500 });
     const ev = await app.eval("window.__fe.join(' · ')"), f = await app.eval(`document.activeElement.id||document.activeElement.tagName`);
     let kb = ""; try { kb = (sh("dumpsys input_method").match(/mInputShown=\w+|mIsInputViewShown=\w+|isInputViewShown=\w+/g) || []).join(","); } catch (e) {}
@@ -240,6 +242,7 @@ function finish() {
   try { app.logcat && app.logcat.kill(); } catch (e) {}
   fs.writeFileSync("results/android.json", JSON.stringify(R.rows, null, 1));
   const c = (s) => R.rows.filter((r) => r.status === s).length;
+  if (app.posNotes) R.add("Android emulator", "taps that needed Android's own box position", "PARTIALLY TESTED", app.posNotes.join(" | ").slice(0, 400));
   if (app.missed) console.log(`Taps corrected after the screen shifted: ${app.missed}`);
   if (app.events.length) console.log("Screen-link events:\n" + app.events.join("\n"));
   if (app.unblocked) R.add("Android emulator", "the virtual phone itself froze and was un-stuck", "PARTIALLY TESTED", `${app.unblocked} system "isn't responding" pop-up(s) closed during the run (emulator slowness, not FlipScout)`);

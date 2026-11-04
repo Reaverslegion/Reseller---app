@@ -64,6 +64,13 @@ export class App {
       await this.tap(spec, c);
       // only type once the phone's keyboard focus is really in that box (a redraw can remove the box under the finger)
       const f = await this.eval(`(()=>{const a=document.activeElement,t=${target}&&document.querySelector(${target});return{ok:!!a&&(t?a===t:/INPUT|TEXTAREA/.test(a.tagName)),now:a?(a.id||a.tagName):"none",there:!!t}})()`, c);
+      if (!f.ok && spec.sel && /^#[\w-]+$/.test(spec.sel)) {
+        // second try: tap where Android itself says the box is (still a real tap), and note how far that is from the calculated spot
+        const nb = this.nativeById(spec.sel.slice(1));
+        if (nb) { const calc = await this.locate(spec, c).catch(() => null); this.posNotes = (this.posNotes || []).concat(`${spec.sel}: calculated ${calc ? Math.round(calc.x) + "," + Math.round(calc.y) : "?"}, Android says ${Math.round(nb.x)},${Math.round(nb.y)}`);
+          await this.tapXY(nb.x, nb.y); await sleep(900);
+          const g = await this.eval(`(()=>{const a=document.activeElement,t=${target}&&document.querySelector(${target});return!!a&&a===t})()`, c);
+          if (g) { await this.selectAll(); await this.key(67); await this.type(text); got = await this.eval("document.activeElement&&document.activeElement.value", c); if (got === String(text)) break; } } }
       if (!f.ok) { const rs = await this.eval("(window.__rs||[]).slice(-3).join(' || ')", c).catch(() => "");
         why = `focus went to ${f.now}${f.there ? "" : " (the box had disappeared)"}${rs ? "; page redrawn by: " + rs : "; no redraw"}`; await sleep(1500); continue; }
       await this.selectAll(); await this.key(67); await this.type(text);
@@ -128,6 +135,10 @@ export class App {
     if (this.lastBounds) return this.lastBounds;
     throw new Error("couldn't find the app's screen area");
   }
+  // Android's own position for a web page box with this id (web views list their boxes by id): a second opinion on where to tap
+  nativeById(id) { for (let i = 0; i < 4; i++) { try { sh("uiautomator dump /sdcard/ui.xml >/dev/null 2>&1"); const x = sh("cat /sdcard/ui.xml");
+      const m = x.match(new RegExp('resource-id="' + id + '"[^>]*?bounds="\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]"'));
+      if (m) return { x: (+m[1] + +m[3]) / 2, y: (+m[2] + +m[4]) / 2, l: +m[1], t: +m[2], r: +m[3], b: +m[4] }; } catch (e) {} } return null; }
   nativeButton(text) { this.webviewBounds(); const m = [...(this.lastDump || "").matchAll(/<node [^>]*?(?:text|content-desc)="([^"]*)"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/g)].find((m) => m[1].trim().toLowerCase() === text.toLowerCase());
     return m ? { x: (+m[2] + +m[4]) / 2, y: (+m[3] + +m[5]) / 2 } : null; }
   // find a control by its words (or a CSS selector), scroll it into view, and return its centre in phone pixels

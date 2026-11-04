@@ -208,6 +208,20 @@ export async function runStage4(drv, R, dev = {}) {
         `sort ${sort} ms · filter ${filter} ms${jank ? ` · scrolling: ${jank.pct}% of ${jank.of} frames slow` : ""}${mem ? ` · memory ${mem} MB` : ""}`);
     });
   });
+  await R.journey("Performance", "Back from a deal returns to the same card (1,500 deals)", async (step) => {
+    await step("1,500 deals loaded", async () => { await seed(DS.scale(1500, 996000000000)); await reopen(); });
+    for (const target of [40, 300, 700]) await step(`card ${target}`, async () => {
+      const r = await drv.eval(`(async()=>{const fr=()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));try{closeSheet()}catch(e){}
+        const cards=()=>[...document.querySelectorAll(".dcard[data-id]")];
+        for(let i=0;i<400;i++){const c=cards()[${target}];if(!c)break;const y=c.getBoundingClientRect().top;if(Math.abs(y-120)<5)break;scrollBy(0,Math.max(-600,Math.min(600,y-120)));await fr()}
+        const top=()=>{let b=null,bd=1e9;for(const c of cards()){const d=Math.abs(c.getBoundingClientRect().top-120);if(d<bd){bd=d;b=c}}return b&&b.dataset.id};
+        const before=top(),d=HD.deals.find(x=>String(x.id)===before);DV=d;d.live=undefined;go("deal");await fr();await new Promise(r=>setTimeout(r,400));
+        onBack();await fr();await fr();await new Promise(r=>setTimeout(r,400));const after=top(),L=cards();
+        return{before:L.findIndex(c=>c.dataset.id===before),after:L.findIndex(c=>c.dataset.id===after),tab}})()`);
+      P.add(`after scrolling to deal ${target}, opening it and pressing Back, the same deal is at the top`, ok(r.tab === "deals" && r.before >= 0 && r.before === r.after), `before: card ${r.before}, after Back: card ${r.after}`);
+      await drv.eval(`scrollTo(0,0);1`);
+    });
+  });
   fs.mkdirSync("results", { recursive: true }); fs.writeFileSync("results/performance-raw.txt", JSON.stringify(perf, null, 1));
 
   if (!dev.sh) return;

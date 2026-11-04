@@ -15,9 +15,12 @@ const LOG = []; // every discrepancy, in full (the report table shows the first 
 // ---------- reading the screen ----------
 const READ = `(()=>{const app=document.getElementById("app"),T=app.innerText,m=T.match(/(\\d[\\d,]*) deals?\\b/);
   const chips={};document.querySelectorAll("#chips button").forEach(b=>{const x=b.innerText.trim().match(/^(.*?)\\s+(\\d+)$/);if(x)chips[x[1]]=+x[2]});
-  const cards=[...document.querySelectorAll(".dcard")].map(c=>{const t=c.querySelector('.dbody div[style*="font-weight:700"]');
+  /* cards off the screen are only drawn when scrolled to (for speed); draw them all while reading, as scrolling would */
+  const all=[...document.querySelectorAll(".dcard")];all.forEach(c=>c.style.contentVisibility="visible");
+  const cards=all.map(c=>{const t=c.querySelector('.dbody div[style*="font-weight:700"]');
     return{aria:c.getAttribute("aria-label"),title:t?t.innerText.replace(/^NEW\\s+/,""):"",text:c.innerText,img:!!c.querySelector(".dbody img")}});
   const bad=(T.match(/.{0,40}(\\bundefined\\b|\\bNaN\\b|\\bnull\\b|\\[object Object\\]).{0,40}/)||[])[0]||null;
+  all.forEach(c=>c.style.contentVisibility="");
   return{count:m?+m[1].replace(/,/g,""):0,empty:/No deals right now/.test(T),chips,cards,bad,loading:/Loading deals…/.test(T),err:(app.querySelector(".card.bad")||{}).innerText||"",
     sort:(document.getElementById("ds")||{}).value||"",filter:(document.querySelector("#chips button:not(.s)")||{}).innerText||""}})()`;
 

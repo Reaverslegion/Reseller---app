@@ -72,7 +72,16 @@ export class App {
     await this.key(61); await this.hideKeyboard(); }
   async selectAll() { try { sh("input keycombination 113 29"); } catch (e) { sh("input keyevent 123"); for (let i = 0; i < 80; i++) sh("input keyevent 67"); } await sleep(300); }
   keyboardShown() { try { return /mInputShown=true/.test(sh("dumpsys input_method")); } catch (e) { return false; } }
-  async hideKeyboard() { if (this.keyboardShown()) await this.key(4); }
+  // close the phone's keyboard like a person would: tap a blank spot in the app's top bar (the title area), so the box
+  // loses focus and Android hides the keyboard. Only if focus is still in a box after that, press Back once.
+  async hideKeyboard(c = this.main) {
+    const inBox = () => this.eval(`!!document.activeElement&&/INPUT|TEXTAREA/.test(document.activeElement.tagName)`, c).catch(() => false);
+    if (!(await inBox())) return;
+    const b = await this.calibrate(c), spot = await this.eval(`(()=>{const busy=e=>!!(e&&e.closest&&e.closest("button,a,input,select,textarea,summary,label,[onclick],[role=button],[tabindex]"));
+      for(const y of [6,14,24,40,60,90])for(const fx of [0.5,0.35,0.65,0.2,0.8]){const x=innerWidth*fx,e=document.elementFromPoint(x,y);if(e&&!busy(e))return{x,y}}return null})()`, c).catch(() => null);
+    if (!spot) { await this.key(4); await sleep(700); return; }
+    await this.tapXY(b.l + spot.x * b.k, b.t + spot.y * b.k); await sleep(900);
+    if (await inBox()) { await this.key(4); await sleep(700); } }
   async shot(name) { const f = `${this.shotDir}/${String(++this.n).padStart(2, "0")}-${name.replace(/[^a-z0-9]+/gi, "-").slice(0, 50)}.png`;
     try { fs.writeFileSync(f, execFileSync("adb", ["exec-out", "screencap", "-p"], { maxBuffer: 64 << 20, timeout: 30000 })); this.shots.push(f); return f; } catch (e) { return null; } }
   // ---------- the app's web view ----------
@@ -163,7 +172,9 @@ export class App {
     const p = await this.locate(spec, c);
     await this.eval(`(()=>{window.__lt=null;addEventListener("pointerdown",e=>{window.__lt={x:e.clientX,y:e.clientY}},{capture:true,once:true,passive:true});return 1})()`, c).catch(() => {});
     await this.tapXY(p.x, p.y); await sleep(150);
-    const lt = await this.eval("window.__lt", c).catch(() => null), b = this.cal && this.cal.get(c);
+    let lt = await this.eval("window.__lt", c).catch(() => null), b = this.cal && this.cal.get(c);
+    if (!lt && !spec._again) { // the touch never reached the app (e.g. the keyboard was over it): close the keyboard, try again
+      this.missed = (this.missed || 0) + 1; await this.hideKeyboard(c); await sleep(500); return this.tap({ ...spec, _again: true }, c); }
     if (lt && b) { const off = Math.hypot(lt.x - p.px, lt.y - p.py);
       b.l = p.x - lt.x * b.k; b.t = p.y - lt.y * b.k;     // where the app really is now
       if (off > 12) { this.missed = (this.missed || 0) + 1; if (spec._again) throw new Error(`taps on "${spec.text || spec.sel}" keep landing ${Math.round(off)}px away`);

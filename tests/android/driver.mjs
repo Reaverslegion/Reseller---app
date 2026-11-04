@@ -152,15 +152,19 @@ export class App {
       if(sheet&&sheet.classList.contains("on")){const inS=L.filter(e=>sheet.contains(e));if(inS.length)L=inS}
       if(onb&&getComputedStyle(onb).display!=="none"){const inO=L.filter(e=>onb.contains(e));if(inO.length)L=inO}
       const pick=document.getElementById("pick");if(pick&&pick.style.display==="block"){const inP=L.filter(e=>pick.contains(e));if(inP.length)L=inP}
-      const e=L[spec.nth||0];if(!e)return{missing:L.length};const de=document.documentElement,sb=de.style.scrollBehavior;de.style.scrollBehavior="auto";e.scrollIntoView({block:"center",inline:"center"});de.style.scrollBehavior=sb;
+      const e=L[spec.nth||0];if(!e)return{missing:L.length};if(!spec._swiped){const de=document.documentElement,sb=de.style.scrollBehavior;de.style.scrollBehavior="auto";e.scrollIntoView({block:"center",inline:"center"});de.style.scrollBehavior=sb}
       const r=e.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2,top=document.elementFromPoint(cx,cy);
       return{x:cx,y:cy,w:innerWidth,h:innerHeight,covered:top&&top!==e&&!e.contains(top)&&!(top.contains&&top.contains(e))?(top.id||top.className||top.tagName):null,label:lab(e).slice(0,60)}})`;
     let r;
-    for (let i = 0; i < 8; i++) { r = await this.eval(`${find}(${JSON.stringify(spec)})`, c);
+    // older Android web views (Chrome 109 on the emulator) scroll to the wrong place for boxes inside a folded section, so once
+    // swiping has started the page is no longer asked to scroll: the swipes do it, like a person
+    spec = { ...spec };
+    for (let i = 0; i < 16; i++) { r = await this.eval(`${find}(${JSON.stringify(spec)})`, c);
       // off the visible screen (the emulator's web view sometimes ignores "scroll into view"): swipe with a real finger
       // movement, like a person scrolling, then look again (only when its centre is outside the screen).
       if (r && r.missing === undefined && (r.y > r.h - 2 || r.y < 2)) { const [W, H] = (sh("wm size").match(/(\d+)x(\d+)/) || [0, 1080, 1920]).slice(1).map(Number);
-        const up = r.y > r.h - 2; sh(`input swipe ${W / 2} ${Math.round(H * (up ? 0.65 : 0.35))} ${W / 2} ${Math.round(H * (up ? 0.35 : 0.65))} 400`); this.swipes = (this.swipes || 0) + 1; await sleep(900); continue; }
+        const up = r.y > r.h - 2; const far = Math.abs(up ? r.y - r.h / 2 : r.h / 2 - r.y) > r.h * 0.6, a = far ? 0.75 : 0.62, z = far ? 0.25 : 0.38;
+        sh(`input swipe ${W / 2} ${Math.round(H * (up ? a : z))} ${W / 2} ${Math.round(H * (up ? z : a))} 500`); spec._swiped = true; this.swipes = (this.swipes || 0) + 1; await sleep(900); continue; }
       if (r && !r.missing && r.missing !== 0 && !r.covered) break; await sleep(700); }
     if (!r || r.missing !== undefined) throw new Error(`couldn't find "${spec.text || spec.sel}" on screen`);
     if (r.y > r.h - 2 || r.y < 2) { const g = await this.eval(`(()=>{const d=document.documentElement;return"page scrolled "+Math.round(scrollY)+" of "+(d.scrollHeight-innerHeight)+" possible, screen "+innerHeight+" tall, control at "+Math.round(${r.y})+"; browser "+((navigator.userAgent.match(/Chrome\\/[\\d.]+/)||[""])[0])})()`, c).catch(() => "");

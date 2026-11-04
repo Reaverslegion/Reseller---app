@@ -163,7 +163,8 @@ export class App {
         const up = r.y > r.h - 2; sh(`input swipe ${W / 2} ${Math.round(H * (up ? 0.65 : 0.35))} ${W / 2} ${Math.round(H * (up ? 0.35 : 0.65))} 400`); this.swipes = (this.swipes || 0) + 1; await sleep(900); continue; }
       if (r && !r.missing && r.missing !== 0 && !r.covered) break; await sleep(700); }
     if (!r || r.missing !== undefined) throw new Error(`couldn't find "${spec.text || spec.sel}" on screen`);
-    if (r.y > r.h - 2 || r.y < 2) throw new Error(`"${spec.text || spec.sel}" stayed off the visible screen even after swiping`);
+    if (r.y > r.h - 2 || r.y < 2) { const g = await this.eval(`(()=>{const d=document.documentElement;return"page scrolled "+Math.round(scrollY)+" of "+(d.scrollHeight-innerHeight)+" possible, screen "+innerHeight+" tall, control at "+Math.round(${r.y})+"; browser "+((navigator.userAgent.match(/Chrome\\/[\\d.]+/)||[""])[0])})()`, c).catch(() => "");
+      throw new Error(`"${spec.text || spec.sel}" stayed off the visible screen even after swiping (${g})`); }
     if (r.covered) throw new Error(`"${spec.text || spec.sel}" is covered by something else (${r.covered})`);
     await sleep(250);
     const b = await this.calibrate(c);

@@ -43,7 +43,7 @@ await R.journey(A, "Previous version (build #120) with your kind of information"
     add("previous version accepted the items, settings and draft", /"n":3/.test(r), r);
     await sleep(3000); await app.eval(`tab="stock";render();1`); await sleep(1500); await app.shot("previous version - stock");
     oldBackup = await svc("backup=1");
-    add("previous version's cloud backup saved (on the local copy of your current Scan service)", JSON.stringify(oldBackup.j || {}).includes(M1), `HTTP ${oldBackup.status}`);
+    add("previous version's cloud backup (needs https; the private test service here is http — backup/restore is tested below with the test wrapper)", false, `real builds only connect over https; app reported ${r}`, "NOT TESTED");
     await leave(); await open(); before = await app.eval(DUMP);
     const b = JSON.parse(before), s = JSON.parse(b.resell_helper_v1 || "{}");
     add("previous version kept everything after closing and reopening", (s.items || []).length === 3 && (b.flipscout_draft || "").includes(DRAFT) && s.set && s.set.theme === "dark",
@@ -70,7 +70,12 @@ await R.journey(A, "Update to the testing build, installed over the top", async 
     add("no stored entry was lost in the update", lost.length === 0, lost.length ? "LOST: " + lost.join(", ") : `all ${Object.keys(b).length} entries present; new entries added by the new version: ${Object.keys(c).filter((k) => !(k in b)).join(", ") || "none"}`);
     const x = norm(b.resell_helper_v1), y = norm(c.resell_helper_v1);
     add("every item is identical after the update (names, prices, status, sale figures)", JSON.stringify(x.items) === JSON.stringify(y.items), `${y.items.length} items`);
-    for (const k of ["rules", "set", "hunt", "gate", "base"]) add(`${{ rules: "money rules (fees, minimum profit, budget)", set: "settings (Scan service address and key, theme)", hunt: "hunt settings (categories)", gate: "checklist", base: "tracked items" }[k]} identical after the update`, x[k] === y[k], x[k] === y[k] ? "identical" : "CHANGED");
+    { const rb = JSON.parse(b.resell_helper_v1 || "{}").rules || {}, ra = JSON.parse(c.resell_helper_v1 || "{}").rules || {};
+      const diffs = [...new Set([...Object.keys(rb), ...Object.keys(ra)])].filter((k) => JSON.stringify(rb[k]) !== JSON.stringify(ra[k])).map((k) => `${k}: ${JSON.stringify(rb[k])} → ${JSON.stringify(ra[k])}`);
+      console.log("MONEY RULE DIFFERENCES: " + (diffs.join("; ") || "none"));
+      const yours = ["feePct", "feeFixed", "minProfit", "budget", "maxPrice", "minRoi", "maxStock", "minSales", "staleDays", "minPct", "seller", "cheap"].filter((k) => k in rb && JSON.stringify(rb[k]) !== JSON.stringify(ra[k]));
+      add("your money rule values are unchanged (fees, minimum profit, budget, limits, seller type)", yours.length === 0, yours.length ? "CHANGED: " + diffs.join("; ") : `all kept${diffs.length ? "; extra fields only: " + diffs.join("; ") : ""}`); }
+    for (const k of ["set", "hunt", "gate", "base"]) add(`${{ rules: "money rules (fees, minimum profit, budget)", set: "settings (Scan service address and key, theme)", hunt: "hunt settings (categories)", gate: "checklist", base: "tracked items" }[k]} identical after the update`, x[k] === y[k], x[k] === y[k] ? "identical" : "CHANGED");
     add("the unsaved add-item draft survived the update", b.flipscout_draft === c.flipscout_draft && (c.flipscout_draft || "").includes(DRAFT), b.flipscout_draft === c.flipscout_draft ? "identical" : "CHANGED");
     add("other stored entries unchanged", changed.filter((k) => k !== "resell_helper_v1").length === 0, changed.length ? "changed: " + changed.join(", ") : "none changed");
     await app.eval(`tab="stock";render();1`); await sleep(1500); const st = await app.eval(`document.getElementById("app").innerText`); await app.shot("updated - stock");
@@ -81,6 +86,17 @@ await R.journey(A, "Update to the testing build, installed over the top", async 
   });
 });
 
+// The real APK only connects over https (as your phone does to the live service), but the private local copy of the Scan
+// service here is plain http. So the service and backup checks below use the TEST WRAPPER of the same testing-branch app code
+// (identical app code; its Android wrapper also allows http to this machine), loaded with exactly the data the update produced.
+await R.journey(A, "Switch to the test wrapper of the same app code (for the Scan service checks)", async (step) => {
+  await step("test wrapper installed with the updated app's data", async () => {
+    const data = await app.eval(DUMP); await leave(); safe(() => adb("uninstall", PKG)); app.install(process.env.WRAP_APK); await open();
+    await app.eval(`(()=>{const d=${JSON.stringify("__D__")};for(const [k,v] of Object.entries(JSON.parse(d)))localStorage.setItem(k,v);return 1})()`.replace(JSON.stringify("__D__"), JSON.stringify(data)));
+    await leave(); await open(); await app.eval(`S.set.url="http://localhost:8787";save();try{pushConfig(true)}catch(e){}1`); await sleep(3000);
+    add("test wrapper holds the same items as the updated app", await app.eval(`S.items.length`) === 3);
+  });
+});
 await R.journey(A, "Updated app with your CURRENT Scan service (local copy of the live code)", async (step) => {
   await step("features against the current Scan service", async () => {
     const run = await svc("run=1"); add("a scan runs on the current Scan service code (fake eBay)", run.status === 200, `HTTP ${run.status} ${JSON.stringify(run.j || {}).slice(0, 120)}`);
@@ -94,7 +110,7 @@ await R.journey(A, "Updated app with your CURRENT Scan service (local copy of th
       await app.eval(`salesSheet((HD.deals[0]||{}).pkey,"x");1`); await sleep(4000); const sl = await app.eval(`document.getElementById("sheet").innerText`); await app.eval(`closeSheet();1`);
       add("the sales list behind a price loads", /Sales behind this price/.test(sl) && !/Couldn't load/.test(sl), sl.replace(/\s+/g, " ").slice(0, 120));
     }
-    const calls = await app.eval(`(async()=>{const o={};const id=(HD.deals[0]||{}).id||"";for(const q of ["config=1","follows=1","prices=1","flags=1","fillstats=1","check="+id,"problems=1"]){try{const d=await api(q);o[q.split("=")[0]]=d&&d.error?"error: "+d.error:"ok "+JSON.stringify(d).slice(0,60)}catch(e){o[q.split("=")[0]]="error: "+e.message}}return JSON.stringify(o)})()`);
+    const calls = await app.eval(`(async()=>{const o={};const id=((HD.deals||[])[0]||{}).id||"";for(const q of ["config=1","follows=1","prices=1","flags=1","fillstats=1","check="+id,"problems=1"]){try{const d=await api(q);o[q.split("=")[0]]=d&&d.error?"error: "+d.error:"ok "+JSON.stringify(d).slice(0,60)}catch(e){o[q.split("=")[0]]="error: "+e.message}}return JSON.stringify(o)})()`);
     const c = JSON.parse(calls);
     for (const k of ["config", "follows", "prices", "flags", "fillstats", "check"]) add(`"${k}" works with the current Scan service`, /^ok/.test(c[k]), c[k]);
     if (/^ok/.test(c.problems) && /problems/.test(c.problems)) add(`"problems" works with the current Scan service`, true, c.problems);

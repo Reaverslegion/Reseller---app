@@ -34,6 +34,9 @@ jobs:
           echo "previous: build #$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$OLD --jq .run_number) (main, $(gh api repos/$GITHUB_REPOSITORY/actions/runs/$OLD --jq .head_sha | cut -c1-7))"
           echo "new: build #$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$NEW --jq .run_number) (testing, $(gh api repos/$GITHUB_REPOSITORY/actions/runs/$NEW --jq .head_sha | cut -c1-7))"
           gh run download $OLD -n flipscout-apk -D old; gh run download $NEW -n flipscout-apk-TESTING-branch -D new
+          WRAP=$(grep -o 'wrap=[0-9]*' $R | cut -d= -f2); test "$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$WRAP --jq .head_branch)" = testing
+          gh run download $WRAP -n flipscout-emulator-test-apk -D wrap; f=$(find wrap -name "*.apk" | head -1); [ "$f" = wrap/FlipScout.apk ] || mv "$f" wrap/FlipScout.apk
+          echo "test wrapper of the same app code: test run $WRAP ($(gh api repos/$GITHUB_REPOSITORY/actions/runs/$WRAP --jq .head_sha | cut -c1-7))"
           for d in old new; do ls -la $d; f=$(find $d -name "*.apk" | head -1); test -n "$f"; [ "$f" = "$d/FlipScout.apk" ] || mv "$f" $d/FlipScout.apk; done
           echo "NEW_RUN=$NEW" >> $GITHUB_ENV
       - name: Same app ID and same signing certificate (read from the two files)
@@ -79,7 +82,7 @@ jobs:
           ram-size: 3072M
           emulator-boot-timeout: 900
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -no-metrics
-          script: OLD_APK=old/FlipScout.apk NEW_APK=new/FlipScout.apk node tests/android/update.mjs
+          script: OLD_APK=old/FlipScout.apk NEW_APK=new/FlipScout.apk WRAP_APK=wrap/FlipScout.apk node tests/android/update.mjs
       - name: Results
         if: always()
         run: |

@@ -194,7 +194,7 @@ export class Results {
     // start each journey from a clean screen: close a list or picker left open by an earlier journey (phone's Back button)
     try { await app.unblock(); if (app.beforeJourney) await app.beforeJourney();
       // the in-app browser (Fill) left open on top of the app: close it with its own Done button
-      for (let i = 0; i < 2; i++) { let f = ""; try { f = sh("dumpsys window | grep mCurrentFocus"); } catch (e) {} if (!/InAppBrowser|cordova/i.test(f)) break;
+      for (let i = 0; i < 2; i++) { let open = false; try { open = (await (await fetch("http://127.0.0.1:9222/json/list")).json()).some((t) => t.type === "page" && !/^https:\/\/localhost/.test(t.url) && /^https?:/.test(t.url)); } catch (e) {} if (!open) break;
         const d = app.nativeButton("Done"); if (d) await app.tapXY(d.x, d.y); else await app.back(); await sleep(2000); }
       await app.hideKeyboard();
       for (let i = 0; i < 2 && await app.eval(`document.getElementById("sheet").classList.contains("on")||document.getElementById("pick").style.display==="block"`); i++) { await app.back(); await sleep(600); } } catch (e) {}

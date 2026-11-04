@@ -128,6 +128,9 @@ async function schema(env) {
     "ALTER TABLE fillseen ADD COLUMN qty INTEGER", "ALTER TABLE fillseen ADD COLUMN qty_sold INTEGER", "ALTER TABLE fillseen ADD COLUMN gi_at INTEGER"]) {
     try { await D.prepare(sql).run(); } catch (e) { /* column already there */ }
   }
+  // the price book's extra columns (source, sales count, range, sell speed, stock): on a brand-new database they were only
+  // added by the first Fill, so the sales list and stock check failed until then ("no such column: lo")
+  await ensureSrc(env);
   SCHEMA = true;
 }
 async function kvGet(env, k, def) {

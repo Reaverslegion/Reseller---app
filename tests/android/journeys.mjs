@@ -3,7 +3,7 @@
 // Run (inside the emulator job): APK=app.apk TEST_APP_KEY=... node tests/android/journeys.mjs
 import fs from "node:fs";
 import { App, Results, sleep, sh, adb } from "./driver.mjs";
-import { makeDeals, seedDeals, query, ensureFillColumns } from "./seed.mjs";
+import { makeDeals, seedDeals, query } from "./seed.mjs";
 
 const KEY = process.env.TEST_APP_KEY, APK = process.env.APK || "app-debug.apk";
 const CHAOS = (m, ms) => fetch(`http://127.0.0.1:8791/${m === "reset" ? "reset" : m === "stats" ? "stats" : "mode?m=" + m + (ms ? "&ms=" + ms : "")}`).then((r) => r.json());
@@ -89,7 +89,6 @@ await U("Sales list on a database that has never been filled", async (step) => {
 });
 
 await J("Sales list (From N sales ›)", async (step) => {
-  await step("(test set-up) add the price-book columns a first Fill creates", ensureFillColumns);
   await step("'From 24 sales ›' opens the sales behind the price", async () => { await app.tap({ text: "From 24 sales" }); await app.waitText("Sales behind this price");
     await app.waitFor(`/Sells for about/.test(document.getElementById("sheet").innerText)`, 25000, "the sales list loaded"); await app.shot("sales list"); });
   await step("it lists the sales with prices and dates", async () => { const n = await app.eval(`document.querySelectorAll("#sheet a.li").length`); ok(n >= 20, `only ${n} sales listed (24 expected)`); });
@@ -183,18 +182,56 @@ await U("Leaving and coming back", async (step) => {
     sh("settings put system user_rotation 0"); await sleep(2000); app.cal = null; ok(app.alive(), "app died on rotation"); await app.connect().catch(() => {}); await app.waitFor(`!!document.querySelector(".dcard")`, 10000, "deals list after rotation"); });
 });
 
-await U("Wrong key is handled clearly", async (step) => {
-  await step("Menu offers a way to change the address and key after connecting (without hidden admin tools)", async () => { await menu(); await sleep(1000);
-    ok(!!(await app.eval(`!!document.getElementById("s_url")`)), "APP FINDING: once connected, Menu has no way to change the address or key (the connection box only appears in hidden admin tools), so a user who typed a wrong key is stuck"); });
+const openBox = async () => { if (!(await app.eval(`!!document.getElementById("s_url")&&document.getElementById("s_url").offsetParent!==null`))) await app.tap({ sel: "#adv summary" }); };
+const savedKey = (k) => `(()=>{try{return JSON.parse(localStorage.getItem("resell_helper_v1")).set.key===${JSON.stringify(k)}}catch(e){return false}})()`;
+
+await U("Wrong key can be fixed from Menu (fix 1)", async (step) => {
+  await step("once connected, Menu still has the connection box (folded away)", async () => { await menu(); await sleep(1000);
+    ok(!!(await app.eval(`!!document.getElementById("adv")&&!!document.getElementById("s_url")`)), "no connection box in Menu"); });
+  await step("type a setup code with a WRONG key in Menu", async () => { await openBox(); await app.fill({ sel: "#s_url" }, "http://localhost:8787#wrongkey0000000000", undefined, openBox);
+    await app.waitFor(savedKey("wrongkey0000000000"), 8000, "wrong key saved"); });
+  await step("Deals shows 'wrong key' with Check address and key and Try again, and not 'Loading deals…' (fix 3)", async () => { await dealsTab(); await app.waitText("wrong key", 20000);
+    const t = await app.eval(`document.getElementById("app").innerText`); await app.shot("wrong key with buttons");
+    ok(/Check address and key/.test(t), "no 'Check address and key' button"); ok(/Try again/.test(t), "no 'Try again' button"); ok(!/Loading deals…/.test(t), "still says Loading deals… under the error"); });
+  await step("'Check address and key ›' opens the connection box in Menu", async () => { await app.tap("Check address and key"); await sleep(1200);
+    await app.waitFor(`!!document.getElementById("s_url")&&document.getElementById("s_url").offsetParent!==null`, 6000, "the open connection box"); });
+  await step("putting the right key in fixes Deals", async () => { await app.fill({ sel: "#s_url" }, `http://localhost:8787#${KEY}`, undefined, openBox);
+    await app.waitFor(savedKey(KEY), 8000, "right key saved"); await dealsTab();
+    await app.waitFor(`!!document.querySelector(".dcard")||/No deals right now/.test(document.getElementById("app").innerText)`, 30000, "deals (or 'No deals right now')");
+    ok(!/wrong key/i.test(await app.eval(`document.getElementById("app").innerText`)), "still says wrong key"); await app.shot("fixed key"); });
 });
-await U("Wrong key typed into the admin connection box", async (step) => {
-  const openBox = async () => { if (!(await app.eval(`!!document.getElementById("s_url")&&document.getElementById("s_url").offsetParent!==null`))) await app.tap({ sel: "#adv summary" }); };
+
+await U("First load fails, then Try again (fix 3)", async (step) => {
+  await step("with no connection when the app opens, Deals says so and offers Try again, without 'Loading deals…'", async () => { await seedDeals(DEALS); await CHAOS("down");
+    await app.stop(); await app.launch(); await app.waitText("no connection", 30000); await sleep(1500);
+    const t = await app.eval(`document.getElementById("app").innerText`); await app.shot("first load failed");
+    ok(/Try again/.test(t), "no Try again button"); ok(!/Loading deals…/.test(t), "says Loading deals… under the error"); });
+  await step("when the connection is back, Try again loads the deals", async () => { await CHAOS("normal"); await app.tap("Try again");
+    await app.waitFor(`!!document.querySelector(".dcard")`, 30000, "deal cards after Try again"); });
+});
+
+await U("Sales list on a brand-new database (fix 2, Scan service)", async (step) => {
+  await step("the test database's price book has every column before any Fill", async () => {
+    const r = await query("SELECT name FROM pragma_table_info('prices')"); const cols = r.map((x) => x.name);
+    for (const c of ["lo", "hi", "src", "n", "spd", "sdays", "sn", "act", "act_at"]) ok(cols.includes(c), "missing column " + c); });
+});
+
+// Owner checked this on a real Android phone on 4 Nov 2026: tapping the admin Service address box opens the keyboard and it
+// stays open. On the emulator it doesn't. This only records what happens on the emulator (focus and box events) to explain why.
+await R.journey("Android emulator", "Investigation: admin connection box on the emulator", async (step) => {
   await step("open admin tools and the connection box", async () => { await menu(); await app.tap("Open admin tools"); await app.waitText("Admin tools", 8000); await app.netQuiet(); await openBox(); });
-  await step("type a setup code with a WRONG key (on the emulator, taps into this box haven't opened the keyboard; cause not yet confirmed: app or emulator)", async () => { await app.fill({ sel: "#s_url" }, "http://localhost:8787#wrongkey0000000000", undefined, openBox);
-    await app.waitFor(`(()=>{try{return JSON.parse(localStorage.getItem("resell_helper_v1")).set.key==="wrongkey0000000000"}catch(e){return false}})()`, 8000, "wrong key saved"); });
-  await step("Deals shows a clear 'wrong key' message, not a crash", async () => { await dealsTab(); await app.tap("Scan now"); await app.waitText("wrong key", 20000); await app.shot("wrong key message"); });
-  await step("putting the right key back fixes it", async () => { await menu(); await app.tap("Open admin tools"); await app.netQuiet(); await openBox();
-    await app.fill({ sel: "#s_url" }, `http://localhost:8787#${KEY}`, undefined, openBox); await dealsTab(); await app.tap("Scan now"); await app.waitText("Checked|new deal|Check had problems|Just scanned", 40000); });
+  await step("record what happens when the Service address box is tapped", async () => {
+    await app.eval(`(()=>{window.__fe=[];const t0=Date.now(),lg=(k,e)=>window.__fe.push((Date.now()-t0)+"ms "+k+" "+((e.target&&(e.target.id||e.target.tagName))||""));
+      ["focusin","focusout","pointerdown","pointerup","click"].forEach(n=>document.addEventListener(n,e=>lg(n,e),{capture:true,passive:true}));
+      const d=document.getElementById("adv");if(d)d.addEventListener("toggle",()=>window.__fe.push((Date.now()-t0)+"ms box "+(d.open?"opened":"closed")));
+      window.addEventListener("resize",()=>window.__fe.push((Date.now()-t0)+"ms page resized to "+innerWidth+"x"+innerHeight));return 1})()`);
+    await app.tap({ sel: "#s_url", wait: 2500 });
+    const ev = await app.eval("window.__fe.join(' · ')"), f = await app.eval(`document.activeElement.id||document.activeElement.tagName`);
+    let kb = ""; try { kb = (sh("dumpsys input_method").match(/mInputShown=\w+|mIsInputViewShown=\w+|isInputViewShown=\w+/g) || []).join(","); } catch (e) {}
+    await app.shot("admin box tapped");
+    R.add("Android emulator", "admin connection box: what the emulator did", f === "s_url" ? "PASS" : "PARTIALLY TESTED",
+      `focus after tap: ${f}; keyboard: ${kb || "unknown"}; events: ${String(ev).slice(0, 220)}. Verified working on the owner's real Android phone, 4 Nov 2026.`);
+  });
 });
 
 finish();

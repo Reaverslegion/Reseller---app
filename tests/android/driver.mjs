@@ -156,8 +156,14 @@ export class App {
       const r=e.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2,top=document.elementFromPoint(cx,cy);
       return{x:cx,y:cy,w:innerWidth,h:innerHeight,covered:top&&top!==e&&!e.contains(top)&&!(top.contains&&top.contains(e))?(top.id||top.className||top.tagName):null,label:lab(e).slice(0,60)}})`;
     let r;
-    for (let i = 0; i < 4; i++) { r = await this.eval(`${find}(${JSON.stringify(spec)})`, c); if (r && !r.missing && r.missing !== 0 && !r.covered) break; await sleep(700); }
+    for (let i = 0; i < 8; i++) { r = await this.eval(`${find}(${JSON.stringify(spec)})`, c);
+      // off the visible screen (the emulator's web view sometimes ignores "scroll into view"): swipe with a real finger
+      // movement, like a person scrolling, then look again. The bottom 70 points are the tab bar.
+      if (r && r.missing === undefined && (r.y > r.h - 70 || r.y < 50)) { const [W, H] = (sh("wm size").match(/(\d+)x(\d+)/) || [0, 1080, 1920]).slice(1).map(Number);
+        const up = r.y > r.h - 70; sh(`input swipe ${W / 2} ${Math.round(H * (up ? 0.65 : 0.35))} ${W / 2} ${Math.round(H * (up ? 0.35 : 0.65))} 400`); this.swipes = (this.swipes || 0) + 1; await sleep(900); continue; }
+      if (r && !r.missing && r.missing !== 0 && !r.covered) break; await sleep(700); }
     if (!r || r.missing !== undefined) throw new Error(`couldn't find "${spec.text || spec.sel}" on screen`);
+    if (r.y > r.h - 70 || r.y < 50) throw new Error(`"${spec.text || spec.sel}" stayed off the visible screen even after swiping`);
     if (r.covered) throw new Error(`"${spec.text || spec.sel}" is covered by something else (${r.covered})`);
     await sleep(250);
     const b = await this.calibrate(c);

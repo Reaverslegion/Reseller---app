@@ -232,7 +232,7 @@ await R.journey("Android emulator", "Investigation: admin connection box on the 
     let kb = ""; try { kb = (sh("dumpsys input_method").match(/mInputShown=\w+|mIsInputViewShown=\w+|isInputViewShown=\w+/g) || []).join(","); } catch (e) {}
     await app.shot("admin box tapped");
     R.add("Android emulator", "admin connection box: what the emulator did", f === "s_url" ? "PASS" : "PARTIALLY TESTED",
-      `focus after tap: ${f}; keyboard: ${kb || "unknown"}; events: ${String(ev).slice(0, 220)}. Verified working on the owner's real Android phone, 4 Nov 2026.`);
+      `focus after tap: ${f}; keyboard: ${kb || "unknown"}; events: ${String(ev).slice(0, 200)}. Earlier failures: the emulator's web view ignored "scroll into view", so taps landed below the screen (test problem, now scrolls by swiping). Verified working on the owner's real Android phone, 4 Nov 2026.`);
   });
 });
 
@@ -243,6 +243,7 @@ function finish() {
   fs.writeFileSync("results/android.json", JSON.stringify(R.rows, null, 1));
   const c = (s) => R.rows.filter((r) => r.status === s).length;
   if (app.posNotes) R.add("Android emulator", "taps that needed Android's own box position", "PARTIALLY TESTED", app.posNotes.join(" | ").slice(0, 400));
+  if (app.swipes) console.log(`Finger swipes used to bring controls on screen: ${app.swipes}`);
   if (app.missed) console.log(`Taps corrected after the screen shifted: ${app.missed}`);
   if (app.events.length) console.log("Screen-link events:\n" + app.events.join("\n"));
   if (app.unblocked) R.add("Android emulator", "the virtual phone itself froze and was un-stuck", "PARTIALLY TESTED", `${app.unblocked} system "isn't responding" pop-up(s) closed during the run (emulator slowness, not FlipScout)`);

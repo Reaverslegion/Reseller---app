@@ -8,8 +8,9 @@ permissions:
   contents: read
 jobs:
   build:
-    # safety lock: only ever runs for main, so untested branches can never reach the live service or your phone build
-    if: github.ref == 'refs/heads/main'
+    # safety lock: runs for main, or for the testing branch ONLY when started by hand (its file is named as a testing build).
+    # Nothing here installs, deploys or publishes: it only makes a downloadable file.
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/testing')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -107,5 +108,5 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk ../FlipScout.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: flipscout-apk
+          name: ${{ github.ref == 'refs/heads/main' && 'flipscout-apk' || 'flipscout-apk-TESTING-branch' }}
           path: FlipScout.apk

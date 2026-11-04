@@ -173,6 +173,7 @@ jobs:
           disable-animations: true
           disk-size: 4096M
           ram-size: 3072M
+          emulator-boot-timeout: 900
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -no-metrics
           script: REAL_APK=standin/FlipScout.apk TEST_APK=FlipScout-TEST.apk node tests/phone/isolation.mjs
       - name: Your live Scan service was not changed

@@ -32,7 +32,7 @@ const drv = {
 
 // a clean app, set up through its own screens the way a new user would
 const ready = await R.journey("Android emulator", "Stage 3 set-up (clean app)", async (step) => {
-  await step("app data cleared and app opened", async () => { if (!sh("pm list packages").includes(PKG)) app.install(process.env.APK || "apk/app-debug.apk");
+  await step("app data cleared and app opened", async () => { if (!sh("pm list packages").includes(PKG)) app.install(process.env.APK || "apk/FlipScout.apk");
     try { sh(`pm clear ${PKG}`); } catch (e) {} try { sh(`pm grant ${PKG} android.permission.POST_NOTIFICATIONS`); } catch (e) {}
     await app.launch(); await app.waitFor(`typeof render==="function"`, 30000, "the app"); });
   await step("welcome guide", async () => { await app.waitText("Your 24/7 bargain hunter", 20000); for (let i = 0; i < 3; i++) { const dot = () => app.eval(`[...document.querySelectorAll("#onb .dots i")].findIndex(x=>x.classList.contains("on"))`);

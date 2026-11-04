@@ -4,6 +4,7 @@
 #   1. Fill opens the fake eBay sold pages (http://localhost:8790) instead of www.ebay.co.uk, so tests never touch eBay.
 #   2. Android allows the app to talk to "localhost" without encryption (the private test Scan service on the test machine).
 #   3. The app's web view may call that http address from its https page.
+#   4. The test app's web view can be inspected, so the tests can read the screen (your real app can't be).
 set -euo pipefail
 stage=${1:?before|android}
 if [ "$stage" = before ]; then
@@ -20,5 +21,5 @@ else
 XML
   grep -q networkSecurityConfig $M || sed -i 's#<application#<application android:networkSecurityConfig="@xml/network_security_config"#' $M
   grep -c 'networkSecurityConfig' $M
-  node -e 'const f=process.argv[1],c=JSON.parse(require("fs").readFileSync(f,"utf8"));c.android={...(c.android||{}),allowMixedContent:true};require("fs").writeFileSync(f,JSON.stringify(c,null,2));console.log("test app config:",JSON.stringify(c.android))' $C
+  node -e 'const f=process.argv[1],c=JSON.parse(require("fs").readFileSync(f,"utf8"));c.android={...(c.android||{}),allowMixedContent:true,webContentsDebuggingEnabled:true};require("fs").writeFileSync(f,JSON.stringify(c,null,2));console.log("test app config:",JSON.stringify(c.android))' $C
 fi

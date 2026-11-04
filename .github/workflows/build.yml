@@ -64,23 +64,48 @@ jobs:
           echo '<resources><color name="fs_accent">#83C99A</color></resources>' > $R/values/fs_notify.xml
           sed -i 's#</application>#<meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_flipscout"/><meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/fs_accent"/><meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="deals"/></application>#' android/app/src/main/AndroidManifest.xml
           grep -c ic_stat_flipscout android/app/src/main/AndroidManifest.xml
+      - name: Crash capture
+        run: |
+          # FlipScout's own native crash capture (see android-native/): no accounts, reports go to your Scan service
+          node android-native/add-crash-capture.mjs
+      - name: Release settings
+        run: |
+          # a proper release build: not debuggable, web view not inspectable, nothing copied into Android/Google backups
+          M=android/app/src/main/AndroidManifest.xml; R=android/app/src/main/res
+          mkdir -p $R/xml
+          printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' '<data-extraction-rules><cloud-backup><exclude domain="root" path="."/><exclude domain="file" path="."/><exclude domain="database" path="."/><exclude domain="sharedpref" path="."/></cloud-backup><device-transfer><exclude domain="root" path="."/><exclude domain="file" path="."/><exclude domain="database" path="."/><exclude domain="sharedpref" path="."/></device-transfer></data-extraction-rules>' > $R/xml/data_extraction_rules.xml
+          printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' '<full-backup-content><exclude domain="root" path="."/><exclude domain="file" path="."/><exclude domain="database" path="."/><exclude domain="sharedpref" path="."/></full-backup-content>' > $R/xml/backup_rules.xml
+          sed -i 's#android:allowBackup="true"#android:allowBackup="false" android:fullBackupContent="@xml/backup_rules" android:dataExtractionRules="@xml/data_extraction_rules"#' $M
+          grep -c 'android:allowBackup="false"' $M
+          node -e 'const f="android/app/src/main/assets/capacitor.config.json",fs=require("fs"),c=JSON.parse(fs.readFileSync(f,"utf8"));c.android={...(c.android||{}),webContentsDebuggingEnabled:false};fs.writeFileSync(f,JSON.stringify(c,null,2));console.log(JSON.stringify(c.android))'
+          # signed with the SAME key as before (same file and name), so the installed app updates in place and keeps its data.
+          # The passwords come from GitHub secrets when set; until then the key's existing password is used.
+          cat >> android/app/build.gradle <<'EOF'
+          android {
+            signingConfigs { release { storeFile file('flipscout.keystore'); storePassword System.getenv('KS_PASS') ?: 'android'; keyAlias System.getenv('KS_ALIAS') ?: 'androiddebugkey'; keyPassword System.getenv('KS_KEY_PASS') ?: (System.getenv('KS_PASS') ?: 'android') } }
+            buildTypes { release { signingConfig signingConfigs.release; minifyEnabled false } }
+          }
+          EOF
       - name: Signing key
         env:
           KS: ${{ secrets.KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.KEYSTORE_PASS }}
         run: |
           echo "$KS" | base64 -d > android/app/flipscout.keystore
           test -s android/app/flipscout.keystore
-          keytool -list -v -keystore android/app/flipscout.keystore -storepass android | grep SHA256
-          cat >> android/app/build.gradle <<'EOF'
-          android { signingConfigs { debug { storeFile file('flipscout.keystore'); storePassword 'android'; keyAlias 'androiddebugkey'; keyPassword 'android' } } }
-          EOF
+          keytool -list -v -keystore android/app/flipscout.keystore -storepass "${KS_PASS:-android}" | grep SHA256
       - name: Version number
         run: |
           sed -i -E 's/versionCode [0-9]+/versionCode ${{ github.run_number }}/; s/versionName "[^"]*"/versionName "2.0.${{ github.run_number }}"/' android/app/build.gradle
           grep -E 'versionCode|versionName' android/app/build.gradle
       - name: Build APK
-        run: cd android && chmod +x gradlew && ./gradlew assembleDebug
+        env:
+          KS_PASS: ${{ secrets.KEYSTORE_PASS }}
+          KS_KEY_PASS: ${{ secrets.KEYSTORE_KEY_PASS }}
+        run: |
+          cd android && chmod +x gradlew && ./gradlew assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk ../FlipScout.apk
       - uses: actions/upload-artifact@v4
         with:
           name: flipscout-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: FlipScout.apk

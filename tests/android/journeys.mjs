@@ -7,7 +7,7 @@ console.log = (...a) => { try { fs.writeSync(1, a.map(String).join(" ") + "\n");
 import { App, Results, sleep, sh, adb } from "./driver.mjs";
 import { makeDeals, seedDeals, query } from "./seed.mjs";
 
-const KEY = process.env.TEST_APP_KEY, APK = process.env.APK || "app-debug.apk";
+const KEY = process.env.TEST_APP_KEY, APK = process.env.APK || "FlipScout.apk";
 const CHAOS = (m, ms) => fetch(`http://127.0.0.1:8791/${m === "reset" ? "reset" : m === "stats" ? "stats" : "mode?m=" + m + (ms ? "&ms=" + ms : "")}`).then((r) => r.json());
 const app = new App("screenshots"), R = new Results(app);
 app.beforeJourney = () => CHAOS("normal");   // every journey starts with a normal connection

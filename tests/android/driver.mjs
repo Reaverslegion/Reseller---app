@@ -217,7 +217,8 @@ export class App {
 // ---------- results: every step is PASS / FAIL / NOT TESTED, with a screenshot when it fails ----------
 export class Results {
   constructor(app) { this.app = app; this.rows = []; }
-  async journey(area, name, fn) {
+  // opts.expectCrash: the journey crashes the app on purpose (to test crash capture); only an unexpected end fails
+  async journey(area, name, fn, opts = {}) {
     const app = this.app, logAt = app.logSize(), errAt = app.jsErrors.length; app.phase = name;
     // start each journey from a clean screen: close a list or picker left open by an earlier journey (phone's Back button)
     try { await app.unblock(); if (app.beforeJourney) await app.beforeJourney();
@@ -243,7 +244,8 @@ export class Results {
     };
     try { await fn(step); } catch (e) { this.rows.push({ area, name: `${name} › (journey stopped)`, status: "FAIL", detail: String(e.message || e).slice(0, 300) }); failed = failed || "stopped"; }
     const crashes = app.crashesSince(logAt), errs = app.jsErrors.slice(errAt);
-    this.rows.push({ area: "Android emulator", name: `${name}: no crash`, status: crashes.length || !app.alive() ? "FAIL" : "PASS", detail: crashes.length ? crashes[0] : !app.alive() ? "the app stopped running" : "" });
+    if (opts.expectCrash) this.rows.push({ area: "Android emulator", name: `${name}: running again after the deliberate test crash`, status: app.alive() ? "PASS" : "FAIL", detail: `${crashes.length} crash line(s) in the phone's log, all from the deliberate test` });
+    else this.rows.push({ area: "Android emulator", name: `${name}: no crash`, status: crashes.length || !app.alive() ? "FAIL" : "PASS", detail: crashes.length ? crashes[0] : !app.alive() ? "the app stopped running" : "" });
     this.rows.push({ area: "Android emulator", name: `${name}: no app errors`, status: errs.length ? "FAIL" : "PASS", detail: errs.map((e) => e.msg).join(" || ").slice(0, 300) });
     if (!app.alive()) { try { await app.launch(); } catch (e) {} }
     return !failed;

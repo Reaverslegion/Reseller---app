@@ -1754,7 +1754,7 @@ async function logProblem(env, src, kind, msg, extra = {}) {
     await D.prepare("INSERT INTO errlog (sig,src,kind,msg,place,ver,n,first,at,alerted) VALUES (?,?,?,?,?,?,1,?,?,0) ON CONFLICT(sig) DO UPDATE SET n=n+1, at=excluded.at, ver=excluded.ver, msg=excluded.msg")
       .bind(sig, src, k, m, where, ver, now, now).run();
     const row = await D.prepare("SELECT n, alerted FROM errlog WHERE sig=?").bind(sig).first();
-    if (row && row.n >= (src === "app" ? 5 : 3) && now - (row.alerted || 0) > 6 * 3600e3) {
+    if (row && !/^notice/.test(k) && row.n >= (src === "app" ? 5 : 3) && now - (row.alerted || 0) > 6 * 3600e3) {
       await D.prepare("UPDATE errlog SET alerted=? WHERE sig=?").bind(now, sig).run();
       try { await push(env, "FlipScout problem", `${k}${where ? " (" + where + ")" : ""}: ${m.slice(0, 120)} · ${row.n} times`, { kind: "problem" }); } catch (e) {}
     }
@@ -1974,7 +1974,12 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     const u = new URL(request.url), P = (k) => u.searchParams.get(k);
     // the app sends the key in a header; older app versions put it in the address, which still works
-    if (!env.APP_KEY || !sameKey(request.headers.get("X-FlipScout-Key") || P("key"), env.APP_KEY)) return json({ error: "wrong key" }, 401);
+    // KEY_IN_URL = "off" refuses keys in the web address (only the hidden header works). Until it's switched off, each
+    // use of the old way is noted in the Problems list (no alert), so you can see when no old app version uses it any more.
+    const hk = request.headers.get("X-FlipScout-Key"), uk = env.KEY_IN_URL === "off" ? "" : P("key");
+    if (!env.APP_KEY || !sameKey(hk || uk, env.APP_KEY)) return json({ error: "wrong key" }, 401);
+    if (!hk && uk && env.DB && ctx && ctx.waitUntil) ctx.waitUntil(logProblem(env, "service", "notice: key sent in the web address",
+      "an old FlipScout version (before 25 Oct 2026) sent the key in the web address; when this stops appearing, the old way can be switched off", { where: endpointOf(request) }));
     // hourly limits on the calls that use eBay or write a lot, far above normal use, so a leaked key can't run up your eBay calls
     const lim = P("q") ? ["search", 300] : P("check") ? ["check", 300] : P("fill") ? ["fill", 120] : P("suggest") ? ["suggest", 300] : P("flag") ? ["flag", 200] : P("report") ? ["report", 120] : null;
     if (lim && env.DB) {

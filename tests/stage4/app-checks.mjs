@@ -227,7 +227,33 @@ export async function runStage4(drv, R, dev = {}) {
       await drv.eval(`scrollTo(0,0);1`);
     });
   });
-  fs.mkdirSync("results", { recursive: true }); fs.writeFileSync("results/performance-raw.txt", JSON.stringify(perf, null, 1));
+  // ---- the slow sorts: repeat every sort option many times and record where the time goes ----
+  // total = tap to screen updated; js = time inside the app's own render(); long = browser freezes over 50 ms;
+  // idle = how idle the virtual phone's processor was just before (low = something else was using it)
+  const probe = [];
+  await R.journey("Performance", "Sort timing probe (every sort option, repeated)", async (step) => {
+    for (const n of [13, 1000, 1500]) await step(`${n.toLocaleString("en-GB")} deals`, async () => {
+      await seed(DS.scale(n, 998000000000)); await reopen(); await sleep(3000);
+      await drv.eval(`(()=>{if(!window.__rw){const r0=render;window.__js=0;render=function(){const t=performance.now();try{return r0.apply(this,arguments)}finally{window.__js+=performance.now()-t}};window.__rw=1}
+        window.__long=[];try{new PerformanceObserver(l=>{for(const e of l.getEntries())window.__long.push(Math.round(e.duration))}).observe({entryTypes:["longtask"]})}catch(e){}return 1})()`);
+      const opts = await drv.eval(`[...document.getElementById("ds").options].map(o=>o.value)`);
+      for (let round = 0; round < 3; round++) for (const v of opts) {
+        const idle = dev.sh ? +((sh0("top -b -n 1 | head -4").match(/(\d+)%idle/) || [])[1] || -1) : -1;
+        const r = await drv.eval(`(async()=>{window.__js=0;window.__long=[];const h0=(performance.memory||{}).usedJSHeapSize||0,t=performance.now();
+          const s=document.getElementById("ds");s.value=${JSON.stringify(v)};s.dispatchEvent(new Event("change"));
+          await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));await new Promise(r=>setTimeout(r,60));
+          return{total:Math.round(performance.now()-t-60),js:Math.round(window.__js),long:window.__long.slice(),heapMB:Math.round((((performance.memory||{}).usedJSHeapSize||0)-h0)/1048576)}})()`);
+        probe.push({ n, sort: v, round, idle, ...r });
+      }
+      const mine = probe.filter((x) => x.n === n), tot = mine.map((x) => x.total).sort((a, b) => a - b), slow = mine.filter((x) => x.total > 1500);
+      const med = tot[Math.floor(tot.length / 2)], why = slow.map((x) => `${x.sort} round ${x.round + 1}: ${x.total} ms (app code ${x.js} ms, phone ${x.idle}% idle${x.long.length ? ", freezes " + x.long.join("/") + " ms" : ""})`).join("; ");
+      P.add(`sort probe, ${n.toLocaleString("en-GB")} deals: ${mine.length} sorts (${opts.length} options × 3)`, slow.length ? "FAIL" : "PASS",
+        `median ${med} ms, slowest ${tot[tot.length - 1]} ms, app code median ${mine.map((x) => x.js).sort((a, b) => a - b)[Math.floor(mine.length / 2)]} ms${slow.length ? ` · over 1.5 s: ${why}` : ""}`);
+    });
+  });
+  fs.mkdirSync("results", { recursive: true }); fs.writeFileSync("results/sort-probe.txt", JSON.stringify(probe, null, 1));
+  console.log("SORTPROBE " + JSON.stringify(probe));
+  fs.writeFileSync("results/performance-raw.txt", JSON.stringify(perf, null, 1));
 
   if (!dev.sh) return;
   // ===================== 4. emulator only: the phone's own settings and conditions =====================
@@ -285,6 +311,25 @@ export async function runStage4(drv, R, dev = {}) {
       D.add("connection cuts out mid-way: the deals already shown stay, with a message", ok(t2.cards > 0), `${t2.cards} cards kept`);
       await dev.chaos("normal"); await drv.eval(`(async()=>{HD.busy=false;await loadDeals();return 1})()`); });
   });
+
+  // ===================== native (Android) crash capture: a real test crash =====================
+  await R.journey("Monitoring", "Native Android crash is recorded (deliberate test crash)", async (step) => {
+    await step("Android told to crash the app (adb: am crash)", async () => {
+      await clearLog(); await dev.chaos("normal"); await toDeals(); await sleep(2000);
+      sh(`am crash ${dev.pkg}`); await sleep(4000);
+      if (dev.app.alive()) throw new Error("the app didn't crash (this Android version may not support 'am crash')");
+    });
+    await step("app opened again; the crash reaches the Problems list", async () => {
+      await dev.app.launch(); dev.app.appPid = dev.app.pid(); await drv.waitFor(`typeof render==="function"`, 30000, "the app"); await toDeals();
+      let rows = []; for (let i = 0; i < 20 && !rows.length; i++) { await sleep(1000); rows = await errlog("src='app' AND kind LIKE 'native-crash%'"); }
+      const all = await errlog("src='app'"), info = await drv.eval(`(async()=>{try{const r=await Capacitor.Plugins.CrashInfo.read();return{sdk:r.sdk,exits:(r.exits||[]).length}}catch(e){return{err:String(e)}}})()`);
+      M.add("a native Android crash is recorded with what crashed and where, once (not twice)", ok(rows.length === 1 && rows[0].n === 1 && /CrashedByAdb|shell-induced|RemoteServiceException/i.test(rows[0].msg)),
+        rows[0] ? `"${rows[0].msg}" · version ${rows[0].ver}` : `not recorded; app problems: ${all.map((r) => r.kind).join(", ") || "none"}; crash capture: ${JSON.stringify(info)}`);
+      M.add("the crash record has no private details", ok(rows[0] && !/key=|@|https?:\/\/[^\s]*\?/.test(rows[0].msg)), rows[0] ? "" : "nothing recorded");
+      await drv.menu(); await drv.tap("Open admin tools"); await drv.waitText("Problems", 15000); await sleep(2500); const t = await appText(); await drv.shot("problems list native crash");
+      M.add("admin tools › Problems shows the native crash", ok(/native-crash/.test(t)), (t.match(/App · native-crash[^\n]*/) || ["not shown"])[0]); await drv.dealsTab();
+    });
+  }, { expectCrash: true });
 
   // ===================== 5. backup and restore (round trip through the cloud backup on the test service) =====================
   const B = A("Backup and restore");

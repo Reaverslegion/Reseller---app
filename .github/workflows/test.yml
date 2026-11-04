@@ -74,17 +74,17 @@ jobs:
         run: |
           pip install -q pyyaml
           python3 tests/ci/live-build-steps.py
-          test -s android/app/build/outputs/apk/debug/app-debug.apk
-          ls -la android/app/build/outputs/apk/debug/app-debug.apk
+          test -s FlipScout.apk
+          ls -la FlipScout.apk
       - name: Record result
         if: always()
         run: |
           mkdir -p results
-          if [ -s android/app/build/outputs/apk/debug/app-debug.apk ]; then S=PASS; D="test app built ($(du -k android/app/build/outputs/apk/debug/app-debug.apk | cut -f1) KB)"; else S=FAIL; D="the build failed: see the Build job log"; fi
+          if [ -s FlipScout.apk ]; then S=PASS; D="test app built ($(du -k FlipScout.apk | cut -f1) KB)"; else S=FAIL; D="the build failed: see the Build job log"; fi
           echo "[{\"area\":\"Build\",\"name\":\"test app builds with the live build steps\",\"status\":\"$S\",\"detail\":\"$D\"}]" > results/build.json
       - name: Safety settings inside the built app (debug mode, backups, permissions, signing)
         if: always()
-        run: test -s android/app/build/outputs/apk/debug/app-debug.apk && node tests/ci/apk-check.mjs android/app/build/outputs/apk/debug/app-debug.apk
+        run: test -s FlipScout.apk && node tests/ci/apk-check.mjs FlipScout.apk
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -94,7 +94,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: flipscout-TEST-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: FlipScout.apk
           retention-days: 7
 
   service:
@@ -159,16 +159,16 @@ jobs:
           pip install -q pyyaml
           bash tests/android/prepare-test-app.sh before
           python3 tests/ci/live-build-steps.py
-          test -s android/app/build/outputs/apk/debug/app-debug.apk
+          test -s FlipScout.apk
       - uses: actions/upload-artifact@v4
         with:
           name: flipscout-emulator-test-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: FlipScout.apk
           retention-days: 7
 
   emulator:
     name: Real app on Android emulator
-    needs: [build-e2e]
+    needs: [build-e2e, build]
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -180,6 +180,10 @@ jobs:
         with:
           name: flipscout-emulator-test-apk
           path: apk
+      - uses: actions/download-artifact@v4
+        with:
+          name: flipscout-TEST-apk
+          path: apk-release
       - name: Start fake eBay, the bad-network switch and the private test Scan service (no real keys)
         run: |
           KEY=$(openssl rand -hex 24); echo "::add-mask::$KEY"; echo "TEST_APP_KEY=$KEY" >> $GITHUB_ENV
@@ -207,7 +211,7 @@ jobs:
           disk-size: 4096M
           ram-size: 3072M
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -no-metrics
-          script: APK=apk/app-debug.apk AXE_JS=/tmp/axe/node_modules/axe-core/axe.min.js PART=${{ inputs.part || 'all' }} bash tests/android/run-all.sh
+          script: APK=apk/FlipScout.apk RELEASE_APK=apk-release/FlipScout.apk AXE_JS=/tmp/axe/node_modules/axe-core/axe.min.js PART=${{ inputs.part || 'all' }} bash tests/android/run-all.sh
       - name: Small copies of the screenshots (readable from the log)
         if: always()
         run: |

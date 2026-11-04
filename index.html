@@ -879,7 +879,17 @@ async function flushProblems(){if(prbBusy||!connected())return;prbBusy=true;cons
 window.addEventListener("error",e=>report("crash",(e.message||"script error")+(e.filename?" @"+String(e.filename).split("/").pop()+":"+e.lineno:"")));
 window.addEventListener("unhandledrejection",e=>report("crash",(e.reason&&(e.reason.message||e.reason))||"unhandled promise rejection"));
 // the app closing without going to the background first (a crash, or Android/the user stopping it) is noted next time
-try{if(localStorage.getItem("flipscout_running")==="1")setTimeout(()=>report("unclean-exit","the app closed last time without going to the background first (crash or forced stop)","start"),3000);localStorage.setItem("flipscout_running","1")}catch(e){}
+try{if(localStorage.getItem("flipscout_running")==="1")setTimeout(()=>{if(!window.__exitInfo)report("unclean-exit","the app closed last time without going to the background first (crash or forced stop)","start")},3000);localStorage.setItem("flipscout_running","1")}catch(e){}
+// native (Android) crashes: the app's own crash file, and Android 11+'s record of why the app last closed
+const EXITS={4:"native-crash",5:"native-crash (C/C++)",6:"freeze (app not responding)",7:"failed to start",9:"closed for using too much"};
+(async()=>{try{const P=window.Capacitor&&Capacitor.Plugins&&Capacitor.Plugins.CrashInfo;if(!P)return;const r=await P.read();
+  if(r.sdk>=30)window.__exitInfo=true;let seen=+localStorage.getItem("flipscout_exit_seen")||0,crashAt=0;const first=!localStorage.getItem("flipscout_exit_seen");
+  if(r.javaCrash){const L=String(r.javaCrash).split("\n");crashAt=+L[0]||0;
+    report("native-crash",L.slice(2).filter(l=>l.trim()).slice(0,6).map(l=>l.trim()).join(" ← ")+" (thread "+(L[1]||"?")+")","android")}
+  let max=seen;for(const x of r.exits||[]){if(x.at>max)max=x.at;if(first||x.at<=seen||!EXITS[x.reason])continue;
+    if(x.reason===4&&crashAt&&Math.abs(x.at-crashAt)<15000)continue;   // the same crash, already reported with its details
+    report(EXITS[x.reason],(x.desc||"no details")+" · exit "+x.status+" · "+(x.importance<=100?"in use":"in the background"),"android")}
+  localStorage.setItem("flipscout_exit_seen",String(max||Date.now()))}catch(e){}})();
 document.addEventListener("visibilitychange",()=>{try{localStorage.setItem("flipscout_running",document.hidden?"0":"1")}catch(e){}});
 let PROB=null;async function loadProblems(){try{PROB=(await api("problems=1")).problems||[]}catch(e){PROB={err:errText(e)}}if(tab==="admin")render()}
 function problemsCard(){if(PROB===null&&connected()){PROB=undefined;setTimeout(loadProblems,0)}const P=Array.isArray(PROB)?PROB:[],src={app:"App",service:"Scan service",database:"Database",job:"Background scan"};

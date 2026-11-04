@@ -49,9 +49,10 @@ const fakeItem = (d) => ({ itemId: `v1|${d.id}|0`, legacyItemId: d.id, title: d.
   condition: "Used", description: "<p>Fully working, tested. Comes boxed.</p>", seller: { username: "test_seller", feedbackPercentage: "99.5", feedbackScore: 120 } });
 
 // replace all deals with these, register them as "for sale" on the fake eBay, and give each model 24 sold prices
-export async function seedDeals(deals) {
+// the statements that load these deals and their price history (also used to fill the phone-test database)
+export function seedSql(deals, { days = 2 } = {}) {
   const now = Date.now(), sql = [["DELETE FROM deals"]];
-  for (const d of deals) sql.push(["INSERT INTO deals (id,data,score,created,expires) VALUES (?,?,?,?,?)", [d.id, JSON.stringify(d), d.score, now - 60000, now + 2 * DAY]]);
+  for (const d of deals) sql.push(["INSERT INTO deals (id,data,score,created,expires) VALUES (?,?,?,?,?)", [d.id, JSON.stringify(d), d.score, now - 60000, now + days * DAY]]);
   for (const [, pkey, med] of [...GPU, ...PHONE]) {
     const sales = Array.from({ length: 24 }, (_, j) => [String(520000000000 + j + med * 100), Math.round((med + (j % 9) - 4) * 100) / 100, j % 3 ? 4.99 : 0, now - (j + 1) * DAY / 2]);
     sql.push(["INSERT OR REPLACE INTO fillsales (pkey,data,at) VALUES (?,?,?)", [pkey, JSON.stringify(sales), now]]);
@@ -60,6 +61,10 @@ export async function seedDeals(deals) {
     sales.filter((_, j) => j % 2 === 0).forEach((s) => sql.push(["INSERT OR REPLACE INTO fillseen (id,cat,price,at,title,cond,pkey) VALUES (?,?,?,?,?,?,?)",
       [s[0], pkey.startsWith("phone") ? "9355" : "27386", s[1], s[3], `Sold test item for ${pkey.split(":")[1]}`, "used", pkey]]));
   }
+  return sql;
+}
+export async function seedDeals(deals) {
+  const sql = seedSql(deals);
   for (let i = 0; i < sql.length; i += 150) await runSql(sql.slice(i, i + 150));
   await fetch(EBAY + "/__fake/items", { method: "DELETE" });
   await fetch(EBAY + "/__fake/items", { method: "POST", body: JSON.stringify(deals.map(fakeItem)) });

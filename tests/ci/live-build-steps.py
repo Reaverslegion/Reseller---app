@@ -4,7 +4,7 @@
 #   - "Signing key" (test builds never see your signing key: a throwaway key with a random password is made on the
 #     test machine for each build, used once, never printed and never saved)
 # If the live build file changes so a step is missing or renamed, this stops with an error instead of quietly differing.
-import os, re, secrets, subprocess, sys, yaml
+import json, os, re, secrets, subprocess, sys, yaml
 
 RUN = os.environ.get("RUN_NO", "0")
 steps = yaml.safe_load(open(".github/workflows/build.yml"))["jobs"]["build"]["steps"]
@@ -53,6 +53,18 @@ for s in steps:
             f = "www/index.html"; h = open(f).read()
             h, k = re.subn(r'VER="2\.0\.(\d+)"', r'VER="2.0.\1-TEST"', h)
             h = h.replace("</body>", '<div style="position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 64px);text-align:center;pointer-events:none;z-index:99999"><span style="background:#b42318;color:#fff;font:700 12px sans-serif;padding:3px 10px;border-radius:10px">TEST BUILD</span></div></body>', 1)
-            open(f, "w").write(h); print(f"PHONE TEST: TEST label added (version changed: {k})", flush=True)
+            # LOCKED to the separate test Scan service: every request goes there, whatever is typed into the app's settings,
+            # so the TEST app can never reach your real Scan service or your real cloud backup. Address and throwaway key come
+            # from the phone-test workflow (never printed); without them the build stops rather than make an unlocked TEST app.
+            tu, tk = os.environ.get("TEST_SVC_URL", ""), os.environ.get("TEST_SVC_KEY", "")
+            if not re.match(r"^https://flipscout-phonetest\.[a-z0-9-]+\.workers\.dev$", tu) or not re.match(r"^[0-9a-f]{48}$", tk):
+                sys.exit("PHONE TEST: test service address/key missing or not the test service; refusing to build an unlocked TEST app")
+            old = 'const kfetch=(url,key,qs,o)=>{o=o||{};'
+            if h.count(old) != 1: sys.exit("PHONE TEST: kfetch not found exactly once; update live-build-steps.py")
+            h = h.replace(old, 'const kfetch=(url,key,qs,o)=>{url=TEST_SVC;key=TEST_KEY;o=o||{};', 1)
+            old2 = 'let S=load(),'
+            if h.count(old2) != 1: sys.exit("PHONE TEST: S=load() not found exactly once; update live-build-steps.py")
+            h = h.replace(old2, f'const TEST_SVC={json.dumps(tu)},TEST_KEY={json.dumps(tk)};let S=load();S.set.url=TEST_SVC;S.set.key=TEST_KEY;S.set.admin=true;let ', 1)
+            open(f, "w").write(h); print(f"PHONE TEST: TEST label added (version changed: {k}); locked to the test service {tu}", flush=True)
         print("::endgroup::", flush=True)
 print("Test app built with the live build steps")

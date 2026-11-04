@@ -1,0 +1,230 @@
+# PHONE TEST SERVICE (approved as D9 on 4 Nov 2026): a SEPARATE test Scan service + throwaway database + backup store on your
+# Cloudflare account, filled with invented deals, and the "FlipScout TEST" app locked to it. Run by hand only, on "testing".
+# It never deploys or changes your live Scan service (flipscout-search), its database (flipscout-db) or backup store: those are
+# only LISTED to prove the test ones are different, and the live service's latest deployment is compared before and after.
+# The test service gets no eBay keys, no alert key and no schedule. "remove" deletes the three test resources only.
+name: Phone test service (separate, test only)
+# Started by changing .github/phone-test/request.txt on the testing branch ("set-up" or "remove") — a hand-run workflow can only
+# be started from main, which must not be touched.
+on:
+  push:
+    branches: [testing]
+    paths: [".github/phone-test/request.txt"]
+permissions:
+  contents: read
+concurrency:
+  group: phone-test-service
+  cancel-in-progress: false
+env:
+  WORKER: flipscout-phonetest
+  DB_NAME: flipscout-phonetest-db
+  KV_NAME: flipscout-phonetest-kv
+jobs:
+  decide:
+    name: What was asked (set-up or remove)
+    runs-on: ubuntu-latest
+    outputs:
+      action: ${{ steps.r.outputs.action }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: r
+        run: |
+          A=$(tr -d '[:space:]' < .github/phone-test/request.txt); case "$A" in set-up|remove) ;; *) echo "unknown request '$A'"; exit 1;; esac
+          echo "action=$A" >> $GITHUB_OUTPUT; echo "asked: $A"
+  standin:
+    # a stand-in for your real app: same package name as yours, used only on the emulator to prove the TEST app can't touch it
+    name: Stand-in real app (emulator only)
+    needs: [decide]
+    if: github.ref == 'refs/heads/testing' && needs.decide.outputs.action == 'set-up'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Build the stand-in (live build steps + test-only inspection)
+        env:
+          RUN_NO: ${{ github.run_number }}
+          PRE_BUILD_HOOK: bash tests/android/prepare-test-app.sh android
+        run: |
+          pip install -q pyyaml
+          python3 tests/ci/live-build-steps.py
+          test -s FlipScout.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: standin-real-app
+          path: FlipScout.apk
+          retention-days: 3
+
+  phone-test:
+    name: Test service + TEST app + emulator isolation checks
+    needs: [decide, standin]
+    if: github.ref == 'refs/heads/testing' && needs.decide.outputs.action == 'set-up'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: actions/download-artifact@v4
+        with:
+          name: standin-real-app
+          path: standin
+      - name: Safety check - only test names, never the live ones
+        run: |
+          for n in "$WORKER" "$DB_NAME" "$KV_NAME"; do case "$n" in *phonetest*) ;; *) echo "REFUSED: $n is not a test name"; exit 1;; esac; done
+          for n in flipscout-search flipscout-db flipscout-backup; do for t in "$WORKER" "$DB_NAME" "$KV_NAME"; do [ "$n" != "$t" ] || { echo "REFUSED: $t is a live name"; exit 1; }; done; done
+          echo "Only test resources (names containing 'phonetest') will be created or changed."
+      - name: Test database and backup store (created if missing); live ones only listed to prove they differ
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npm i -g wrangler@4.157.0 >/dev/null 2>&1
+          pick() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const i=s.search(/^\[/m);const a=i<0?[]:JSON.parse(s.slice(i));const n=a.find(x=>(x.title||x.name||"").endsWith(process.argv[1]));console.log(n?(n.id||n.uuid):"")})' "$1"; }
+          PROD_DB=$(wrangler d1 list --json | pick flipscout-db); PROD_KV=$(wrangler kv namespace list | pick flipscout-backup)
+          DB=$(wrangler d1 list --json | pick "$DB_NAME"); [ -n "$DB" ] || { wrangler d1 create "$DB_NAME" >/dev/null; DB=$(wrangler d1 list --json | pick "$DB_NAME"); }
+          KV=$(wrangler kv namespace list | pick "$KV_NAME"); [ -n "$KV" ] || { wrangler kv namespace create "$KV_NAME" >/dev/null; KV=$(wrangler kv namespace list | pick "$KV_NAME"); }
+          test -n "$DB" && test -n "$KV" && test "$DB" != "$PROD_DB" && test "$KV" != "$PROD_KV" || { echo "REFUSED: test ids missing or equal to the live ones"; exit 1; }
+          echo "TEST_DB_ID=$DB" >> $GITHUB_ENV; echo "TEST_KV_ID=$KV" >> $GITHUB_ENV
+          echo "test database $DB and backup store $KV are separate from the live ones"
+          wrangler deployments list --name flipscout-search --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const i=s.search(/^\[/m);const a=JSON.parse(s.slice(i));const l=a[a.length-1]||{};console.log(l.id||"")}catch(e){console.log("")}})' > prod-before.txt
+          echo "live Scan service's latest deployment recorded (to compare at the end): $(test -s prod-before.txt && echo yes || echo 'not readable')"
+      - name: Deploy the separate test Scan service (no eBay keys, no alert key, no schedule)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          mkdir -p ts && cp worker.js ts/ && cd ts
+          printf 'name = "%s"\nmain = "worker.js"\ncompatibility_date = "2024-09-23"\nworkers_dev = true\n\n[[kv_namespaces]]\nbinding = "BACKUP"\nid = "%s"\n\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "%s"\ndatabase_id = "%s"\n' "$WORKER" "$TEST_KV_ID" "$DB_NAME" "$TEST_DB_ID" > wrangler.toml
+          cat wrangler.toml
+          ! grep -qiE "crons|flipscout-search|\"flipscout-db\"" wrangler.toml || { echo "REFUSED: schedule or live names in the test config"; exit 1; }
+          KEY=$(openssl rand -hex 24); echo "::add-mask::$KEY"; echo "TEST_SVC_KEY=$KEY" >> $GITHUB_ENV
+          wrangler deploy > ../deploy.out 2>&1 || { tail -20 ../deploy.out; exit 1; }
+          URL=$(grep -oE 'https://flipscout-phonetest\.[a-z0-9-]+\.workers\.dev' ../deploy.out | head -1); test -n "$URL" || { tail -20 ../deploy.out; exit 1; }
+          echo "TEST_SVC_URL=$URL" >> $GITHUB_ENV; echo "test service: $URL"
+          printf "%s" "$KEY" | wrangler secret put APP_KEY >/dev/null
+          wrangler secret list > ../secrets.txt 2>&1; cat ../secrets.txt | grep -oE '"name": *"[A-Z_]+"' || cat ../secrets.txt
+      - name: Fill the test database with invented deals
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          for i in $(seq 1 30); do c=$(curl -s -o /dev/null -w "%{http_code}" "$TEST_SVC_URL/?config=1" -H "X-FlipScout-Key: $TEST_SVC_KEY"); [ "$c" = 200 ] && break; sleep 5; done; echo "test service answers: $c"
+          for col in "title TEXT" "cond TEXT" "pkey TEXT"; do wrangler d1 execute "$DB_NAME" --remote --command "ALTER TABLE fillseen ADD COLUMN $col" >/dev/null 2>&1 || true; done
+          node tests/phone/make-seed-sql.mjs 1500 > seed.sql
+          cd ts && wrangler d1 execute "$DB_NAME" --remote --file ../seed.sql > ../seed.out 2>&1 || { tail -20 ../seed.out; exit 1; }
+          cd .. && N=$(curl -s "$TEST_SVC_URL/?deals=1" -H "X-FlipScout-Key: $TEST_SVC_KEY" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log((JSON.parse(s).deals||[]).length))'); echo "deals in the test service: $N"; test "$N" = 1500
+      - name: Check the test service is separate, keyed and has no live credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          mkdir -p results
+          NOKEY=$(curl -s -o /dev/null -w "%{http_code}" "$TEST_SVC_URL/?deals=1"); WRONG=$(curl -s -o /dev/null -w "%{http_code}" "$TEST_SVC_URL/?deals=1" -H "X-FlipScout-Key: wrong")
+          SECRETS=$(grep -oE '"name": *"[A-Z_]+"' secrets.txt | grep -oE '[A-Z_]+' | sort | tr '\n' ' ')
+          node -e '
+            const [nokey,wrong,secrets,db,kv,url]=process.argv.slice(1), rows=[]; const add=(name,ok,detail)=>rows.push({area:"Phone test setup",name,status:ok?"PASS":"FAIL",detail});
+            add("the test service refuses requests without its key, or with a wrong key", nokey==="401"&&wrong==="401", `no key ${nokey}, wrong key ${wrong}`);
+            add("the test service holds no eBay keys and no alert key (only its own throwaway key)", secrets.trim()==="APP_KEY", `secrets: ${secrets.trim()||"none listed"}`);
+            add("the test service uses its own database and backup store (different from the live ones)", !!db&&!!kv, "database and backup store ids checked against the live ones before deploying");
+            add("the test service address is separate from the live one", /^https:\/\/flipscout-phonetest\./.test(url), url.replace(/^https:\/\/flipscout-phonetest\.([a-z0-9-]+)\..*/,"flipscout-phonetest.…workers.dev"));
+            require("fs").writeFileSync("results/phone-service.json",JSON.stringify(rows,null,1)); console.log(rows.map(r=>r.status+" "+r.name+" — "+r.detail).join("\n"));' "$NOKEY" "$WRONG" "$SECRETS" "$TEST_DB_ID" "$TEST_KV_ID" "$TEST_SVC_URL"
+      - name: Build the FlipScout TEST app, locked to the test service
+        env:
+          RUN_NO: ${{ github.run_number }}
+          PHONE_TEST: "1"
+          PRE_BUILD_HOOK: bash tests/phone/inspectable.sh
+        run: |
+          pip install -q pyyaml
+          python3 tests/ci/live-build-steps.py
+          mv FlipScout.apk FlipScout-TEST.apk
+          AAPT=$(ls $ANDROID_HOME/build-tools/*/aapt2 | sort -V | tail -1); B=$($AAPT dump badging FlipScout-TEST.apk)
+          P=$(echo "$B" | grep -o "package: name='[^']*'" | cut -d"'" -f2); V=$(echo "$B" | grep -o "versionName='[^']*'" | cut -d"'" -f2); L=$(echo "$B" | grep -o "application-label:'[^']*'" | cut -d"'" -f2)
+          SUM=$(sha256sum FlipScout-TEST.apk | cut -d' ' -f1)
+          printf 'FlipScout TEST app\nfile: FlipScout-TEST.apk\nSHA-256: %s\npackage: %s\nversion: %s\nname: %s\nbuilt from commit: %s (branch %s)\nworkflow run: %s\n' "$SUM" "$P" "$V" "$L" "$GITHUB_SHA" "$GITHUB_REF_NAME" "$GITHUB_RUN_ID" > FlipScout-TEST-checksum.txt
+          cat FlipScout-TEST-checksum.txt
+          node -e 'const [p,v,l,sha]=process.argv.slice(1),rows=[{area:"Phone test setup",name:"TEST app has its own package name, so it installs next to the real app and can never replace it",status:p==="com.reaverslegion.flipscout.test"?"PASS":"FAIL",detail:p},
+            {area:"Phone test setup",name:"TEST app is clearly named and versioned",status:l==="FlipScout TEST"&&/-TEST$/.test(v)?"PASS":"FAIL",detail:`${l}, version ${v}`},
+            {area:"Phone test setup",name:"TEST app built from the testing commit, checksum recorded",status:/^[0-9a-f]{64}$/.test(sha)?"PASS":"FAIL",detail:`commit ${process.env.GITHUB_SHA.slice(0,7)}, SHA-256 ${sha.slice(0,16)}…`}];
+            require("fs").writeFileSync("results/phone-build.json",JSON.stringify(rows,null,1))' "$P" "$V" "$L" "$SUM"
+      - name: Let the emulator use hardware speed-up
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: On the emulator - TEST app next to a stand-in of your real app
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 33
+          target: google_apis
+          arch: x86_64
+          profile: Nexus 5
+          disable-animations: true
+          disk-size: 4096M
+          ram-size: 3072M
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -no-metrics
+          script: REAL_APK=standin/FlipScout.apk TEST_APK=FlipScout-TEST.apk node tests/phone/isolation.mjs
+      - name: Your live Scan service was not changed
+        if: always()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          wrangler deployments list --name flipscout-search --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const i=s.search(/^\[/m);const a=JSON.parse(s.slice(i));const l=a[a.length-1]||{};console.log(l.id||"")}catch(e){console.log("")}})' > prod-after.txt
+          B=$(cat prod-before.txt 2>/dev/null); A=$(cat prod-after.txt)
+          if [ -n "$B" ] && [ "$B" = "$A" ]; then S=PASS; D="latest live deployment unchanged during this run"; elif [ -z "$B$A" ]; then S="PARTIALLY TESTED"; D="live deployment list not readable with this key"; else S=FAIL; D="live deployment changed during this run"; fi
+          echo "[{\"area\":\"Phone test setup\",\"name\":\"your live Scan service was not changed by this run\",\"status\":\"$S\",\"detail\":\"$D\"}]" > results/phone-prod.json; cat results/phone-prod.json
+      - name: Small copies of the screenshots (readable from the log)
+        if: always()
+        run: |
+          command -v convert >/dev/null || sudo apt-get install -y -qq imagemagick >/dev/null
+          for f in screenshots/*/*.png; do [ -f "$f" ] || continue; convert "$f" -resize 320x -quality 50 /tmp/t.jpg; echo "SHOT $(echo "${f#screenshots/}" | tr / _) $(base64 -w0 /tmp/t.jpg)"; done
+      - name: Results
+        if: always()
+        run: node tests/ci/report.mjs results || true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-phone-test
+          path: results/
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FlipScout-TEST-for-phone
+          path: |
+            FlipScout-TEST.apk
+            FlipScout-TEST-checksum.txt
+          retention-days: 14
+
+  remove:
+    name: Remove the test service (test resources only)
+    needs: [decide]
+    if: github.ref == 'refs/heads/testing' && needs.decide.outputs.action == 'remove'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Delete the test Scan service, its database and backup store
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          case "$WORKER$DB_NAME$KV_NAME" in *flipscout-search*|*flipscout-db*|*flipscout-backup*) echo REFUSED; exit 1;; esac
+          npm i -g wrangler@4.157.0 >/dev/null 2>&1
+          pick() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const i=s.search(/^\[/m);const a=i<0?[]:JSON.parse(s.slice(i));const n=a.find(x=>(x.title||x.name||"").endsWith(process.argv[1]));console.log(n?(n.id||n.uuid):"")})' "$1"; }
+          wrangler delete --name "$WORKER" --force || true
+          wrangler d1 delete "$DB_NAME" -y || true
+          KV=$(wrangler kv namespace list | pick "$KV_NAME"); [ -z "$KV" ] || wrangler kv namespace delete --namespace-id "$KV" || true
+          echo "Test service removed. The live Scan service, database and backup store were not touched."

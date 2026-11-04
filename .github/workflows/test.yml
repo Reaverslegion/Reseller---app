@@ -6,6 +6,8 @@ name: Test changes (safe, no live access)
 on:
   push:
     branches-ignore: [main]
+    # the phone-test request file and documents don't need the full test suite
+    paths-ignore: [".github/phone-test/**", "docs/**"]
   pull_request:
     branches: [main]
   workflow_dispatch:

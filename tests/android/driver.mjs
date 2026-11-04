@@ -25,10 +25,11 @@ class CDP {
 }
 
 export class App {
-  constructor(shotDir) { this.shotDir = shotDir; this.n = 0; this.jsErrors = []; this.events = []; this.phase = ""; this.shots = []; fs.mkdirSync(shotDir, { recursive: true }); }
+  // pkg: which app to drive (the real app's package by default; the phone TEST app has its own)
+  constructor(shotDir, pkg = PKG) { this.pkg = pkg; this.shotDir = shotDir; this.n = 0; this.jsErrors = []; this.events = []; this.phase = ""; this.shots = []; fs.mkdirSync(shotDir, { recursive: true }); }
   // ---------- phone ----------
-  install(apk) { adb("install", "-r", "-g", apk); try { sh(`pm grant ${PKG} android.permission.POST_NOTIFICATIONS`); } catch (e) {} }
-  pid() { try { return sh(`pidof ${PKG}`).trim(); } catch (e) { return ""; } }
+  install(apk) { adb("install", "-r", "-g", apk); try { sh(`pm grant ${this.pkg} android.permission.POST_NOTIFICATIONS`); } catch (e) {} }
+  pid() { try { return sh(`pidof ${this.pkg}`).trim(); } catch (e) { return ""; } }
   startLog(file) { try { adb("logcat", "-c"); } catch (e) {} this.logFile = file; this.logcat = spawn("adb", ["logcat", "-v", "time"], { stdio: ["ignore", fs.openSync(file, "a"), "ignore"] }); }
   // crashes since `from` (byte offset in the log): app crash, "not responding", web view crash
   crashesSince(from = 0) { const t = fs.existsSync(this.logFile) ? fs.readFileSync(this.logFile, "utf8").slice(from) : "";
@@ -38,10 +39,10 @@ export class App {
   // the last few phone-system lines about the app, its web view, memory or freezes (to explain a dropped link)
   recentSystemLog() { try { return fs.readFileSync(this.logFile, "utf8").split("\n").slice(-4000).filter((l) => /flipscout|webview|sandboxed/i.test(l) && /Killing|died|lowmemory|lmkd|crash|ANR|FATAL|signal/i.test(l)).slice(-2).join(" | ").slice(0, 250); } catch (e) { return ""; } }
   logSize() { try { return fs.statSync(this.logFile).size; } catch (e) { return 0; } }
-  async launch() { sh(`monkey -p ${PKG} -c android.intent.category.LAUNCHER 1`); for (let i = 0; i < 40 && !this.pid(); i++) await sleep(500); this.appPid = this.pid(); if (!this.appPid) throw new Error("the app did not start"); await this.connect(); }
-  async stop() { sh(`am force-stop ${PKG}`); if (this.main) this.main.close(); this.main = null; await sleep(800); }
+  async launch() { sh(`monkey -p ${this.pkg} -c android.intent.category.LAUNCHER 1`); for (let i = 0; i < 40 && !this.pid(); i++) await sleep(500); this.appPid = this.pid(); if (!this.appPid) throw new Error("the app did not start"); await this.connect(); }
+  async stop() { sh(`am force-stop ${this.pkg}`); if (this.main) this.main.close(); this.main = null; await sleep(800); }
   async home() { sh("input keyevent 3"); await sleep(1500); }
-  async resume() { sh(`monkey -p ${PKG} -c android.intent.category.LAUNCHER 1`); await sleep(2500); }
+  async resume() { sh(`monkey -p ${this.pkg} -c android.intent.category.LAUNCHER 1`); await sleep(2500); }
   // the emulator itself can be slow on GitHub's small machines: turn off "isn't responding" pop-ups, and close any that appear
   prepPhone() { for (const c of ["settings put global hide_error_dialogs 1", "settings put global window_animation_scale 0", "settings put global transition_animation_scale 0", "settings put global animator_duration_scale 0", "svc power stayon true", "input keyevent 82"]) { try { sh(c); } catch (e) {} } }
   async unblock() { for (let i = 0; i < 3; i++) { let f = ""; try { f = sh("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"); } catch (e) { return; }

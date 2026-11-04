@@ -220,9 +220,14 @@ async function cloudPush(manual){
   if(!manual&&!S.items.length&&!S.base.length&&!(H().cats||[]).length)return false; // a brand-new, empty app never overwrites your backup
   // skip the upload when nothing has changed since the last good backup (saves the Scan service's daily storage writes)
   const body=JSON.stringify(S);if(!manual&&body===cloudLast)return true;
+  // a phone that has never backed up or restored here must not silently replace a fuller cloud backup (e.g. after
+  // "Not now" on the restore offer): it waits until you restore, or tap Back up now on purpose
+  if(!manual&&!localStorage.getItem(CAKEY)){try{const r0=await kfetch(S.set.url,S.set.key,"backup=1"),c=await r0.json();
+    const ci=c&&c.data&&Array.isArray(c.data.items)?c.data.items.length:0,cb=c&&c.data&&Array.isArray(c.data.base)?c.data.base.length:0;
+    if(ci+cb>S.items.length+S.base.length){cloudErr="your cloud backup has more saved items than this phone; Restore from cloud, or tap Back up now to replace it";if(tab==="settings")render();return false}}catch(e){}}
   try{const r=await kfetch(S.set.url,S.set.key,"backup=1",{method:"POST",headers:{"Content-Type":"text/plain"},body});const d=await r.json().catch(()=>({}));
     if(!r.ok||d.error)throw new Error(d.error||"error "+r.status);
-    cloudLast=body;localStorage.setItem(CAKEY,String(Date.now()));cloudErr="";if(manual)toast("Backed up.");if(tab==="settings")render();return true}
+    cloudLast=body;localStorage.setItem(CAKEY,String(Date.now()));cloudErr="";if(manual)toast("Backed up.");if(tab==="settings"&&!(document.activeElement&&/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)))render();return true}
   catch(e){cloudErr=e.message==="Failed to fetch"?"no connection":e.message;if(manual)toast("Backup failed: "+cloudErr);return false}
 }
 async function cloudCheck(silentIfNone){
@@ -231,6 +236,7 @@ async function cloudCheck(silentIfNone){
   try{const r=await kfetch(S.set.url,S.set.key,"backup=1"),d=await r.json();
     if(d.error)throw new Error(d.error);
     if(d.none||!d.data||!Array.isArray(d.data.items)){if(!silentIfNone)toast("No cloud backup yet.");return}
+    if(!d.data.rules||typeof d.data.rules!=="object"){if(!silentIfNone)toast("The cloud backup looks incomplete, so it wasn't restored.");return}
     window._cb=d.data;const n=d.data.items.length,t=(d.data.base||[]).length,when=d.at?new Date(d.at).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"recently";
     openSheet(`<h2 style="margin-top:0">Restore your data?</h2><div class="mu">Found a cloud backup from <b>${when}</b> with ${n} deal/stock item${n===1?"":"s"} and ${t} tracked item${t===1?"":"s"}.</div><div class="btns"><button onclick="cloudRestore()">Restore it</button><button class="s" onclick="closeSheet()">Not now</button></div>`);
   }catch(e){if(!silentIfNone)toast("Couldn't check: "+(e.message==="Failed to fetch"?"no connection":e.message))}
@@ -238,7 +244,8 @@ async function cloudCheck(silentIfNone){
 function cloudRestore(){
   const x=window._cb;if(!x)return;const keep=JSON.stringify(S),conn={url:S.set.url,key:S.set.key};
   localStorage.setItem(KEY,JSON.stringify(x));S=load();S.set.url=S.set.url||conn.url;S.set.key=S.set.key||conn.key;try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}
-  closeSheet();tab="deals";prev=[];render();toast("Restored.","Undo",()=>{localStorage.setItem(KEY,keep);S=load();render()});
+  try{localStorage.setItem(CAKEY,String(Date.now()))}catch(e){}cloudLast=JSON.stringify(S);
+  closeSheet();tab="deals";prev=[];render();toast("Restored.","Undo",()=>{localStorage.setItem(KEY,keep);S=load();save();pushConfig();render()});
 }
 function loadDraft(){try{return{...BLANK,...JSON.parse(localStorage.getItem(DKEY)||"{}")}}catch(e){return{...BLANK}}}
 function saveDraft(){try{localStorage.setItem(DKEY,JSON.stringify(F))}catch(e){}}
@@ -253,6 +260,7 @@ const gbp0=n=>(n<0?"-£":"£")+NF0.format(Math.round(Math.abs(+n||0)));
 const known=n=>n!=null&&n!==""&&Number.isFinite(+n),gbpK=(n,w="Unknown")=>known(n)?gbp(n):w,gbp0K=(n,w="Not available")=>known(n)?gbp0(n):w;
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const num=v=>{const n=parseFloat(String(v).replace(/[£,\s]/g,""));return isNaN(n)?0:n};
+const isNum=v=>/^-?\d*\.?\d+$/.test(String(v).replace(/[£,\s]/g,""));
 const $=id=>document.getElementById(id);
 const today=()=>new Date().toISOString().slice(0,10);
 const median=a=>{const s=[...a].sort((x,y)=>x-y),m=s.length>>1;return s.length%2?s[m]:(s[m-1]+s[m])/2};
@@ -337,8 +345,8 @@ function toast(msg,label,fn){
   $("tmsg").textContent=msg;const b=$("tbtn");b.style.display=label?"":"none";b.textContent=label||"";b.onclick=()=>{$("toast").style.display="none";fn&&fn()};
   $("toast").style.display="flex";clearTimeout(tT);tT=setTimeout(()=>$("toast").style.display="none",label?6000:2600);
 }
-function openSheet(h){$("sheet").innerHTML='<div class="grab"></div>'+h;$("ov").style.display="block";requestAnimationFrame(()=>$("sheet").classList.add("on"));sheetOn=true}
-function closeSheet(){$("sheet").classList.remove("on");$("ov").style.display="none";sheetOn=false}
+function openSheet(h){$("sheet").innerHTML='<div class="grab"></div>'+h;$("ov").style.display="block";requestAnimationFrame(()=>{if(sheetOn)$("sheet").classList.add("on")});sheetOn=true}
+function closeSheet(){$("sheet").classList.remove("on");$("ov").style.display="none";sheetOn=false;if(window._dvKeep!==undefined){DV=window._dvKeep;window._dvKeep=undefined}}
 const TIPS={
  maxpay:["Max you can pay","The highest price (including delivery to you) where this item still meets all your rules: minimum profit, minimum return, staying profitable at the low end, and your budget."],
  roi:["Return (ROI)","Profit divided by what you spent. 30% means you make £30 for every £100 you put in."],
@@ -779,9 +787,9 @@ const hourOpts=v=>Array.from({length:24},(_,i)=>`<option value="${i}"${+v===i?" 
 function setConn(v){v=String(v||"").trim();const i=v.indexOf("#");if(i>0){S.set.url=v.slice(0,i);S.set.key=v.slice(i+1)}else S.set.url=v;save();render();toast("Saved.");afterConn()}
 function afterConn(){if(connected()){CT=null;HD.deals=null;FL.list=null;if(H().cats.length)pushConfig();autoPush();if(!S.items.length&&!S.base.length)cloudCheck(true);else cloudSoon()}}
 async function copySetup(){const t=S.set.url+"#"+S.set.key;try{await navigator.clipboard.writeText(t);toast("Setup code copied. Keep it somewhere private.")}catch(e){openSheet(`<h2 style="margin-top:0">Setup code</h2><div class="mu">Long-press and copy. Keep it private.</div><textarea readonly>${esc(t)}</textarea><button onclick="closeSheet()">Done</button>`)}}
-function setHunt(k,v){if(String(v).trim()===""){toast("Left unchanged.");render();return}const n=num(v);if(n<0){toast("Can't be negative.");render();return}H()[k]=n;save();pushConfig();toast("Saved.")}
+function setHunt(k,v){if(String(v).trim()===""){toast("Left unchanged.");render();return}if(!isNum(v)){toast("Type a number.");render();return}const n=num(v);if(n<0){toast("Can't be negative.");render();return}H()[k]=n;save();pushConfig();toast("Saved.")}
 function setSeller(v){S.rules.seller=v;save();pushConfig();render();toast(v==="private"?"Private seller: no final value fee.":"Business seller fees on.")}
-function setRule(k,v){if(String(v).trim()===""){toast("Left unchanged.");render();return}const n=num(v);if(n<0){toast("Can't be negative.");render();return}S.rules[k]=n;if(k==="maxPrice")reLimit();save();pushConfig();toast("Saved.")}
+function setRule(k,v){if(String(v).trim()===""){toast("Left unchanged.");render();return}if(!isNum(v)){toast("Type a number.");render();return}const n=num(v);if(n<0){toast("Can't be negative.");render();return}S.rules[k]=n;if(k==="maxPrice")reLimit();save();pushConfig();toast("Saved.")}
 async function backup(){
   const t=JSON.stringify(S);
   try{if(navigator.share){await navigator.share({text:t});return}}catch(e){if(e&&e.name==="AbortError")return}
@@ -890,7 +898,8 @@ const EXITS={4:"native-crash",5:"native-crash (C/C++)",6:"freeze (app not respon
     if(x.reason===4&&crashAt&&Math.abs(x.at-crashAt)<15000)continue;   // the same crash, already reported with its details
     report(EXITS[x.reason],(x.desc||"no details")+" · exit "+x.status+" · "+(x.importance<=100?"in use":"in the background"),"android")}
   localStorage.setItem("flipscout_exit_seen",String(max||Date.now()))}catch(e){}})();
-document.addEventListener("visibilitychange",()=>{try{localStorage.setItem("flipscout_running",document.hidden?"0":"1")}catch(e){}});
+document.addEventListener("visibilitychange",()=>{try{localStorage.setItem("flipscout_running",document.hidden?"0":"1")}catch(e){}
+  if(!document.hidden&&connected()){if(localStorage.getItem("flipscout_cfg_pending"))pushConfig(true);if(HD.at&&Date.now()-HD.at>300000&&!HD.busy)loadDeals().then(()=>{if(tab==="deals")render()})}});
 let PROB=null;async function loadProblems(){try{PROB=(await api("problems=1")).problems||[]}catch(e){PROB={err:errText(e)}}if(tab==="admin")render()}
 function problemsCard(){if(PROB===null&&connected()){PROB=undefined;setTimeout(loadProblems,0)}const P=Array.isArray(PROB)?PROB:[],src={app:"App",service:"Scan service",database:"Database",job:"Background scan"};
   return`<div class="card"><b>Problems</b><div class="mu">Crashes and errors in the app and the Scan service, newest first. Kept on your Scan service only; no keys or personal details are recorded.</div>
@@ -900,13 +909,15 @@ function problemsCard(){if(PROB===null&&connected()){PROB=undefined;setTimeout(l
 const api1=(q,body)=>kfetch(S.set.url,S.set.key,q,body!==undefined?{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(body)}:{}).then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok||d.error)throw new Error(d.error||("error "+r.status));return d});
 const errText=e=>e.message==="Failed to fetch"?"no connection":e.message;
 let pcT=null;
-function pushConfig(now){clearTimeout(pcT);const go_=async()=>{if(!connected())return;const h=H(),r=S.rules;
+function pushConfig(now){clearTimeout(pcT);try{localStorage.setItem("flipscout_cfg_pending","1")}catch(x){} // cleared once the Scan service has it
+  const go_=async()=>{if(!connected())return;const h=H(),r=S.rules;
   try{await api("config=1",{cats:h.cats,types:h.types,alerts:!!h.alerts,interval:h.interval,paused:h.paused,quiet:h.quiet,region:S.set.region,
    rules:{cheap:r.cheap!==false,maxSpend:+r.maxPrice||0,minProfit:r.minProfit,minRoi:r.minRoi,seller:r.seller,feePct:r.feePct,feeFixed:r.feeFixed,post:h.post,pack:h.pack,bpf:h.bpf,alertScore:h.alertScore,minScore:h.minScore}})}
-  catch(e){toast("Couldn't save hunting settings: "+errText(e))}};
+  catch(e){try{localStorage.setItem("flipscout_cfg_pending","1")}catch(x){}toast("Couldn't save hunting settings yet ("+errText(e)+"). They'll be sent when the connection is back.");return}
+  try{localStorage.removeItem("flipscout_cfg_pending")}catch(x){}};
   if(now)return go_();pcT=setTimeout(go_,800)}
 async function loadDeals(){if(!connected()||HD.busy)return;HD.busy=true;HD.err="";HD.soft="";
-  try{const d=await api("deals=1");HD.deals=(d.deals||[]).map(normType);HD.dealsTotal=d.dealsTotal||null;HD.report=d.report;HD.learned=d.learned||[];HD.close=d.close||[];HD.later=(d.later||[]).map(normType);HD.aucLearn=d.aucLearn||{};HD.learning=d.learning||null;HD.crash=d.lastCrash||null;HD.whyDay=d.whyDay||null;HD.verified=d.verified||null;HD.at=Date.now();markSeen();HD.fails=0;flushProblems()}catch(e){softErr(e);HD.fails=(HD.fails||0)+1;if(HD.fails===3)report("deals-load-failed",errText(e)+" (3 times in a row)","deals")}
+  try{const d=await api("deals=1");HD.deals=(d.deals||[]).map(normType);HD.dealsTotal=d.dealsTotal||null;HD.report=d.report;HD.learned=d.learned||[];HD.close=d.close||[];HD.later=(d.later||[]).map(normType);HD.aucLearn=d.aucLearn||{};HD.learning=d.learning||null;HD.crash=d.lastCrash||null;HD.whyDay=d.whyDay||null;HD.verified=d.verified||null;HD.at=Date.now();markSeen();HD.fails=0;flushProblems();if(localStorage.getItem("flipscout_cfg_pending"))pushConfig(true)}catch(e){softErr(e);HD.fails=(HD.fails||0)+1;if(HD.fails===3)report("deals-load-failed",errText(e)+" (3 times in a row)","deals")}
   HD.busy=false;if(FL.list==null)loadFollows();if(tab==="deals"||tab==="cats")render()}
 // a failed refresh while deals are already showing: a small grey note, not a red box
 function softErr(e){if((HD.deals||[]).length){HD.err="";HD.soft="Couldn't refresh just now · showing the last results"}else{HD.err=errText(e);HD.soft=""}}
@@ -995,8 +1006,8 @@ function speedCard(d){const sp=d.speed;if(!sp||d.kind==="spares")return"";const 
 // "From 30 sales" opens every sale behind the price, newest first
 const salesLink=(d,txt)=>`<button class="link" style="margin:0;min-height:26px;padding:3px 0;font:inherit;color:var(--ac);text-decoration:underline" onclick="event.stopPropagation();salesSheet(${esc(JSON.stringify(d.pkey||""))},${esc(JSON.stringify(d.matchLabel||d.title||""))})">${txt} ›</button>`;
 let salesFails=0;
-async function salesSheet(key,label){if(!key)return;openSheet(`<h2 style="margin-top:0">Sales behind this price</h2><div class="mu">${esc(label)}</div><div class="mu" style="margin-top:10px">Loading sales…</div>`);
-  let r;try{r=await api("sales="+encodeURIComponent(key));salesFails=0}catch(e){if(++salesFails===2)report("sales-load-failed",errText(e)+" (2 times in a row)","sales list");openSheet(`<h2 style="margin-top:0">Sales behind this price</h2><div class="mu">Couldn't load: ${esc(errText(e))}</div><div class="btns"><button onclick="closeSheet()">Close</button></div>`);return}
+async function salesSheet(key,label){if(!key)return;const tok=salesSheet.tok=(salesSheet.tok||0)+1;openSheet(`<h2 style="margin-top:0">Sales behind this price</h2><div class="mu">${esc(label)}</div><div class="mu" style="margin-top:10px">Loading sales…</div>`);
+  let r;try{r=await api("sales="+encodeURIComponent(key));salesFails=0;if(tok!==salesSheet.tok||!sheetOn)return}catch(e){if(tok!==salesSheet.tok||!sheetOn)return;if(++salesFails===2)report("sales-load-failed",errText(e)+" (2 times in a row)","sales list");openSheet(`<h2 style="margin-top:0">Sales behind this price</h2><div class="mu">Couldn't load: ${esc(errText(e))}</div><div class="btns"><button onclick="closeSheet()">Close</button></div>`);return}
   const L=r.sales||[],p=r.price,used=L.filter(x=>x.used).length,dt=t=>t?new Date(t).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"2-digit"}):"date unknown";
   openSheet(`<h2 style="margin-top:0">Sales behind this price</h2><div class="mu">${esc(p&&p.label||label)}</div>
    ${p?`<div class="card" style="margin:10px 0 0;padding:10px 12px"><b>Sells for about ${gbp(p.avg)}</b>${p.post!=null?` + ${gbp(p.post)} post`:""}<div class="mu" style="font-size:13px">${p.lo!=null&&p.hi!=null?`Most £${Math.round(p.lo)}–£${Math.round(p.hi)} · `:""}${used} of ${L.length} sales used, newest first below</div></div>`:""}
@@ -1170,7 +1181,7 @@ function vHunt(){
   ${HD.filter==="guess"?`<div class="hint" style="margin:0 4px 10px">Guesses are priced from what sellers are <b>asking</b>, not what things actually sold for. Check sold prices before buying. No alerts for these.</div>`:""}
   ${(()=>{const A=list.filter(actNow).sort((a,b)=>rightNow(b)-rightNow(a)).slice(0,8);if(!A.length)return"";
     const t=A[0],tw=t.type==="AUC"?"ends in "+left(t.end).replace(" left",""):"listed "+ago(t.created||t.found);
-    return`<section aria-label="Act now" style="margin:2px 0 12px;padding:${ACTOPEN?"6px 0 8px":"0"};border-radius:12px;background:var(--warnbg);border:1px solid color-mix(in srgb,var(--warn) 45%,transparent)">
+    return`<section aria-label="Act now" style="margin:2px 0 12px;padding:${ACTOPEN?"6px 0 8px":"0"};border-radius:12px;background:var(--warnbg);border:1px solid var(--warn);border:1px solid color-mix(in srgb,var(--warn) 45%,transparent)">
     <button class="s" aria-expanded="${ACTOPEN}" onclick="actToggle()" style="display:flex;align-items:center;gap:8px;width:100%;margin:0;min-height:40px;padding:6px 12px;background:none;border:0;border-radius:12px;text-align:left;font-size:14px">
      <span style="font-weight:800;white-space:nowrap">⚡ Act now · ${A.length}</span>
      <span class="mu" style="flex:1;min-width:0;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${ACTOPEN?(A.length>1?"swipe ›":""):esc(t.title)+" "+tw}</span>
@@ -1218,7 +1229,7 @@ function spendSheet(){const m=+S.rules.maxPrice||0;
   openSheet(`<h2 style="margin-top:0">Most I'll spend on one item</h2><div class="mu">Total including postage and eBay's buyer fee. Deals that cost more are hidden, and your max bid never goes above it.</div>
    <label for="sp_in">Limit £</label><input id="sp_in" inputmode="decimal" placeholder="No limit" value="${m>0?m:""}">
    <div class="btns"><button onclick="spendSet($('sp_in').value)">Save</button><button class="s" onclick="spendSet(0)">No limit</button></div>`);setTimeout(()=>{const e=$("sp_in");if(e)e.focus()},50)}
-function spendSet(v){const n=num(v||0);if(!(n>=0)){toast("Type an amount in pounds.");return}S.rules.maxPrice=n;reLimit();save();pushConfig();closeSheet();render();
+function spendSet(v){if(String(v||"").trim()!==""&&!isNum(v)){toast("Type an amount in pounds.");return}const n=num(v||0);if(!(n>=0)){toast("Type an amount in pounds.");return}S.rules.maxPrice=n;reLimit();save();pushConfig();closeSheet();render();
   toast(n>0?`Limit ${gbp0(n)} saved. Dearer deals are hidden and max bids lowered.`:"No limit. Max bids are back to normal; dearer deals come back on the next check.")}
 function whyDayCard(n){const w=HD.whyDay;if(!w||w.d!==new Date().toISOString().slice(0,10)||!(w.judged>0))return"";
   const pc=k=>{const v=(w[k]||0)/w.judged*100;return v>0&&v<1?"under 1":Math.round(v)},rows=[["fair","Not cheap enough to make your minimum profit"],["noData","No saved price for that model yet"],["over",`Over your ${S.rules.maxPrice>0?gbp0(S.rules.maxPrice):""} spending limit`],["lowScore","Score too low to trust"],["risky","Risky words (faulty, box only, damaged…)"]].filter(([k])=>w[k]>0).sort((a,b)=>w[b[0]]-w[a[0]]);
@@ -1247,7 +1258,7 @@ function reprice(d){const bf=dBpf(d)?bpfA(d.price):0;d.cost=Math.round((d.price+
   d.tags=(d.tags||[]).map(t=>/^(\d+ bids?|No bids yet)$/.test(t)?(d.bids?d.bids+" bid"+(d.bids>1?"s":""):"No bids yet"):t);
   const mx=d.maxItem!=null?d.maxItem:d.maxBid;if(mx!=null&&d.price>mx)d.gone="dear"}
 function openDeal(i){DV=(HD.deals||[])[i];if(!DV)return;const d=DV;d.live=undefined;go("deal");
-  api("check="+d.id).then(r=>{d.live=r.live;if(r.info)d.info=r.info;else if(!d.info)d.info={err:1};if(r.fault){d.faults=r.fault;if(!(d.tags||[]).includes("Fault in description"))d.tags=[...(d.tags||[]),"Fault in description"]}
+  api("check="+encodeURIComponent(d.id)).then(r=>{d.live=r.live;if(r.info)d.info=r.info;else if(!d.info)d.info={err:1};if(r.fault){d.faults=r.fault;if(!(d.tags||[]).includes("Fault in description"))d.tags=[...(d.tags||[]),"Fault in description"]}
     if(!r.live||r.tooDear){d.gone=r.live?"dear":"ended";HD.deals=(HD.deals||[]).filter(x=>x.id!==d.id)}
     else if(r.price!=null&&Math.abs(r.price+r.ship-(d.price+d.ship))>0.009){d.changed=d.type==="AUC"?"bid":"price";
       // the Scan service worked every money figure out again (profit, max bid, profit at max bid): use them, then re-apply the spend limit
@@ -1255,7 +1266,7 @@ function openDeal(i){DV=(HD.deals||[])[i];if(!DV)return;const d=DV;d.live=undefi
         d.tags=(d.tags||[]).map(t=>/^(\d+ bids?|No bids yet)$/.test(t)?(d.bids?d.bids+" bid"+(d.bids>1?"s":""):"No bids yet"):t)}
       else{d.price=r.price;d.ship=r.ship;if(r.bids!=null)d.bids=r.bids;reprice(d)}
       if(d.gone)HD.deals=(HD.deals||[]).filter(x=>x.id!==d.id)}
-    if(tab==="deal"&&DV===d)render()}).catch(()=>{d.live=true;d.info=d.info||{err:1};if(tab==="deal"&&DV===d)render()})}
+    if(tab==="deal"&&DV===d)render()}).catch(()=>{d.live=true;d.checkErr=1;d.info=d.info||{err:1};if(tab==="deal"&&DV===d)render()})}
 // "Why it scores": each part of the score, what it means in plain words, and the points it earned
 const FACTORS=[
   ["evidence","Price evidence",25,"How sure FlipScout is about what this really sells for."],
@@ -1356,7 +1367,8 @@ function vDeal(){
     :d.gone==="dear"?`<div class="verdict no"><b>No longer a deal</b><div class="mu">The price is now above what you should pay, so it's been taken off your deals.</div></div>`
     :d.changed==="bid"?`<div class="hint" style="margin:0 0 10px">↻ New bids since the last scan: now ${gbpK(d.price)}${d.bids?` (${d.bids} bids)`:""}. Numbers below are up to date.</div>`
     :d.changed?`<div class="verdict info"><b>Price changed</b><div class="mu">Now ${pp(d)}. The numbers below are worked out again at the new price.</div></div>`
-    :d.live===undefined?`<div class="hint" style="margin:0 0 10px">Checking it's still for sale…</div>`:"";
+    :d.live===undefined?`<div class="hint" style="margin:0 0 10px">Checking it's still for sale…</div>`
+    :d.checkErr?`<div class="warn" style="margin:0 0 10px">Couldn't check it's still for sale (no connection). Check the price on eBay before buying.</div>`:"";
   const head=banner+`<div class="card" style="padding:0;overflow:hidden">${d.img?`<img src="${esc(d.img)}" alt="" style="width:100%;height:220px;object-fit:contain;background:var(--card2);display:block">`:""}
    <div style="padding:16px"><div style="display:flex;gap:6px;flex-wrap:wrap">${dealBadge(d)}<span class="chip">${esc(d.cond||"")}</span></div>
    <h2 style="margin:10px 0 2px">${esc(d.title)}</h2><div class="mu">${esc(d.catName||"")}${sp?` · seller ${esc(sel.name||"")} (${sel.pct||0}%, ${sel.fb||0} feedback)`:""}</div></div></div>`;
@@ -1719,8 +1731,8 @@ function followSheet(){const d=DV;if(!d)return;const def=followMax(d);
 async function doFollow(){const d=DV,m=num($("fm").value);if(!(m>0)){toast("Enter a price.");return}
   try{await api("follow=1",{id:d.id,max:m,title:d.title,type:d.type,price:d.price,ship:d.ship,end:d.end,img:d.img,cond:d.cond,med:d.med});closeSheet();FOLLOWED.add(d.id);FL.list=null;if(tab==="deals")render();toast("Following. You'll get an alert.","View",()=>go("follow"))}catch(e){toast("Couldn't follow: "+errText(e))}}
 async function loadFollows(){if(!connected()||FL.busy)return;FL.busy=true;FL.err="";try{const d=await api("follows=1");FL.list=d.follows||[]}catch(e){FL.err=errText(e)}FL.busy=false;if(tab==="follow"||tab==="deals")render()}
-async function unfollow(id){try{await api("unfollow="+id);FL.list=(FL.list||[]).filter(f=>f.id!==id);render();toast("Stopped following.")}catch(e){toast("Couldn't remove: "+errText(e))}}
-function changeMax(id){const f=(FL.list||[]).find(x=>x.id===id);if(!f)return;DV={id:f.id,title:f.title,type:f.type,price:f.price,ship:f.ship,end:f.end,maxPay:f.max,maxBid:f.max,url:f.url};followSheet()}
+async function unfollow(id){try{await api("unfollow="+encodeURIComponent(id));FL.list=(FL.list||[]).filter(f=>f.id!==id);render();toast("Stopped following.")}catch(e){toast("Couldn't remove: "+errText(e))}}
+function changeMax(id){const f=(FL.list||[]).find(x=>x.id===id);if(!f)return;window._dvKeep=DV;DV={id:f.id,title:f.title,type:f.type,price:f.price,ship:f.ship,end:f.end,maxPay:f.max,maxBid:f.max,url:f.url};followSheet()}
 // Following: the same three numbers as a deal card; profit uses the price you'd actually pay
 function followRow(f,s){
   const auc=f.type==="AUC",h=H(),out=(+h.post||0)+(+h.pack||0);
@@ -1743,7 +1755,7 @@ function vFollow(){
      <div style="min-width:0"><div style="font-weight:700;line-height:1.3">${esc(f.title)}</div><div class="mu">${esc(f.cond||"")}${f.med?(f.cond?" · ":"")+"worth about "+gbp(f.med):""}</div></div></div>
     ${followRow(f,s)}
     ${s.ended?"":`<div class="mu" style="margin-top:4px;font-size:13px">${gap>0?`${gbp(gap)} above your max`:`${gbp(-gap)} under your max`}${f.type==="AUC"?" · put "+gbp(f.max)+" as your max bid and eBay bids for you":""}</div>`}
-    <div style="display:flex;gap:8px;margin-top:10px">${s.ended?"":`<a href="${esc(ukUrl(f.url))}" target="_blank" rel="noopener" style="flex:1.3;display:flex"><button style="margin:0;flex:1;padding:12px 8px;white-space:nowrap">${f.type==="AUC"?"Bid on eBay":"Open on eBay"}</button></a><button class="s" style="margin:0;flex:1;padding:12px 8px;white-space:nowrap" onclick="changeMax('${f.id}')">Change max</button>`}<button class="s" style="margin:0;flex:1;padding:12px 8px" onclick="unfollow('${f.id}')">Remove</button></div></div>`};
+    <div style="display:flex;gap:8px;margin-top:10px">${s.ended?"":`<a href="${esc(ukUrl(f.url))}" target="_blank" rel="noopener" style="flex:1.3;display:flex"><button style="margin:0;flex:1;padding:12px 8px;white-space:nowrap">${f.type==="AUC"?"Bid on eBay":"Open on eBay"}</button></a><button class="s" style="margin:0;flex:1;padding:12px 8px;white-space:nowrap" onclick="changeMax('${esc(String(f.id).replace(/\D/g,""))}')">Change max</button>`}<button class="s" style="margin:0;flex:1;padding:12px 8px" onclick="unfollow('${esc(String(f.id).replace(/\D/g,""))}')">Remove</button></div></div>`};
   return`<h2>Following</h2>
   ${connected()?`<div class="hint" style="margin:-6px 4px 12px">${H().alerts&&PUSH.registered?"You'll get an alert when one hits your price or is about to end.":"<span style='display:flex;align-items:center;justify-content:space-between;gap:10px'><span class='warn'>Phone alerts are off.</span><button class='sm' onclick=\"go('settings')\">Turn on alerts</button></span>"}</div>`:""}
   ${!connected()?`<div class="card empty">${I.bell}<b>Connect your Scan service</b><div class="mu">Following needs your Scan service. It watches listings for you and alerts you.</div><button onclick="goConnect()">Connect now</button></div>`:""}
@@ -1798,7 +1810,8 @@ function pushListeners(){const P=PN();if(!P||pushReady)return;pushReady=true;
   P.addListener("pushNotificationActionPerformed",a=>openPushed((a.notification&&a.notification.data)||{}));
 }
 function openPushed(d){if(d.kind==="follow"){FL.list=null;go("follow");return}
-  HD.deals=null;go("deals");loadDeals().then(()=>{const i=(HD.deals||[]).findIndex(x=>x.id===d.id);if(i>=0)openDeal(i)})}
+  (async()=>{for(let i=0;i<60&&HD.busy;i++)await new Promise(r=>setTimeout(r,250));HD.deals=null;go("deals");await loadDeals();
+    for(let i=0;i<60&&HD.busy;i++)await new Promise(r=>setTimeout(r,250));const i=(HD.deals||[]).findIndex(x=>String(x.id)===String(d.id));if(i>=0)openDeal(i);else toast("That deal has gone (sold, ended or no longer cheap).")})()}
 async function enableAlerts(){const P=PN();if(!P){toast("Alerts work in the installed app.");return}
   pushListeners();PUSH.err="";
   try{let st=await P.checkPermissions();if(st.receive!=="granted")st=await P.requestPermissions();

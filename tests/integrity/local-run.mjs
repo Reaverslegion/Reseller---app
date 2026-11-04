@@ -34,7 +34,7 @@ const drv = {
 const rows = [], R = {
   add: (area, name, status, detail = "") => rows.push({ area, name, status, detail }),
   async journey(area, name, fn) { let failed = false; await fn(async (what, f) => { if (failed) return rows.push({ area, name: `${name} › ${what}`, status: "NOT TESTED" });
-    try { await f(); } catch (e) { failed = true; rows.push({ area, name: `${name} › ${what}`, status: "FAIL", detail: String(e.message).slice(0, 300) }); } }); },
+    try { await f(); } catch (e) { failed = true; await drv.shot(`FAIL ${name} ${what}`); rows.push({ area, name: `${name} › ${what}`, status: "FAIL", detail: String(e.message).slice(0, 300) + " · screen: " + (await page.evaluate(() => document.body.innerText.replace(/\s+/g, " ").slice(0, 160)).catch(() => "")) }); } }); },
 };
 fs.mkdirSync("screenshots", { recursive: true });
 // set the app up the way a new user would: welcome guide, connect, popular categories, admin tools (for Scan now)

@@ -69,11 +69,11 @@ export async function runStage4(drv, R, dev = {}) {
     });
     await step("the Scan service can't be reached 3 times in a row: the app notes it and sends the note once it's back", async () => {
       await clearLog();
-      if (dev.chaos) await dev.chaos("down"); else await drv.eval(`window.__u=S.set.url;S.set.url="http://127.0.0.1:9";1`);
+      if (dev.chaos) await dev.chaos("down"); else await drv.eval(`window.__f=window.__f||window.fetch;window.fetch=()=>Promise.reject(new TypeError("Failed to fetch"));1`);
       for (let i = 0; i < 3; i++) { await drv.eval(`(async()=>{HD.busy=false;await loadDeals();return 1})()`); await sleep(500); }
       const queued = await drv.eval(`JSON.parse(localStorage.getItem("flipscout_problems")||"[]").map(r=>r.kind)`);
       M.add("3 failed deal loads in a row are noted on the phone while there's no connection", ok(queued.includes("deals-load-failed")), `waiting on the phone: ${queued.join(", ") || "nothing"}`);
-      if (dev.chaos) await dev.chaos("normal"); else await drv.eval(`S.set.url=window.__u;1`);
+      if (dev.chaos) await dev.chaos("normal"); else await drv.eval(`window.fetch=window.__f;1`);
       await drv.eval(`(async()=>{HD.busy=false;await loadDeals();return 1})()`); let rows = [];
       for (let i = 0; i < 15 && !rows.length; i++) { await sleep(1000); rows = await errlog("src='app' AND kind='deals-load-failed'"); }
       const left = await drv.eval(`JSON.parse(localStorage.getItem("flipscout_problems")||"[]").length`);
@@ -81,9 +81,9 @@ export async function runStage4(drv, R, dev = {}) {
     });
     await step("the sales list can't load twice in a row", async () => {
       await clearLog();
-      if (dev.chaos) await dev.chaos("down"); else await drv.eval(`window.__u=S.set.url;S.set.url="http://127.0.0.1:9";1`);
+      if (dev.chaos) await dev.chaos("down"); else await drv.eval(`window.__f=window.__f||window.fetch;window.fetch=()=>Promise.reject(new TypeError("Failed to fetch"));1`);
       for (let i = 0; i < 2; i++) { await drv.eval(`salesSheet("gpu:rtx 3070","RTX 3070");1`); await sleep(2500); await drv.eval(`closeSheet();1`); }
-      if (dev.chaos) await dev.chaos("normal"); else await drv.eval(`S.set.url=window.__u;1`);
+      if (dev.chaos) await dev.chaos("normal"); else await drv.eval(`window.fetch=window.__f;1`);
       await drv.eval(`(async()=>{HD.busy=false;await loadDeals();return 1})()`); let rows = [];
       for (let i = 0; i < 15 && !rows.length; i++) { await sleep(1000); rows = await errlog("src='app' AND kind='sales-load-failed'"); }
       M.add("2 failed sales-list loads in a row are recorded", ok(rows.length === 1), rows[0] ? rows[0].msg : "not recorded");
@@ -131,7 +131,7 @@ export async function runStage4(drv, R, dev = {}) {
       await reopen(); });
     await step("cards checked, then a deal page opened (with a harmful seller description)", async () => {
       const cards = await drv.eval(`document.querySelectorAll(".dcard").length`);
-      await drv.tap({ sel: ".dcard" }); await sleep(3500); await drv.shot("deal page with harmful data");
+      await drv.eval(`openDeal(0);1`); await sleep(3500); await drv.shot("deal page with harmful data"); // (a tap on the card's middle can land on its "From N sales" link)
       // every button whose action carries the harmful text is pressed: the text must arrive as plain words, never run
       const pressed = await drv.eval(`(()=>{const L=[...document.querySelectorAll("#app *")].filter(e=>[...e.attributes].some(a=>a.name==="onclick"&&/__xss/.test(a.value)));L.forEach(e=>{try{e.click()}catch(x){}});try{closeSheet()}catch(x){}return L.length})()`);
       await sleep(1500);
@@ -180,6 +180,50 @@ export async function runStage4(drv, R, dev = {}) {
     await step("13 ordinary deals loaded", async () => { await seed(DS.scale(13, 991000000000)); await reopen(); });
     await step("light appearance", async () => { await drv.eval(`S.set.theme="light";save();render();1`); await runA11y("Light"); });
     await step("dark appearance", async () => { await drv.eval(`S.set.theme="dark";save();render();1`); await drv.shot("dark mode deals"); await runA11y("Dark"); await drv.eval(`S.set.theme="auto";save();render();1`); });
+  });
+
+  // ===================== independent app review fixes (4 Nov), each set up and checked in the real app =====================
+  const RV = A("App review fixes");
+  await R.journey("App review fixes", "Situations found by the independent app review", async (step) => {
+    const KEY = process.env.TEST_APP_KEY, svcBackup = async () => (await F.call("backup=1")).data;
+    await step("a backup without settings is not offered as a restore", async () => {
+      await F.call("backup=1", { items: [{ id: 1, name: "x" }], at: 1 });
+      await drv.eval(`(()=>{window.__t=[];const o=window.toast;window.toast=(m,...a)=>{window.__t.push(m);return o(m,...a)};return 1})()`);
+      await drv.eval(`cloudCheck();1`); await sleep(2500);
+      const r = await drv.eval(`({sheet:sheetOn,toasts:window.__t.slice()})`); await drv.eval(`closeSheet();1`);
+      RV.add("a cloud backup with no settings in it is refused, with a message (was restored, wiping settings)", ok(!r.sheet && r.toasts.some((t) => /incomplete/.test(t))), r.toasts.join(" | "));
+    });
+    await step("a phone that has never backed up here doesn't overwrite a fuller cloud backup", async () => {
+      const full = await drv.eval(`JSON.parse(JSON.stringify(S))`); full.items = [{ id: 1, name: "keep me 1" }, { id: 2, name: "keep me 2" }];
+      await F.call("backup=1", full);
+      const pushed = await drv.eval(`(async()=>{const keep=S.items,at=localStorage.getItem("flipscout_cloud_at");localStorage.removeItem("flipscout_cloud_at");S.items=[];const r=await cloudPush(false);S.items=keep;if(at)localStorage.setItem("flipscout_cloud_at",at);return r})()`);
+      const after = await svcBackup();
+      RV.add("after 'Not now' on the restore offer, the automatic backup doesn't replace a fuller cloud backup (was wiped)", ok(pushed === false && after.items.length === 2), `auto backup ${pushed ? "sent" : "held back"}; cloud still has ${after.items.length} items`);
+    });
+    await step("settings that couldn't be sent are sent later", async () => {
+      const mp = await drv.eval(`S.rules.minProfit`), want = mp === 23 ? 24 : 23;
+      if (dev.chaos) await dev.chaos("down"); else await drv.eval(`window.__f=window.__f||window.fetch;window.fetch=()=>Promise.reject(new TypeError("Failed to fetch"));1`);
+      await drv.eval(`(async()=>{S.rules.minProfit=${want};save();await pushConfig(true);return 1})()`);
+      const pending = await drv.eval(`localStorage.getItem("flipscout_cfg_pending")`);
+      if (dev.chaos) await dev.chaos("normal"); else await drv.eval(`window.fetch=window.__f;1`);
+      await drv.eval(`(async()=>{HD.busy=false;await loadDeals();return 1})()`); await sleep(1500);
+      const cfg = (await F.call("config=1")).config, left = await drv.eval(`localStorage.getItem("flipscout_cfg_pending")`);
+      RV.add("a settings change made offline reaches the Scan service once the connection is back (was lost)", ok(pending === "1" && cfg.rules.minProfit === want && !left), `pending ${pending} → service minProfit ${cfg.rules.minProfit} (wanted ${want}), still pending: ${left}`);
+    });
+    await step("words typed instead of a number are refused", async () => {
+      const before = await drv.eval(`S.rules.minProfit`); await drv.eval(`setRule("minProfit","abc");1`); const after = await drv.eval(`S.rules.minProfit`);
+      RV.add("typing words into a number setting keeps the old value (was saved as 0)", ok(before === after), `${before} → ${after}`);
+    });
+    await step("a late sales list doesn't reopen after you've closed it", async () => {
+      await drv.eval(`salesSheet("gpu:rtx 3070","RTX 3070");closeSheet();1`); await sleep(2500);
+      const st = await drv.eval(`({on:sheetOn,shown:document.getElementById("sheet").classList.contains("on")})`);
+      RV.add("closing the sales list before it loads keeps it closed, on screen too (was reopened by the late answer)", ok(!st.on && !st.shown), JSON.stringify(st));
+    });
+    await step("coming back to the app refreshes old deals", async () => {
+      await toDeals(); const t0 = await drv.eval(`(()=>{HD.at=Date.now()-600000;document.dispatchEvent(new Event("visibilitychange"));return HD.at})()`); await sleep(3000);
+      const t1 = await drv.eval(`HD.at`);
+      RV.add("returning to the app after 5+ minutes reloads the deals (was never refreshed)", ok(t1 > t0), `last loaded ${Math.round((Date.now() - t0) / 60000)} min ago → ${Math.round((Date.now() - t1) / 1000)} s ago`);
+    });
   });
 
   // ===================== performance at every size =====================

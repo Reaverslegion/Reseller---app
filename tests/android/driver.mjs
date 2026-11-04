@@ -216,7 +216,13 @@ export class App {
 
 // ---------- results: every step is PASS / FAIL / NOT TESTED, with a screenshot when it fails ----------
 export class Results {
-  constructor(app) { this.app = app; this.rows = []; }
+  // file: where rows are saved — after EVERY row, so a crash or time-out part-way never loses what already ran.
+  // If the script itself crashes, a FAIL row says so (it must never look like a pass).
+  constructor(app, file) { this.app = app; this.rows = []; this.file = file;
+    if (file) { const self = this; self.rows.push = function (...r) { const n = Array.prototype.push.apply(this, r); self.save(); return n; };
+      const die = (e) => { try { self.rows.push({ area: "Test run", name: `${file}: the test script itself stopped`, status: "FAIL", detail: String((e && e.stack) || e).slice(0, 300) }); } catch (x) {} process.exit(1); };
+      process.on("uncaughtException", die); process.on("unhandledRejection", die); } }
+  save() { if (!this.file) return; try { fs.mkdirSync("results", { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(this.rows, null, 1)); } catch (e) {} }
   // opts.expectCrash: the journey crashes the app on purpose (to test crash capture); only an unexpected end fails
   async journey(area, name, fn, opts = {}) {
     const app = this.app, logAt = app.logSize(), errAt = app.jsErrors.length; app.phase = name;
@@ -238,15 +244,16 @@ export class Results {
           // the link to the app's screen dropped (seen on slow emulators): note why, reconnect and try the step once more
           note = "retried once after the link to the app dropped" + (app.recentSystemLog() ? ": " + app.recentSystemLog() : "");
           app.appPid = app.pid() || app.appPid; await app.connect(); await f(); }
-        passed++; this.rows.push({ area, name: `${name} › ${what}`, status: "PASS", detail: note }); }
+        passed++; this.rows.push({ area, name: `${name} › ${what}`, status: note ? "PARTIALLY TESTED" : "PASS", detail: note }); }
       catch (e) { failed = what; const lim = /^EMULATOR LIMIT/.test(String(e.message)), s = await app.shot(`${lim ? "LIMIT" : "FAIL"} ${name} ${what}`);
         this.rows.push({ area, name: `${name} › ${what}`, status: lim ? "PARTIALLY TESTED" : "FAIL", detail: String(e.message || e).slice(0, 300), shot: s }); }
     };
     try { await fn(step); } catch (e) { this.rows.push({ area, name: `${name} › (journey stopped)`, status: "FAIL", detail: String(e.message || e).slice(0, 300) }); failed = failed || "stopped"; }
     const crashes = app.crashesSince(logAt), errs = app.jsErrors.slice(errAt);
-    if (opts.expectCrash) this.rows.push({ area: "Android emulator", name: `${name}: running again after the deliberate test crash`, status: app.alive() ? "PASS" : "FAIL", detail: `${crashes.length} crash line(s) in the phone's log, all from the deliberate test` });
-    else this.rows.push({ area: "Android emulator", name: `${name}: no crash`, status: crashes.length || !app.alive() ? "FAIL" : "PASS", detail: crashes.length ? crashes[0] : !app.alive() ? "the app stopped running" : "" });
-    this.rows.push({ area: "Android emulator", name: `${name}: no app errors`, status: errs.length ? "FAIL" : "PASS", detail: errs.map((e) => e.msg).join(" || ").slice(0, 300) });
+    const crashArea = opts.crashArea || this.crashArea || "Android emulator";
+    if (opts.expectCrash) this.rows.push({ area: crashArea, name: `${name}: running again after the deliberate test crash`, status: app.alive() ? "PASS" : "FAIL", detail: `${crashes.length} crash line(s) in the phone's log, all from the deliberate test` });
+    else this.rows.push({ area: crashArea, name: `${name}: no crash`, status: crashes.length || !app.alive() ? "FAIL" : "PASS", detail: crashes.length ? crashes[0] : !app.alive() ? "the app stopped running" : "" });
+    this.rows.push({ area: crashArea, name: `${name}: no app errors`, status: errs.length ? "FAIL" : "PASS", detail: errs.map((e) => e.msg).join(" || ").slice(0, 300) });
     if (!app.alive()) { try { await app.launch(); } catch (e) {} }
     return !failed;
   }

@@ -26,9 +26,9 @@ else {
   const runas = safe(() => sh(`run-as ${PKG} ls`));
   add("it can't be debugged or have its private files read over USB (run-as refused)", /not debuggable|is not an application|Permission denied|package not debuggable/i.test(runas), runas.trim().slice(0, 120));
   const pk = safe(() => sh(`dumpsys package ${PKG}`)), flags = (pk.match(/(?:pkgFlags|flags)=\[([^\]]*)\]/) || [])[1] || "";
-  add("Android's own backup is off for the app", !/ALLOW_BACKUP/.test(flags) && !/DEBUGGABLE/.test(flags), `flags: ${flags.trim().slice(0, 150)}`);
+  add("Android's own backup is off for the app", !!flags.trim() && /HAS_CODE/.test(flags) && !/ALLOW_BACKUP/.test(flags) && !/DEBUGGABLE/.test(flags), `flags: ${flags.trim().slice(0, 150) || "(package not found)"}`);
   const sig = (pk.match(/signatures=PackageSignatures\{[^}]*\}/) || [""])[0];
-  add("signed (test key here; your real key is used only by the live build)", /signatures/.test(sig) || /Success/.test(inst), sig.slice(0, 100) || "installed, so it is signed", "PASS");
+  add("signed (test key here; your real key is used only by the live build)", /Success/.test(inst) && /signatures:\[[0-9a-f]+\]/.test(sig), sig.slice(0, 100) || "no signature found");
 }
 fs.mkdirSync("results", { recursive: true });
 fs.writeFileSync("results/release.json", JSON.stringify(rows, null, 1));

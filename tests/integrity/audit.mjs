@@ -88,7 +88,7 @@ export async function runAudit(drv, R, opt = {}) {
     // 2. what should be on screen (every live deal in the database, by the rules) vs what is
     const should = db.filter((d) => O.visible(d, S) && O.groups(d).includes("all")), { pairs, unknown, shownIds } = matchCards(st.cards, db);
     const missing = should.filter((d) => !shownIds.has(String(d.id))).map((d) => d.id), extra = pairs.filter(([d]) => !should.some((x) => x.id === d.id)).map(([d]) => d.id);
-    const dupScreen = st.cards.map((c) => c.aria).filter((t, i, a) => a.indexOf(t) !== i && !db.filter((d) => d.title === t).length > 1);
+    const dupScreen = st.cards.map((c) => c.aria).filter((t, i, a) => a.indexOf(t) !== i && !(db.filter((d) => d.title === t).length > 1));
     note(`${name}: should be on screen but isn't`, missing); note(`${name}: on screen but shouldn't be`, extra.concat(unknown));
     check(`${name} › deal count on screen (expected ${should.length})`, st.count === should.length && st.cards.length === should.length, `count line says ${st.count}, ${st.cards.length} cards shown${st.empty ? ", 'No deals right now'" : ""}`);
     check(`${name} › no missing deals`, !missing.length, missing.length ? `${missing.length} missing, e.g. ${missing.slice(0, 3).join(", ")}` : "");
@@ -201,7 +201,8 @@ export async function runAudit(drv, R, opt = {}) {
       // record by record: hidden when they should be, in the right filter, and missing values said plainly
       for (const { note: n, d, expect: x } of E) {
         const on = r.pairs.find(([p]) => p.id === d.id), tag = x.realWorld ? "" : " (data the Scan service doesn't make today)";
-        if (x.hidden || x.expired) { check(`Unusual records › ${n}`, !on, on ? "shown" : ""); continue; }
+        // (matched against the cards actually on screen by title: the expired one isn't in the live list, so a pair can't exist)
+        if (x.hidden || x.expired) { const seen = on || r.st.cards.some((c) => c.aria === d.title); check(`Unusual records › ${n}`, !seen, seen ? "shown" : ""); continue; }
         if (x.chip) { check(`Unusual records › ${n}: not in All, only under its own filter`, !on, on ? "shown in All" : ""); continue; }
         if (!on) { check(`Unusual records › ${n}: shown`, false, "not on screen"); continue; }
         const c = on[1], p = parseCard(c.text), probs = cardProblems(d, c);

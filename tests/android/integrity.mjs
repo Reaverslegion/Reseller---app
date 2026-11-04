@@ -10,7 +10,7 @@ import { runStage4 } from "../stage4/app-checks.mjs";
 
 const KEY = process.env.TEST_APP_KEY;
 const CHAOS = (m) => fetch(`http://127.0.0.1:8791/mode?m=${m}`).then((r) => r.json()).catch(() => null);
-const app = new App("screenshots/integrity"), R = new Results(app);
+const app = new App("screenshots/integrity"), R = new Results(app, "results/integrity.json");
 app.netQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 30; i++) { let n = 0; try { n = Object.values((await (await fetch("http://127.0.0.1:8791/stats")).json()).stats).reduce((a, b) => a + b, 0); } catch (e) { return; }
   if (n === last) { if (++same >= 3) return; } else { same = 0; last = n; } await sleep(1000); } };
 app.beforeJourney = () => CHAOS("normal");

@@ -11,5 +11,5 @@ npm i -g wrangler@${WRANGLER_VER:-4.157.0} >/dev/null 2>&1
 (cd .test-service && WRANGLER_SEND_METRICS=false nohup wrangler dev --local --test-scheduled --port 8787 --ip 127.0.0.1 --persist-to ./state > ../service.out 2>&1 &)
 for i in $(seq 1 60); do curl -s -o /dev/null http://127.0.0.1:8787/ && break; sleep 2; done
 curl -s -o /dev/null -w "test Scan service answering (HTTP %{http_code})\n" http://127.0.0.1:8787/
-curl -sf http://127.0.0.1:8791/stats >/dev/null && echo "bad-network switch ready"
-curl -sf "http://127.0.0.1:8790/sch/i.html" >/dev/null && echo "fake sold pages ready"
+curl -sf http://127.0.0.1:8791/stats >/dev/null || { echo "bad-network switch NOT running"; exit 1; }; echo "bad-network switch ready"
+curl -sf "http://127.0.0.1:8790/sch/i.html" >/dev/null || { echo "fake sold pages NOT running"; exit 1; }; echo "fake sold pages ready"

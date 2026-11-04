@@ -6,6 +6,11 @@ import { execSync } from "node:child_process";
 import * as F from "../integrity/scan-flow.mjs";
 const URL_ = "http://127.0.0.1:8787", KEY = process.env.TEST_APP_KEY, rows = [];
 const add = (area, name, status, detail = "") => { rows.push({ area, name, status, detail: String(detail).slice(0, 300) }); console.log(status.padEnd(17), name, detail ? "— " + String(detail).slice(0, 200) : ""); };
+
+// if this script itself crashes, say so as a FAIL row (and keep every row already recorded) — never a silent gap
+{ const die = (e) => { try { rows.push({ area: "Test run", name: `${process.argv[1].split("/").pop()}: the test script itself stopped`, status: "FAIL", detail: String((e && e.stack) || e).slice(0, 300) });
+  fs.mkdirSync("results", { recursive: true }); fs.writeFileSync(`results/${process.argv[1].split("/").pop().replace(/\.mjs$/, "")}-crash.json`, JSON.stringify(rows.filter((r) => r.area === "Test run"))); } catch (x) {} process.exit(1); };
+  process.on("uncaughtException", die); process.on("unhandledRejection", die); }
 const ok = (b) => (b ? "PASS" : "FAIL");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const LOG = "CREATE TABLE IF NOT EXISTS errlog (sig TEXT PRIMARY KEY, src TEXT, kind TEXT, msg TEXT, place TEXT, ver TEXT, n INTEGER, first INTEGER, at INTEGER, alerted INTEGER)";

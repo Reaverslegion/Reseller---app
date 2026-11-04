@@ -30,7 +30,7 @@ await t("cloud backup saves and restores the same data", async () => {
   assert.ok(JSON.stringify(r.body).includes(String(data.testRun)), "restored backup doesn't match what was saved");
 });
 await t("a scan runs without crashing (talks only to fake eBay)", async () => {
-  const r = await call("run=1"); assert.ok(r.status < 500, "status " + r.status + " " + JSON.stringify(r.body).slice(0, 200));
+  const r = await call("run=1"); assert.ok(r.status === 200 && typeof r.body.checked === "number" && Array.isArray(r.body.errors), "status " + r.status + " " + JSON.stringify(r.body).slice(0, 200));
 });
 await t("a keyword search works (answered by fake eBay)", async () => {
   const r = await call("q=rtx%203070&max=500"); assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 200));

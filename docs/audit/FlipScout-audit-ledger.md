@@ -58,3 +58,12 @@ Next actions, in order:
 - Phone test build: package com.reaverslegion.flipscout.test, name "FlipScout TEST".
 - Slow/cut connection checks failed only because the Scan-now step replaced the seeded deals (test fixed).
 - Dependencies: still flagged (Capacitor CLI 6 via tar; wrangler 3 in that run). Testing now uses Wrangler 4.157.0.
+
+## Session 2 (4 Nov, 16:15 onwards)
+- First three reviewers were interrupted with no report (their partial leads kept); relaunched with fresh contexts covering all five Phase 9 domains:
+  (1) backend + money maths + security/privacy — 12 findings; (2) app function/UX + performance/reliability — 15 findings; (3) tests/CI — 15 findings.
+- Master checklist saved before new gap work (commit ebee43e): claude/FlipScout-master-checklist.md, docs/audit/.
+- Fixed with regression tests (commits 76cdb77, b97390b, + this one): Buy It Now too-dear ignoring buyer fee; auction max bid vs extra postage; BIN on auction listing; non-GBP/unreadable prices; alert for removed deal; double alerts; server-side settings validation; follows starvation; eBay call counting; listing price on re-check; header-style keys in logs; 10 app fixes (backup wipe after 'Not now', no refresh on return, unsent settings, alert tap while loading, Change max ghost page, typing lost, stale sales sheet, sheet open/close race, words as numbers, silent check failure); test/CI honesty (crashed job could show PASS; jobs missing from report; results lost on crash; cap test was source-only; smoke accepted 4xx; expired/duplicate checks couldn't fail; release checks forced PASS; retried steps counted PASS; crash rows in wrong area; trial FAIL turned report red; start script ignored dead fake servers; hand-worked fee examples).
+- Gap tests added: backend-gaps (currencies, simultaneous scans, eBay 429/500/garbage keep deals), deals-list (1,500 + expired, real handler; fails with the old cap), app review-fix journey.
+- Not fixed (recorded): spares not re-priced on re-check (low); data retention of other sellers' usernames in fill history (needs owner decision); scan/rate-limit read-modify-write races (manual-scan lock + alert claim reduce impact); full-list redraw cost on every tap (performance, phone check first); ended-auction countdowns frozen (list now refreshes on return).
+- Next: final full regression run, then Step 8 report.

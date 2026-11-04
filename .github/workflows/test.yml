@@ -393,7 +393,7 @@ jobs:
 
   report:
     name: Testing report
-    needs: [unit, supply, build, service, emulator, build-cap8, compat, build-phone]
+    needs: [unit, supply, build, service, build-e2e, emulator, build-cap8, compat, build-phone]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -407,7 +407,7 @@ jobs:
           node-version: 22
       - run: node tests/ci/report.mjs results
         env:
-          JOB_RESULTS: '{"Unit tests":"${{ needs.unit.result }}","Dependencies":"${{ needs.supply.result }}","Build":"${{ needs.build.result }}","Test Scan service":"${{ needs.service.result }}","Android emulator":"${{ needs.emulator.result }}","Capacitor 8 trial":"${{ needs.build-cap8.result }}"}'
+          JOB_RESULTS: '{"Unit tests":"${{ needs.unit.result }}","Dependencies":"${{ needs.supply.result }}","Build":"${{ needs.build.result }}","Test Scan service":"${{ needs.service.result }}","Android emulator":"${{ needs.emulator.result }}","Capacitor 8 trial":"${{ needs.build-cap8.result }}","Other Android versions":"${{ needs.compat.result }}","Phone test build":"${{ needs.build-phone.result }}","Emulator test app build":"${{ needs.build-e2e.result }}"}'
       - if: always()
         uses: actions/upload-artifact@v4
         with:

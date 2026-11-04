@@ -9,17 +9,27 @@ import path from "node:path";
 const dir = process.argv[2] || "results";
 const rows = [];
 if (fs.existsSync(dir)) for (const f of fs.readdirSync(dir, { recursive: true })) if (String(f).endsWith(".json")) {
-  try { rows.push(...JSON.parse(fs.readFileSync(path.join(dir, String(f)), "utf8"))); } catch (e) { rows.push({ area: "Report", name: "could not read " + f, status: "FAIL" }); }
+  // remember which job's results folder each row came from (results-<job>/...), to tell a crash from a recorded failure
+  const from = String(f).split(/[\\/]/)[0];
+  try { rows.push(...JSON.parse(fs.readFileSync(path.join(dir, String(f)), "utf8")).map((r) => ({ ...r, _from: from }))); } catch (e) { rows.push({ area: "Report", name: "could not read " + f, status: "FAIL", _from: from }); }
 }
 // every area the system is meant to cover; an area with no results is NOT TESTED
 const AREAS = ["Unit tests", "Build", "Test Scan service", "Android emulator", "User journeys", "Unusual behaviour", "Deals: app vs database",
   "Dependencies", "Phone app build", "Security", "Monitoring", "Accessibility", "Performance", "Device conditions", "Reliability", "Backup and restore", "Release build", "Compatibility: Android 11", "Compatibility: Android 15"];
 // a job that failed before it could record any results is a FAIL, never "not tested"
 let jobs = {}; try { jobs = JSON.parse(process.env.JOB_RESULTS || "{}"); } catch (e) {}
-for (const [a, res] of Object.entries(jobs)) if (!rows.some((r) => r.area === a) && res !== "success")
-  rows.push({ area: a, name: "the job stopped before recording results", status: res === "skipped" ? "NOT TESTED" : "FAIL", detail: "job result: " + res });
+// any job that didn't succeed is a FAIL in the report, even if it recorded some passing rows before it broke (a crash part-way
+// must never look like a pass). "skipped" only counts as NOT TESTED when it was skipped on purpose (e.g. a trial switched off).
+const FOLDER = { "Unit tests": "results-unit", "Dependencies": "results-supply", "Build": "results-build", "Test Scan service": "results-service",
+  "Android emulator": "results-android", "Capacitor 8 trial": "results-cap8-build", "Other Android versions": "results-compat", "Phone test build": "results-phone-build", "Emulator test app build": "-" };
+for (const [a, res] of Object.entries(jobs)) if (res !== "success") {
+  const f = FOLDER[a] || "", recorded = rows.some((r) => f && String(r._from || "").startsWith(f) && r.status === "FAIL");
+  if (res === "failure" && recorded) continue; // its own FAIL rows already say what failed (no double counting)
+  const onPurpose = res === "skipped" && /trial/i.test(a);
+  rows.push({ area: a, name: res === "skipped" ? "the job didn't run" : "the job didn't finish successfully", status: onPurpose ? "NOT TESTED" : "FAIL", detail: "job result: " + res + (res === "skipped" && !onPurpose ? " (a job it depends on failed)" : "") }); }
 for (const a of AREAS) if (!rows.some((r) => r.area === a)) rows.push({ area: a, name: "(not set up yet, or its job didn't run)", status: "NOT TESTED" });
 
+for (const r of rows) if (/trial/i.test(r.area) && r.status === "FAIL") { r.status = "PARTIALLY TESTED"; r.detail = "TRIAL ONLY (not your app yet): " + (r.detail || ""); }
 const icon = { PASS: "✅ PASS", FAIL: "❌ FAIL", "NOT TESTED": "⬜ NOT TESTED", "PARTIALLY TESTED": "🟨 PARTIALLY TESTED" };
 const count = (s) => rows.filter((r) => r.status === s).length;
 let md = `# FlipScout testing report\n\n`;

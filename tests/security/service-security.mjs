@@ -6,6 +6,11 @@ const URL_ = process.env.TEST_URL || "http://127.0.0.1:8787", KEY = process.env.
 if (!/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(URL_)) { console.error("REFUSED: security tests only run against a local test service"); process.exit(1); }
 const rows = [], AREA = "Security";
 const add = (name, ok, detail = "", status) => { rows.push({ area: AREA, name, status: status || (ok ? "PASS" : "FAIL"), detail: String(detail).slice(0, 300) }); console.log((status || (ok ? "PASS" : "FAIL")).padEnd(17), name, detail ? "— " + String(detail).slice(0, 200) : ""); };
+
+// if this script itself crashes, say so as a FAIL row (and keep every row already recorded) — never a silent gap
+{ const die = (e) => { try { rows.push({ area: "Test run", name: `${process.argv[1].split("/").pop()}: the test script itself stopped`, status: "FAIL", detail: String((e && e.stack) || e).slice(0, 300) });
+  fs.mkdirSync("results", { recursive: true }); fs.writeFileSync(`results/${process.argv[1].split("/").pop().replace(/\.mjs$/, "")}-crash.json`, JSON.stringify(rows.filter((r) => r.area === "Test run"))); } catch (x) {} process.exit(1); };
+  process.on("uncaughtException", die); process.on("unhandledRejection", die); }
 const call = async (q, { key = KEY, header = true, method, body, raw } = {}) => {
   const h = {}; if (key && header) h["X-FlipScout-Key"] = key;
   const r = await fetch(`${URL_}/?${q}${key && !header ? "&key=" + encodeURIComponent(key) : ""}`, { method: method || (body !== undefined || raw !== undefined ? "POST" : "GET"), headers: { ...h, "content-type": "text/plain" }, body: raw !== undefined ? raw : body !== undefined ? JSON.stringify(body) : undefined });

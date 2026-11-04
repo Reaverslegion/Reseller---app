@@ -9,7 +9,7 @@ import { makeDeals, seedDeals, query } from "./seed.mjs";
 
 const KEY = process.env.TEST_APP_KEY, APK = process.env.APK || "FlipScout.apk";
 const CHAOS = (m, ms) => fetch(`http://127.0.0.1:8791/${m === "reset" ? "reset" : m === "stats" ? "stats" : "mode?m=" + m + (ms ? "&ms=" + ms : "")}`).then((r) => r.json());
-const app = new App("screenshots"), R = new Results(app);
+const app = new App("screenshots"), R = new Results(app, "results/android.json");
 app.beforeJourney = () => CHAOS("normal");   // every journey starts with a normal connection
 // "the app has stopped loading": no new request to the test Scan service for 3 seconds
 app.netQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 30; i++) { let n = 0; try { n = Object.values((await CHAOS("stats")).stats).reduce((a, b) => a + b, 0); } catch (e) { return; }

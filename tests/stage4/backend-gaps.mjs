@@ -8,6 +8,11 @@ import fs from "node:fs";
 import * as F from "../integrity/scan-flow.mjs";
 const URL_ = "http://127.0.0.1:8787", EBAY = "http://127.0.0.1:8788", rows = [], AREA = "Back end (gap tests)";
 const add = (name, ok, detail = "", status) => { const s = status || (ok ? "PASS" : "FAIL"); rows.push({ area: AREA, name, status: s, detail: String(detail).slice(0, 300) }); console.log(s.padEnd(17), name, detail ? "— " + String(detail).slice(0, 220) : ""); };
+
+// if this script itself crashes, say so as a FAIL row (and keep every row already recorded) — never a silent gap
+{ const die = (e) => { try { rows.push({ area: "Test run", name: `${process.argv[1].split("/").pop()}: the test script itself stopped`, status: "FAIL", detail: String((e && e.stack) || e).slice(0, 300) });
+  fs.mkdirSync("results", { recursive: true }); fs.writeFileSync(`results/${process.argv[1].split("/").pop().replace(/\.mjs$/, "")}-crash.json`, JSON.stringify(rows.filter((r) => r.area === "Test run"))); } catch (x) {} process.exit(1); };
+  process.on("uncaughtException", die); process.on("unhandledRejection", die); }
 const raw = (q) => fetch(`${URL_}/?${q}`, { headers: { "X-FlipScout-Key": process.env.TEST_APP_KEY } }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => ({})) }));
 const mode = (m) => fetch(`${EBAY}/__fake/mode`, { method: "POST", body: JSON.stringify({ mode: m }) });
 const deals = async () => (await F.query("SELECT id, data FROM deals")).map((r) => ({ id: r.id, ...JSON.parse(r.data) }));

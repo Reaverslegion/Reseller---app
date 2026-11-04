@@ -67,3 +67,8 @@ Next actions, in order:
 - Gap tests added: backend-gaps (currencies, simultaneous scans, eBay 429/500/garbage keep deals), deals-list (1,500 + expired, real handler; fails with the old cap), app review-fix journey.
 - Not fixed (recorded): spares not re-priced on re-check (low); data retention of other sellers' usernames in fill history (needs owner decision); scan/rate-limit read-modify-write races (manual-scan lock + alert claim reduce impact); full-list redraw cost on every tap (performance, phone check first); ended-auction countdowns frozen (list now refreshes on return).
 - Next: final full regression run, then Step 8 report.
+
+## Final (4 Nov, 18:0x) — STOPPED for owner review
+- Final full regression 41871526163 (e3fc588): 627 / 6 / 20 / 15. Targeted re-run 41877307607 (06b0c4b): service, gap tests, Android 15 + Capacitor 8 trial all pass.
+- Reports: FlipScout-consolidated-audit-2026-11-04, FlipScout-decisions-and-phone-checklist (also in docs/audit/).
+- Waiting for owner decisions D1–D11. Not started (planned): G1–G5 screen journeys, G6b migration test, tablet, long-run soak.

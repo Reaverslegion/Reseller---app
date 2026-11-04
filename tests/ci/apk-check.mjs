@@ -13,7 +13,7 @@ const attr = (name) => { const m = x.match(new RegExp(`:${name}\\(0x[0-9a-f]+\\)
 console.log("raw manifest settings:", (x.match(/:(debuggable|allowBackup|usesCleartextTraffic|exported|fullBackupContent|dataExtractionRules)\([^\n]*/g) || []).join(" | "));
 console.log("raw badging:", (badging.match(/^(package|sdkVersion|minSdkVersion|targetSdkVersion|application-debuggable).*$/gm) || []).join(" | "));
 const debuggable = attr("debuggable") || /application-debuggable/.test(badging), backup = attr("allowBackup"), clear = attr("usesCleartextTraffic");
-const target = +(badging.match(/targetSdkVersion:'(\d+)'/) || [])[1], min = +(badging.match(/(?:^|\n)(?:min)?sdkVersion:'(\d+)'/) || [])[1];
+const target = +(badging.match(/targetSdkVersion:'(\d+)'/) || [])[1], min = +(badging.match(/(?:minSdkVersion|sdkVersion):'(\d+)'/) || [])[1];
 const perms = [...badging.matchAll(/uses-permission: name='([^']+)'/g)].map((m) => m[1].replace("android.permission.", ""));
 add("the app is built in debug mode (anyone with a USB cable can inspect it, and the Play Store refuses it)", debuggable ? "FAIL" : "PASS",
   debuggable ? "android:debuggable is on: the build workflow uses 'assembleDebug'. Changing this changes the live build, so it needs your approval" : "off");

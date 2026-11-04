@@ -45,6 +45,8 @@ if (process.env.RESTART_CMD) {
   await req("backup=1", { method: "POST", body: JSON.stringify({ items: [{ id: 1, name: "restart test item" }], at: 1 }) });
   const before = { deals: (await F.query("SELECT COUNT(*) n FROM deals"))[0].n, errs: (await errlog()).length };
   const t = Date.now(); try { execSync(process.env.RESTART_CMD, { stdio: "inherit", timeout: 180000 }); } catch (e) { add("Reliability", "Scan service restarted", "FAIL", e.message); }
+  // the restart closes old connections: the first request may need a second try
+  for (let i = 0; i < 5; i++) { try { await F.query("SELECT 1"); break; } catch (e) { await sleep(2000); } }
   const after = { deals: (await F.query("SELECT COUNT(*) n FROM deals"))[0].n, errs: (await errlog()).length }, bk = await req("backup=1").then((r) => r.json());
   add("Reliability", `Scan service stopped and started again (${((Date.now() - t) / 1000).toFixed(0)} s): deals, backup and problem log all kept`,
     ok(after.deals === before.deals && after.errs === before.errs && bk.data && bk.data.items[0].name === "restart test item"), `before ${JSON.stringify(before)} · after ${JSON.stringify(after)}`);

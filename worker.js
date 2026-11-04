@@ -941,6 +941,8 @@ async function closing(env) {
 // until a sample of its titles has been checked and the category is added here with the date.
 // a Buy It Now under this share of the usual sold price is tagged "Very cheap" (see the deal scoring)
 const VERY_CHEAP = 0.6, HIDE_BELOW = 0.4;
+// most deals sent to the app and re-judged each scan (the app is told the true total, and says if any are left out)
+const DEALS_MAX = 3000;
 // a price needs at least this many sales behind it before anything can be a deal
 const MIN_SALES = 8;
 const VERIFIED_CATS = {
@@ -1306,7 +1308,7 @@ async function sweep(env, manual) {
     }
     // every deal already on the list is judged again too, so new rules and new prices reach it straight away
     // (an auction listed days ago and ending tonight isn't in the newest or ending-soonest results yet)
-    const dl = await D.prepare("SELECT l.id, l.data, l.status, l.end_at, l.last_seen FROM deals d JOIN listings l ON l.id = d.id WHERE d.expires > ? LIMIT 200").bind(now).all();
+    const dl = await D.prepare("SELECT l.id, l.data, l.status, l.end_at, l.last_seen FROM deals d JOIN listings l ON l.id = d.id WHERE d.expires > ? LIMIT ?").bind(now, DEALS_MAX).all();
     const inRun = new Set(rowsAll.map((x) => x.id));
     for (const x of dl.results || []) if (!inRun.has(x.id) && x.status === "live" && x.data && (!x.end_at || x.end_at > now + 5 * 60000)) { rowsAll.push(x); inRun.add(x.id); }
     for (const row of rowsAll) {
@@ -1915,11 +1917,14 @@ export default {
           return json(await sweep(env, true));
         }
         if (P("deals")) {
-          const rows = await env.DB.prepare("SELECT data, created FROM deals WHERE expires>? ORDER BY score DESC LIMIT 200").bind(Date.now()).all();
+          // every live deal goes to the app (was capped at the best-scoring 200, which silently hid hundreds: 3 Nov).
+          // The total is sent too, so the app can say so if anything is ever left out.
+          const rows = await env.DB.prepare("SELECT data, created FROM deals WHERE expires>? ORDER BY score DESC LIMIT ?").bind(Date.now(), DEALS_MAX).all();
           const deals = (rows.results || []).map((r) => ({ ...JSON.parse(r.data), found: r.created }));
+          const dealsTotal = (await env.DB.prepare("SELECT COUNT(*) n FROM deals WHERE expires>?").bind(Date.now()).first() || {}).n || 0;
           const lc = await kvGet(env, "learnCats", { cats: [] });
           const cnt = (await kvGet(env, "learnedCounts", null)) || (await refreshLearned(env));
-          return json({ deals, report: await kvGet(env, "lastReport", null), learned: cnt.byCat, close: await kvGet(env, "close", []), later: await kvGet(env, "later", []), aucLearn: await kvGet(env, "aucLearn", {}), learning: { cats: lc.cats.length, sales: cnt.total }, lastCrash: await kvGet(env, "lastCrash", null), whyDay: await kvGet(env, "whyDay", null), verified: Object.keys(VERIFIED_CATS) });
+          return json({ deals, dealsTotal, report: await kvGet(env, "lastReport", null), learned: cnt.byCat, close: await kvGet(env, "close", []), later: await kvGet(env, "later", []), aucLearn: await kvGet(env, "aucLearn", {}), learning: { cats: lc.cats.length, sales: cnt.total }, lastCrash: await kvGet(env, "lastCrash", null), whyDay: await kvGet(env, "whyDay", null), verified: Object.keys(VERIFIED_CATS) });
         }
         if (P("check")) {
           const id = String(P("check")).replace(/\D/g, "");
@@ -2007,7 +2012,7 @@ export default {
         }
         if (P("prices")) {
           await ensureSrc(env);
-          const rows = await env.DB.prepare("SELECT pkey, label, q, avg, st, post, trend, at, src, n, lo, hi, spd, sdays, sn, act, act_at FROM prices ORDER BY at DESC LIMIT 3000").all();
+          const rows = await env.DB.prepare("SELECT pkey, label, q, avg, st, post, trend, at, src, n, lo, hi, spd, sdays, sn, act, act_at FROM prices ORDER BY at DESC LIMIT 20000").all();
           const fc = await kvGet(env, "fillCats", {}), catOf = {}, sell = (await kvGet(env, "sellTime", { m: {} })).m || {};
           for (const c in fc) for (const k in (fc[c].k || {})) if (!catOf[k]) catOf[k] = fc[c].name || "";
           return json({ prices: (rows.results || []).map((r) => ({ ...r, cat: catOf[r.pkey] || "", sell: sell[r.pkey] || null, url: lookupUrl(r.q || ""), fresh: Date.now() - r.at < BOOK_DAYS * DAY, speed: speedOf(r, Date.now()) })) });

@@ -24,6 +24,9 @@ let TOKEN = null, TOKEN_EXP = 0, SCHEMA = false, CALLS = 0;
 const EBAY_DAILY = 5000;
 // automatic work (scans, auction learning, deal checks) uses at most this share of the day; the rest is kept for your phone
 const AUTO_SHARE = 0.9;
+// hard ceiling for automatic calls (scans, auction learning, deal checks): they stop at 90% + 50 even if runs overlap, and save
+// their count every 10 calls, so at least ~420 of the day's calls always stay free for your phone
+const AUTO_HARD_EXTRA = 50, AUTO_SAVE_EVERY = 10;
 const today = () => new Date().toISOString().slice(0, 10);
 // eBay's day runs midnight to midnight US Pacific time: 08:00 UK most of the year, 07:00 for a few weeks in March and Oct/Nov
 // when the US and UK change their clocks on different dates. The time zone below handles all of that.
@@ -40,6 +43,14 @@ async function saveQuota(env) {
   try {
     await env.DB.prepare("INSERT INTO kv(k,v) VALUES('quota', json_object('d', ?1, 'n', ?2)) ON CONFLICT(k) DO UPDATE SET v = json_object('d', ?1, 'n', (CASE WHEN json_extract(kv.v, '$.d') = ?1 THEN json_extract(kv.v, '$.n') ELSE 0 END) + ?2)").bind(ebayDay(), n).run();
   } catch (e) { CALLS += n; }
+}
+
+let AUTO_N = 0, USED = 0, USED_DAILY = EBAY_DAILY, USED_AT = 0;
+// the day's calls so far (own count, or eBay's figures if higher), re-read at most every 30 s
+async function autoGuard(env) {
+  if (!USED_AT || Date.now() - USED_AT > 30000) { const rate = await freshRate(env); USED = Math.max(await quota(env), rate ? rate.limit - rate.remaining : 0); USED_DAILY = rate ? rate.limit : EBAY_DAILY; USED_AT = Date.now(); }
+  const used = USED + CALLS, cap = USED_DAILY * AUTO_SHARE + AUTO_HARD_EXTRA;
+  if (used >= cap) throw new EbayPaused(`FlipScout's automatic scans have used today's allowance (${used} of ${USED_DAILY} eBay calls); the rest is kept for your phone. They start again at ${ukTime(Date.now() + minsToEbayReset(Date.now()) * 60000)} (UK time).`);
 }
 
 /* ---------------- eBay rate-limit protection ---------------- */
@@ -163,8 +174,10 @@ async function getToken(env) {
 async function ebay(env, path) {
   const api = apiOf(path), g = env.DB ? await pausedFor(env, api) : null;
   if (g) throw new EbayPaused(pauseMsg(api, g)); // paused: no request is sent to eBay
+  if (env.AUTO && env.DB) await autoGuard(env); // automatic work: hard ceiling (your phone's calls are never stopped by it)
   const token = await getToken(env);
   CALLS++;
+  if (env.AUTO && env.DB && ++AUTO_N % AUTO_SAVE_EVERY === 0) { await saveQuota(env).catch(() => {}); USED_AT = 0; } // keep the shared count current
   const r = await fetch("https://api.ebay.com" + path, {
     headers: {
       Authorization: "Bearer " + token,
@@ -1357,6 +1370,7 @@ async function sweep(env, manual) {
   const base = ["priceCurrency:GBP", "deliveryCountry:GB", `price:[1..${r.maxSpend > 0 ? Math.ceil(Math.min(3000, r.maxSpend)) : 3000}]`];
   if (cfg.region === "uk") base.push("itemLocationCountry:GB");
   const seen = [];
+  let halted = false;
   for (const c of cats) {
     const calls = [];
     // fewer categories ticked = each one searched deeper: 1–2 categories get up to 400 newest Buy It Nows and 200 ending auctions
@@ -1374,9 +1388,9 @@ async function sweep(env, manual) {
         const d = await ebay(env, `/buy/browse/v1/item_summary/search?category_ids=${c.id}&limit=${lim}${off ? "&offset=" + off : ""}&sort=${sort}&filter=${encodeURIComponent([...base, f].join(","))}`);
         for (const it of d.itemSummaries || []) { const x = toListing(it, c, type); if (x) seen.push(x); }
         report.checked++;
-      } catch (e) { report.errors.push(e instanceof EbayPaused ? e.message : c.name + ": " + e.message); if (e instanceof EbayPaused) break; }
+      } catch (e) { report.errors.push(e instanceof EbayPaused ? e.message : c.name + ": " + e.message); if (e instanceof EbayPaused) { halted = true; break; } }
     }
-    if (report.errors.some((m) => /paused until/.test(m))) break; // eBay paused mid-scan: stop asking
+    if (halted) break; // eBay paused, or the automatic allowance is used: stop asking
   }
   // full stock check: every listing for sale in your categories, a few pages per scan (see stockStep)
   if ((await quota(env)) + CALLS < EBAY_DAILY * STOCK_UNTIL) {
@@ -1984,13 +1998,14 @@ export default {
       // errors here used to vanish; keep the latest one so it can be looked at ("lastCrash" in the kv table)
       const crash = (where) => (e) => kvSet(env, "lastCrash", { at: Date.now(), where, msg: String((e && e.message) || e).slice(0, 300) }).catch(() => {});
       await refreshRate(env).catch(() => {}); // eBay's own call figures, at most once an hour
-      const r = await sweep(env, false).catch((e) => (crash("scan")(e), {}));
+      const auto = { ...env, AUTO: true }; // automatic work: subject to the hard ceiling
+      const r = await sweep(auto, false).catch((e) => (crash("scan")(e), {}));
       await weeklyExport(env).catch(crash("weekly price export"));
       if (r && r.skipped && !(await pausedFor(env, "browse"))) {
         const rate = await freshRate(env), used = Math.max(await quota(env), rate ? rate.limit - rate.remaining : 0);
         if (used < (rate ? rate.limit : EBAY_DAILY) * AUTO_SHARE) {
-          await closing(env).catch((e) => (e instanceof EbayPaused ? null : crash("auction learning")(e)));
-          await spareVerify(env).catch((e) => (e instanceof EbayPaused ? null : crash("deal check")(e)));
+          await closing(auto).catch((e) => (e instanceof EbayPaused ? null : crash("auction learning")(e)));
+          await spareVerify(auto).catch((e) => (e instanceof EbayPaused ? null : crash("deal check")(e)));
         }
       }
       await saveQuota(env).catch(() => {});

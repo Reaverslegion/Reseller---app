@@ -98,6 +98,16 @@ export async function runTest(rawExec, tag) {
     const plan = (await rawExec(`EXPLAIN QUERY PLAN SELECT v FROM kv WHERE k='${prefix}quota'`, [])).results.map((r) => r.detail).join("; ");
     add("counting reads/writes one row by its key (no table scan)", /USING INDEX sqlite_autoindex_kv_1|PRIMARY KEY/.test(plan), plan);
 
+    // 1b. hard ceiling for automatic calls: 3 copies race from 4,480; the phone's reserve must stay
+    await exec("DELETE FROM kv WHERE k=?", ["quota"]); await copies[0].kvSet(env, "quota", { d: copies[0].ebayDay(), n: 4480 });
+    NEXT = {}; EBAY = []; const auto = { ...env, AUTO: true }, racers = [load(), load(), load()];
+    const burn = async (c) => { let made = 0; try { for (let i = 0; i < 200; i++) { await c.ebay(auto, "/buy/browse/v1/item_summary/search?q=x" + i); made++; } } catch (e) { if (!(e instanceof c.EbayPaused)) throw e; } await c.saveQuota(env); return made; };
+    const made = await Promise.all(racers.map(burn)), tot = (await copies[0].kvGet(env, "quota")).n, sent = EBAY.filter((u) => u.includes("/buy/browse/")).length;
+    add("hard ceiling on D1: 3 automatic copies racing stop near 4,550 and at least 400 calls stay free", tot === 4480 + sent && 5000 - tot >= 400, `made ${made.join("+")}; total ${tot}; ${5000 - tot} left for the phone`);
+    let pm = false; try { await load().ebay(env, "/buy/browse/v1/item_summary/search?q=phone"); pm = true; } catch (e) {}
+    add("your phone's search still works above the automatic ceiling", pm);
+    await exec("DELETE FROM kv WHERE k=?", ["quota"]);
+
     // 2. pause shared between separate copies (as separate Worker instances)
     const A = load(), B = load(), C = load(); NEXT = { browse: () => reply(429, { errors: [{ errorId: 2001, message: "Too many requests" }] }, { "retry-after": "600" }) }; EBAY = [];
     await assert.rejects(A.ebay(env, "/buy/browse/v1/item_summary/search?q=a"), A.EbayPaused);

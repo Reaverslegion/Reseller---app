@@ -173,12 +173,26 @@ await t("five scans starting at the same moment near the 90% line: every call co
   const db = newDb(), env = mkEnv(db), copies = [load(), load(), load(), load(), load()]; await copies[0].schema(env); await copies[0].kvSet(env, "config", CFG);
   for (const c of copies) await c.schema(env); // each copy already running, as in production
   await copies[0].kvSet(env, "quota", { d: copies[0].ebayDay(), n: 4480 }); await copies[0].kvSet(env, "keyver", 3);
-  const rs = await Promise.all(copies.map((c) => c.sweep(env, false)));
+  const rs = await Promise.all(copies.map((c) => c.sweep({ ...env, AUTO: true }, false))); // as the scheduled job runs them
   const ran = rs.filter((r) => !r.skipped).length, q = (await copies[0].kvGet(env, "quota")).n; console.log("   results:", JSON.stringify(rs.map((r) => r.skipped || "scanned")));
   assert.equal(q, 4480 + browseCalls(), `every call counted (${browseCalls()} calls by ${ran} overlapping scans)`);
   assert.ok(q <= 5000, `stays inside eBay's 5,000 (${q})`);
   console.log(`   (${ran} scans overlapped and made ${browseCalls()} eBay calls: 4480 → ${q})`); assert.ok(ran >= 2, "scans really overlapped"); await copies[0].kvSet(env, "lastRun", 0);
   const after = await copies[0].sweep(env, false); assert.equal(after.skipped, "eBay daily limit reached", "the next scan stops at the 90% line");
+});
+
+await t("hard ceiling: 3 automatic copies racing to make 200 calls each stop near 4,550; at least 400 calls stay free; phone searches still work", async () => {
+  const db = newDb(), env = mkEnv(db), copies = [load(), load(), load()]; await copies[0].schema(env);
+  await copies[0].kvSet(env, "quota", { d: copies[0].ebayDay(), n: 4480 });
+  const auto = { ...env, AUTO: true };
+  const burn = async (c) => { let made = 0; try { for (let i = 0; i < 200; i++) { await c.ebay(auto, "/buy/browse/v1/item_summary/search?q=x" + i); made++; } } catch (e) { if (!(e instanceof c.EbayPaused)) throw e; } await c.saveQuota(env); return made; };
+  const made = await Promise.all(copies.map(burn)), total = (await copies[0].kvGet(env, "quota")).n;
+  console.log(`   (copies made ${made.join(" + ")} calls; day total 4480 → ${total}; left for the phone: ${5000 - total})`);
+  assert.equal(total, 4480 + browseCalls(), "every call counted");
+  assert.ok(total <= 4600 && 5000 - total >= 400, `reserve kept (${5000 - total} left)`);
+  const phone = load(); const d = await phone.ebay(env, "/buy/browse/v1/item_summary/search?q=phone"); assert.ok(d.itemSummaries, "your phone's search still works");
+  let msg = ""; try { await load().ebay(auto, "/buy/browse/v1/item_summary/search?q=more"); } catch (e) { msg = e.message; }
+  assert.match(msg, /automatic scans have used today's allowance \(\d+ of 5000 eBay calls\); the rest is kept for your phone/);
 });
 
 await t("sold details (Trading API): eBay's usage-limit error pauses them and does NOT mark sold items as missing", async () => {

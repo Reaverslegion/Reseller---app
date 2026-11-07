@@ -1,5 +1,8 @@
-name: Rate-limit protection on the test database (simulated eBay)
-# Runs the real counting/pause/scan code against the TEST database "flipscout-phonetest-db" only, with simulated eBay replies.
+name: Rate-limit protection on the test environment (simulated eBay)
+# 1) runs the real counting/pause/scan code against the TEST database "flipscout-phonetest-db" (simulated eBay replies);
+# 2) puts this code on the isolated TEST Scan service "flipscout-phonetest" (no schedule, NO eBay keys), places a simulated
+#    eBay pause in the test database (settings snapshotted and restored exactly), and checks its replies and the exact
+#    phone app page of version 2.0.122 against it. Never touches the live Scan service, live database or eBay.
 # Only a NEW "run <tag>" or "cleanup <tag>" in .github/d1-test/ratelimit-request.txt on branch test/ebay-ratelimit does anything.
 on:
   push:
@@ -12,36 +15,43 @@ concurrency:
   group: phonetest-db
   cancel-in-progress: false
 jobs:
-  d1:
+  decide:
     if: github.ref == 'refs/heads/test/ebay-ratelimit'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    outputs:
+      mode: ${{ steps.d.outputs.mode }}
+      tag: ${{ steps.d.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: What was asked (only a NEW request does anything)
+      - id: d
+        name: What was asked (only a NEW request does anything)
         env:
           BEFORE: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           F=.github/d1-test/ratelimit-request.txt
           REQ=$(head -1 $F | tr -s ' ' | sed 's/^ //; s/ $//'); PREV=$(git show "$BEFORE:$F" 2>/dev/null | head -1 | tr -s ' ' | sed 's/^ //; s/ $//' || true)
           M=hold; T=""; if [[ "$REQ" =~ ^(run|cleanup)\ ([a-z0-9]{6,24})$ ]]; then M=${BASH_REMATCH[1]}; T=${BASH_REMATCH[2]}; fi
           if [ "$M" != hold ] && [ "$REQ" = "$PREV" ]; then echo "same request as before - not repeated"; M=hold; fi
-          [ "$M" != hold ] || T=""; echo "MODE=$M" >> $GITHUB_ENV; echo "TAG=$T" >> $GITHUB_ENV; echo "mode: $M ${T:+(tag $T)}"
-      - name: Stop if the phone-test automation is running (it shares the test database)
-        if: env.MODE != 'hold'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          N=$(gh run list -R $GITHUB_REPOSITORY -w phone-test-service.yml --json status --jq '[.[]|select(.status!="completed")]|length' 2>/dev/null || echo 0)
-          test "$N" = 0 || { echo "REFUSED: phone-test automation is running"; exit 1; }
+          if [ "$M" != hold ]; then N=$(gh run list -R $GITHUB_REPOSITORY -w phone-test-service.yml --json status --jq '[.[]|select(.status!="completed")]|length' 2>/dev/null || echo 0); [ "$N" = 0 ] || { echo "REFUSED: phone-test automation is running"; M=hold; }; fi
+          [ "$M" != hold ] || T=""; echo "mode=$M" >> $GITHUB_OUTPUT; echo "tag=$T" >> $GITHUB_OUTPUT; echo "mode: $M ${T:+(tag $T)}"
+
+  d1:
+    needs: decide
+    if: needs.decide.outputs.mode != 'hold'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MODE: ${{ needs.decide.outputs.mode }}
+      TAG: ${{ needs.decide.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        if: env.MODE != 'hold'
         with:
           node-version: 22
-      - name: Existing tests and the whole test on a local copy first (no Cloudflare)
-        if: env.MODE != 'hold'
+      - name: Full automated test suite and the whole test on a local copy first (no Cloudflare)
         run: |
           node tests/run-all.mjs
           node --no-warnings tests/d1/ratelimit-d1.mjs local localcheck01
@@ -59,3 +69,58 @@ jobs:
           CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CF_ACC: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: node --no-warnings tests/d1/ratelimit-d1.mjs cleanup "$TAG"
+
+  worker:
+    needs: [decide, d1]
+    if: always() && needs.decide.outputs.mode == 'run' && needs.d1.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CF_ACC: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Safety - test resources found and proved different from the live ones
+        run: node --no-warnings tests/d1/worker-e2e.mjs guard
+      - name: Snapshot the test database's settings (restored exactly at the end)
+        id: snap
+        run: node --no-warnings tests/d1/worker-e2e.mjs snapshot
+      - name: Put this code on the TEST Scan service (no schedule, no eBay keys)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npm i -g wrangler@3.114.17 >/dev/null 2>&1
+          mkdir -p ts && cp worker.js ts/ && cd ts
+          printf 'name = "flipscout-phonetest"\nmain = "worker.js"\ncompatibility_date = "2024-09-23"\nworkers_dev = true\n\n[[kv_namespaces]]\nbinding = "BACKUP"\nid = "%s"\n\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "flipscout-phonetest-db"\ndatabase_id = "%s"\n' "$TEST_KV_ID" "$TEST_DB_ID" > wrangler.toml
+          ! grep -qiE 'crons|triggers|flipscout-search|"flipscout-db"|flipscout-backup' wrangler.toml || { echo "REFUSED: schedule or live names in the test config"; exit 1; }
+          wrangler deploy > deploy.txt 2>&1 || { sed -E 's#[a-z0-9-]+\.workers\.dev#…workers.dev#g' deploy.txt; exit 1; }
+          U=$(grep -oE 'https://flipscout-phonetest\.[a-z0-9-]+\.workers\.dev' deploy.txt | head -1); test -n "$U" || { echo "test address not found"; exit 1; }
+          echo "::add-mask::$U"; echo "TEST_SVC_URL=$U" >> $GITHUB_ENV
+          K=$(openssl rand -hex 24); echo "::add-mask::$K"; echo "TEST_SVC_KEY=$K" >> $GITHUB_ENV
+          echo "$K" | wrangler secret put APP_KEY >/dev/null
+          grep -E "Uploaded|Current Version ID" deploy.txt | sed -E 's/([0-9a-f]{8})-[0-9a-f-]+/\1…/'
+      - name: Place a simulated eBay pause in the TEST database
+        run: node --no-warnings tests/d1/worker-e2e.mjs seed
+      - name: Test Scan service replies while paused (over the internet, like the phone)
+        run: sleep 5 && node --no-warnings tests/d1/worker-e2e.mjs check
+      - name: Existing Android app (exact 2.0.122 page) against the test Scan service
+        run: |
+          node --no-warnings tests/d1/worker-e2e.mjs resetManual
+          git show 490a27e:index.html > app-122.html
+          pip install -q playwright==1.47.0 && python3 -m playwright install --with-deps chromium >/dev/null 2>&1
+          python3 tests/d1/app-check.py app-122.html results
+      - name: Restore the test database's settings exactly (always)
+        if: always() && steps.snap.outcome == 'success'
+        run: node --no-warnings tests/d1/worker-e2e.mjs restore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ratelimit-app-screens
+          path: results/
+          retention-days: 14

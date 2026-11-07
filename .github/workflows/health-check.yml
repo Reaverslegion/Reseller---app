@@ -1,0 +1,79 @@
+name: Production health check (read-only)
+# READ-ONLY: Cloudflare analytics (GraphQL queries), Worker invocations, and ONE read-only SELECT of three status rows
+# (lastRun, lastReport, lastCrash) from the live database. No writes of any kind.
+on:
+  push:
+    branches: [check/live-version]
+    paths: [".github/live-check/health.txt"]
+permissions:
+  contents: read
+jobs:
+  health:
+    if: github.ref == 'refs/heads/check/live-version'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Read metrics and status (read-only)
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACC: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          node - <<'JS'
+          const fs = require("fs");
+          const H = { Authorization: `Bearer ${process.env.CF_TOKEN}`, "content-type": "application/json" }, ACC = process.env.CF_ACC;
+          const api = "https://api.cloudflare.com/client/v4";
+          const deploy = fs.readFileSync(".github/live-check/health.txt", "utf8").match(/deploy=(\S+)/)[1];
+          const now = new Date().toISOString(), before = new Date(Date.parse(deploy) - 24 * 3600e3).toISOString();
+          const hrs = (a, b) => (Date.parse(b) - Date.parse(a)) / 3600e3;
+          const gql = async (query, variables) => { const r = await fetch(api + "/graphql", { method: "POST", headers: H, body: JSON.stringify({ query, variables }) }); const j = await r.json(); return j; }; // analytics: read-only
+          const fmt = (n) => Math.round(n).toLocaleString("en-GB");
+          (async () => {
+            const dl = await (await fetch(`${api}/accounts/${ACC}/d1/database?name=flipscout-db`, { headers: H })).json();
+            const db = (dl.result || []).find((d) => d.name === "flipscout-db"); if (!db) throw new Error("flipscout-db not found");
+            const DBID = db.uuid; console.log("window BEFORE:", before, "→", deploy, `(${hrs(before, deploy).toFixed(2)} h)`); console.log("window AFTER: ", deploy, "→", now, `(${hrs(deploy, now).toFixed(2)} h)`);
+            // per-query statistics (the data behind D1 Insights)
+            const Q = `query($a:String!,$d:String!,$s:Time!,$e:Time!){viewer{accounts(filter:{accountTag:$a}){d1QueriesAdaptiveGroups(limit:10000,filter:{databaseId:$d,datetime_geq:$s,datetime_leq:$e}){count sum{queryDurationMs rowsRead rowsWritten rowsReturned} dimensions{query}}}}}`;
+            const win = {};
+            for (const [nm, s, e] of [["BEFORE", before, deploy], ["AFTER", deploy, now]]) {
+              const j = await gql(Q, { a: ACC, d: DBID, s, e });
+              if (j.errors) { console.log(`per-query stats ${nm}: not readable -`, JSON.stringify(j.errors).slice(0, 300)); continue; }
+              const g = j.data.viewer.accounts[0].d1QueriesAdaptiveGroups; win[nm] = g;
+              const tot = g.reduce((t, x) => ({ runs: t.runs + x.count, rows: t.rows + x.sum.rowsRead, ms: t.ms + x.sum.queryDurationMs, w: t.w + x.sum.rowsWritten }), { runs: 0, rows: 0, ms: 0, w: 0 });
+              const h = hrs(s, e);
+              console.log(`\n== ${nm}: all queries: ${fmt(tot.runs)} runs, ${fmt(tot.rows)} rows read, ${fmt(tot.w)} rows written, ${(tot.ms / 1000).toFixed(1)} s  | per hour: ${fmt(tot.runs / h)} runs, ${fmt(tot.rows / h)} rows read, ${(tot.ms / 1000 / h).toFixed(1)} s`);
+              const ask = g.filter((x) => /SELECT pkey, id, price\+ship AS t FROM listings WHERE pkey IN/.test(x.dimensions.query));
+              for (const kind of ["status='live'", "+status='live'"]) {
+                const k = ask.filter((x) => kind === "status='live'" ? /AND status='live'/.test(x.dimensions.query) : /\+status='live'/.test(x.dimensions.query));
+                const r = k.reduce((t, x) => ({ runs: t.runs + x.count, rows: t.rows + x.sum.rowsRead, ms: t.ms + x.sum.queryDurationMs }), { runs: 0, rows: 0, ms: 0 });
+                console.log(`   asking-price lookup ${kind === "status='live'" ? "OLD" : "NEW"} (${kind}): ${fmt(r.runs)} runs, ${fmt(r.rows)} rows read (${r.runs ? fmt(r.rows / r.runs) : "-"} per run), ${(r.ms / 1000).toFixed(1)} s (${r.runs ? (r.ms / r.runs).toFixed(1) : "-"} ms per run) | per hour: ${(r.runs / h).toFixed(1)} runs, ${fmt(r.rows / h)} rows`);
+              }
+              console.log("   top 6 queries by rows read:");
+              for (const x of [...g].sort((a, b) => b.sum.rowsRead - a.sum.rowsRead).slice(0, 6)) console.log(`     ${fmt(x.sum.rowsRead).padStart(13)} rows | ${String(x.count).padStart(5)} runs | ${(x.sum.queryDurationMs / 1000).toFixed(1).padStart(7)} s | ${x.dimensions.query.replace(/\s+/g, " ").slice(0, 110)}`);
+            }
+            // Worker invocations by status and version
+            const W = `query($a:String!,$s:Time!,$e:Time!){viewer{accounts(filter:{accountTag:$a}){workersInvocationsAdaptive(limit:100,filter:{scriptName:"flipscout-search",datetime_geq:$s,datetime_leq:$e}){sum{requests errors subrequests} dimensions{status scriptVersion}}}}}`;
+            for (const [nm, s, e] of [["BEFORE", before, deploy], ["AFTER", deploy, now]]) {
+              const j = await gql(W, { a: ACC, s, e }); if (j.errors) { console.log(`\nWorker runs ${nm}: not readable`, JSON.stringify(j.errors).slice(0, 200)); continue; }
+              console.log(`\nWorker runs ${nm}:`); for (const x of j.data.viewer.accounts[0].workersInvocationsAdaptive) console.log("  ", JSON.stringify({ status: x.dimensions.status, version: String(x.dimensions.scriptVersion || "").slice(0, 8), runs: x.sum.requests, errors: x.sum.errors, subrequests: x.sum.subrequests }));
+            }
+            // D1 error counts, if Cloudflare offers them for this database
+            const E = `query($a:String!,$d:String!,$s:Time!,$e:Time!){viewer{accounts(filter:{accountTag:$a}){d1AnalyticsAdaptiveGroups(limit:1000,filter:{databaseId:$d,datetimeHour_geq:$s,datetimeHour_leq:$e}){sum{readQueries writeQueries rowsRead rowsWritten} dimensions{datetimeHour}}}}}`;
+            const je = await gql(E, { a: ACC, d: DBID, s: new Date(Date.parse(before) - 3600e3).toISOString(), e: now });
+            if (je.errors) console.log("\nhourly D1 totals: not readable -", JSON.stringify(je.errors).slice(0, 250));
+            else { console.log("\nhourly D1 totals (last 8 hours):"); for (const x of je.data.viewer.accounts[0].d1AnalyticsAdaptiveGroups.sort((a, b) => a.dimensions.datetimeHour < b.dimensions.datetimeHour ? -1 : 1).slice(-8)) console.log("  ", x.dimensions.datetimeHour, `read queries ${fmt(x.sum.readQueries)}, rows read ${fmt(x.sum.rowsRead)}, rows written ${fmt(x.sum.rowsWritten)}`); }
+            const intro = await gql(`{__type(name:"AccountD1QueriesAdaptiveGroupsDimensions"){fields{name}}}`, {});
+            console.log("\n(available per-query dimensions:", ((intro.data && intro.data.__type && intro.data.__type.fields) || []).map((f) => f.name).join(", ") || JSON.stringify(intro.errors || "").slice(0, 150), ")");
+            // the scanner's own status rows (read-only SELECT)
+            const sql = "SELECT k, v FROM kv WHERE k IN ('lastRun','lastReport','lastCrash','lastClean')";
+            const r = await (await fetch(`${api}/accounts/${ACC}/d1/database/${DBID}/query`, { method: "POST", headers: H, body: JSON.stringify({ sql }) })).json();
+            if (!r.success) console.log("\nstatus rows: not readable -", JSON.stringify(r.errors).slice(0, 200));
+            else { console.log("\nscanner status rows (read-only):"); for (const row of r.result[0].results) { let v = row.v; try { v = JSON.parse(v); } catch (e) {}
+              if (row.k === "lastReport" && v && typeof v === "object") { const o = {}; for (const [k2, x] of Object.entries(v)) if (typeof x !== "object" || x === null) o[k2] = x; v = o; }
+              const t = typeof v === "number" ? new Date(v).toISOString() : v && v.at ? new Date(v.at).toISOString() : ""; console.log(`  ${row.k} (${t}):`, JSON.stringify(v).slice(0, 500)); } }
+            console.log("\nHEALTH CHECK DONE");
+          })().catch((e) => { console.log("ERROR:", e.message); process.exit(1); });
+          JS

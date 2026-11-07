@@ -4,14 +4,20 @@
 //
 //   node tests/d1/d1-test.mjs selftest                     safety rules checked against bad set-ups (no database needed)
 //   node tests/d1/d1-test.mjs local [rows]                 the whole test on a local SQLite copy (no Cloudflare)
-//   node tests/d1/d1-test.mjs remote <old.js> <new.js> [rows]   on Cloudflare (needs the workflow + approval)
-//   node tests/d1/d1-test.mjs cleanup                      Cloudflare: remove "d1t-" rows only
+//   node tests/d1/d1-test.mjs remote <old.js> <new.js> <rows> <tag>   on Cloudflare (needs the workflow + approval)
+//   node tests/d1/d1-test.mjs cleanup <tag>                Cloudflare: remove ONLY that run's rows ("d1t-<tag>-…")
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 
 export const TEST_DB_NAME = "flipscout-phonetest-db";
 export const LIVE_NAMES = ["flipscout-db", "flipscout-search", "flipscout-backup"];
 export const ID_PREFIX = "d1t-", KEY_PREFIX = "d1test:";
+// Every run has its own tag (e.g. "run20261107a"): its rows are "d1t-<tag>-<n>" and its model keys "d1test:<tag>:m<n>|used".
+// Only rows with EXACTLY this run's prefix (case-sensitive) can be written or deleted; rows from any other run are never touched.
+export const TAG_RE = /^[a-z0-9]{6,24}$/;
+let RUN = null, TAG = null;
+export function setRun(tag) { if (!TAG_RE.test(tag || "")) throw new Error("run tag must be 6-24 lowercase letters or digits"); TAG = tag; RUN = `${ID_PREFIX}${tag}-`; return RUN; }
+export const mine = () => `substr(id,1,${RUN.length})='${RUN}'`; // exact, case-sensitive (LIKE would ignore case)
 export const MAX_OTHER_ROWS = 20000; // the live database holds hundreds of thousands of listings; a bigger table is refused
 const DAY = 864e5;
 const out = (...a) => { try { fs.writeSync(1, a.join(" ") + "\n"); } catch (e) {} };
@@ -35,9 +41,10 @@ export function lintSql(sql) {
   if (/^(EXPLAIN QUERY PLAN )?SELECT /i.test(s)) return /\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|REPLACE|ATTACH|PRAGMA|VACUUM)\b/i.test(s.replace(/'[^']*'/g, "")) ? "read query contains a write word" : "";
   if (/^INSERT INTO listings \(id,cat,pkey,title,cond,type,price,ship,bids,end_at,first_seen,last_seen,status\) VALUES /.test(s)) {
     const rows = s.slice(s.indexOf("VALUES ") + 7).split(/\),\s*\(/);
-    return rows.every((r) => r.replace(/^\(/, "").startsWith(`'${ID_PREFIX}`)) && !/ON CONFLICT|REPLACE|SELECT/i.test(s) ? "" : "insert row without the d1t- id";
+    if (!RUN) return "no run tag set, so no writes are allowed";
+    return rows.every((r) => r.replace(/^\(/, "").startsWith(`'${RUN}`)) && !/ON CONFLICT|REPLACE|SELECT/i.test(s) ? "" : "insert row without this run's id prefix";
   }
-  if (s === `DELETE FROM listings WHERE id LIKE '${ID_PREFIX}%'`) return "";
+  if (RUN && s === `DELETE FROM listings WHERE ${mine()}`) return "";
   return "statement not on the allowed list";
 }
 
@@ -70,11 +77,11 @@ export function makeData(n, now) {
   for (let i = 0; i < n; i++) {
     const fs_ = Math.round(now - rnd() * 40 * DAY), ls = Math.round(Math.min(now, fs_ + rnd() * 10 * DAY));
     const model = Math.floor(1 / Math.pow(1 - rnd() * 0.9999, 1 / 1.2)) % 2000; // a few very popular models, many rare ones
-    rows.push([`${ID_PREFIX}${i}`, pick([["27386", 3], ["9355", 3], ["139971", 2], ["177", 1], ["164", 1]]), rnd() < 0.1 ? null : `${KEY_PREFIX}m${model}|used`, "test listing", "used",
+    rows.push([`${RUN}${i}`, pick([["27386", 3], ["9355", 3], ["139971", 2], ["177", 1], ["164", 1]]), rnd() < 0.1 ? null : `${KEY_PREFIX}${TAG}:m${model}|used`, "test listing", "used",
       rnd() < 0.85 ? "BIN" : "AUC", Math.round((20 + rnd() * 880) * 100) / 100, 4.99, 0, fs_ + 7 * DAY, fs_, ls, pick([["live", 65], ["gone", 25], ["sold", 5], ["ended", 5]])]);
   }
   // awkward statuses that must match in neither version
-  for (const [i, st] of [["e1", "Live"], ["e2", null], ["e3", "live "]]) rows.push([`${ID_PREFIX}${i}`, "1", `${KEY_PREFIX}m1|used`, "edge", "used", "BIN", 50, 0, 0, now, now - DAY, now, st]);
+  for (const [i, st] of [["e1", "Live"], ["e2", null], ["e3", "live "]]) rows.push([`${RUN}${i}`, "1", `${KEY_PREFIX}${TAG}:m1|used`, "edge", "used", "BIN", 50, 0, 0, now, now - DAY, now, st]);
   return rows;
 }
 export function insertStatements(rows, per = 150) {
@@ -83,7 +90,7 @@ export function insertStatements(rows, per = 150) {
     st.push("INSERT INTO listings (id,cat,pkey,title,cond,type,price,ship,bids,end_at,first_seen,last_seen,status) VALUES " + rows.slice(i, i + per).map((r) => "(" + r.map((v) => (v === null ? "NULL" : lit(v))).join(",") + ")").join(","));
   return st;
 }
-export function testKeys() { const k = []; for (let m = 1; k.length < 45; m += 7) k.push(`${KEY_PREFIX}m${m}|used`); return k; }
+export function testKeys() { const k = []; for (let m = 1; k.length < 45; m += 7) k.push(`${KEY_PREFIX}${TAG}:m${m}|used`); return k; }
 
 // ---------- two ways to run SQL: local SQLite, or Cloudflare through wrangler ----------
 export function localExec(db) {
@@ -99,23 +106,26 @@ export function remoteExec(cfg, wrangler = "wrangler") {
 const contentOf = (ex) => {
   const t = ex("SELECT name, sql FROM sqlite_master WHERE tbl_name='listings' OR name='sqlite_stat1'").rows;
   const has = t.some((r) => r.name === "listings"); const ix = Object.fromEntries(t.filter((r) => r.name.startsWith("li_")).map((r) => [r.name, r.sql]));
-  const other = has ? ex(`SELECT COUNT(*) n FROM listings WHERE id NOT LIKE '${ID_PREFIX}%'`).rows[0].n : 0;
-  return { hasListings: has, other, indexes: ix, stats: t.some((r) => r.name === "sqlite_stat1") };
+  const other = has ? ex(`SELECT COUNT(*) n FROM listings WHERE NOT ${mine()}`).rows[0].n : 0;
+  const otherTest = has ? ex(`SELECT COUNT(*) n FROM listings WHERE substr(id,1,4)='${ID_PREFIX}' AND NOT ${mine()}`).rows[0].n : 0;
+  const ours = has ? ex(`SELECT COUNT(*) n FROM listings WHERE ${mine()}`).rows[0].n : 0;
+  return { hasListings: has, other, otherTest, ours, indexes: ix, stats: t.some((r) => r.name === "sqlite_stat1") };
 };
 
 // ---------- the test itself (same code for local and Cloudflare) ----------
-export function runTest(ex, oldTpl, newTpl, n, now = 1793900000000) {
+export function runTest(ex, oldTpl, newTpl, n, now = 1793900000000, onStart = () => {}) {
   const R = { checks: [] }, add = (name, ok, detail = "") => { R.checks.push({ name, status: ok ? "PASS" : "FAIL", detail }); out((ok ? "PASS " : "FAIL ") + name + (detail ? "  — " + detail : "")); };
   if (oldTpl.replace("+status='live'", "status='live'") !== oldTpl || newTpl.replace("+status='live'", "status='live'") !== oldTpl) add("old and new queries differ only by the '+'", false, "unexpected difference"); else add("old and new queries differ only by the '+'", true);
   const c = contentOf(ex), bad = guardContent(c);
   add("test database checked before writing (small, same indexes as the code)", !bad, bad || `${c.other} non-test listings; database statistics ${c.stats ? "PRESENT" : "absent (like production appears to be)"}`);
   if (bad) return R;
   R.stats = c.stats;
-  const left = ex(`SELECT COUNT(*) n FROM listings WHERE id LIKE '${ID_PREFIX}%'`).rows[0].n;
-  if (left) { ex(`DELETE FROM listings WHERE id LIKE '${ID_PREFIX}%'`); out(`removed ${left} rows left by an earlier run`); }
+  add(`run tag "${TAG}" is new (no rows with this run's prefix yet)`, c.ours === 0, `${c.ours} rows already have prefix ${RUN}; ${c.otherTest} rows from other test runs will be left alone`);
+  if (c.ours) return R; // never re-use a tag: then cleanup could only ever remove rows this run created
+  onStart(); // from here on, rows with this run's prefix were created by THIS run
   try {
     const rows = makeData(n, now), st = insertStatements(rows); for (const s of st) ex(s);
-    const got = ex(`SELECT COUNT(*) n FROM listings WHERE id LIKE '${ID_PREFIX}%'`).rows[0].n;
+    const got = ex(`SELECT COUNT(*) n FROM listings WHERE ${mine()}`).rows[0].n;
     add(`${rows.length} test rows inserted`, got === rows.length, `${got} rows, ${rows.filter((r) => r[12] === "live").length} live`);
     const keys = testKeys(), plans = {};
     for (const [nm, tpl] of [["old", oldTpl], ["new", newTpl]]) {
@@ -131,9 +141,8 @@ export function runTest(ex, oldTpl, newTpl, n, now = 1793900000000) {
     R.rowsRead = { old: rr(a), new: rr(b) }; R.durationMs = { old: ms(a), new: ms(b) };
     if (rr(a).length) add("new query reads fewer rows", Math.max(...rr(b)) < Math.min(...rr(a)), `rows read old ${rr(a).join("/")} vs new ${rr(b).join("/")}; ms old ${ms(a).map(Math.round).join("/")} vs new ${ms(b).map(Math.round).join("/")}`);
   } finally {
-    ex(`DELETE FROM listings WHERE id LIKE '${ID_PREFIX}%'`);
-    const left2 = ex(`SELECT COUNT(*) n FROM listings WHERE id LIKE '${ID_PREFIX}%'`).rows[0].n, other2 = ex(`SELECT COUNT(*) n FROM listings WHERE id NOT LIKE '${ID_PREFIX}%'`).rows[0].n;
-    add("cleanup: all test rows removed, other rows untouched", left2 === 0 && other2 === c.other, `${left2} test rows left; other rows ${c.other} → ${other2}`);
+    ex(`DELETE FROM listings WHERE ${mine()}`); const c2 = contentOf(ex);
+    add("cleanup: this run's rows removed; every other row (including other test runs' d1t- rows) untouched", c2.ours === 0 && c2.other === c.other && c2.otherTest === c.otherTest, `${c2.ours} rows of this run left; other rows ${c.other} → ${c2.other}; other test-run rows ${c.otherTest} → ${c2.otherTest}`);
   }
   return R;
 }
@@ -149,10 +158,13 @@ export async function localDb(workerJs) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const [cmd, a1, a2, a3] = process.argv.slice(2);
+  const [cmd, a1, a2, a3, a4] = process.argv.slice(2);
   const wj = (f) => fs.readFileSync(f, "utf8");
   if (cmd === "selftest") {
     const L = (t, l) => [{ name: TEST_DB_NAME, uuid: t }, { name: "flipscout-db", uuid: l }];
+    const noTagBlocked = !!lintSql("INSERT INTO listings (id,cat,pkey,title,cond,type,price,ship,bids,end_at,first_seen,last_seen,status) VALUES ('d1t-x-1','1',NULL,'t','u','BIN',1,1,0,1,1,1,'live')");
+    const badTags = ["", "abc", "Run123", "run_1234", "run%1234", "run-12345", "a".repeat(25)].every((t) => { try { setRun(t); return false; } catch (e) { return true; } });
+    setRun("selftest01");
     const cases = [["normal set-up is accepted", guardList(L("aaa", "bbb")).ok === true],
       ["same id as live is refused", !guardList(L("aaa", "aaa")).ok], ["missing test database is refused (not created)", !guardList([{ name: "flipscout-db", uuid: "b" }]).ok],
       ["missing live database is refused", !guardList([{ name: TEST_DB_NAME, uuid: "a" }]).ok], ["live name configured as the test name is refused", !guardList(L("a", "b"), "flipscout-db").ok],
@@ -164,17 +176,27 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       ["DELETE of anything but test rows is blocked", !!lintSql("DELETE FROM listings WHERE id LIKE '%'")], ["DELETE without condition is blocked", !!lintSql("DELETE FROM listings")],
       ["insert of a non-test id is blocked", !!lintSql("INSERT INTO listings (id,cat,pkey,title,cond,type,price,ship,bids,end_at,first_seen,last_seen,status) VALUES ('d1t-1','1',NULL,'t','u','BIN',1,1,0,1,1,1,'live'),('123','1',NULL,'t','u','BIN',1,1,0,1,1,1,'live')")],
       ["two statements in one are blocked", !!lintSql("SELECT 1; DROP TABLE listings")], ["PRAGMA/ANALYZE-type changes are blocked", !!lintSql("PRAGMA optimize") && !!lintSql("ANALYZE")],
-      ["the test's own statements are allowed", !lintSql(insertStatements(makeData(5, 1e12))[0]) && !lintSql(`DELETE FROM listings WHERE id LIKE '${ID_PREFIX}%'`) && !lintSql("EXPLAIN QUERY PLAN SELECT 1")]];
+      ["the test's own statements are allowed", !lintSql(insertStatements(makeData(5, 1e12))[0]) && !lintSql(`DELETE FROM listings WHERE ${mine()}`) && !lintSql("EXPLAIN QUERY PLAN SELECT 1")],
+      ["no writes at all without a run tag", noTagBlocked], ["bad run tags refused (wildcards, capitals, too short/long)", badTags],
+      ["deleting ALL d1t- rows (old broad cleanup) is now blocked", !!lintSql(`DELETE FROM listings WHERE id LIKE '${ID_PREFIX}%'`)],
+      ["deleting another run's rows is blocked", !!lintSql("DELETE FROM listings WHERE substr(id,1,15)='d1t-otherrun1-'")],
+      ["inserting rows with another run's prefix is blocked", !!lintSql("INSERT INTO listings (id,cat,pkey,title,cond,type,price,ship,bids,end_at,first_seen,last_seen,status) VALUES ('d1t-otherrun1-1','1',NULL,'t','u','BIN',1,1,0,1,1,1,'live')")]];
     for (const [n, ok] of cases) out((ok ? "PASS " : "FAIL ") + n);
     process.exit(cases.every(([, ok]) => ok) ? 0 : 1);
   }
   if (cmd === "local") {
     const nw = wj("worker.js"), oldTpl = querySql(nw).replace("+status='live'", "status='live'");
-    const db = await localDb(nw); const R = runTest(localExec(db), oldTpl, querySql(nw), +(a1 || 15000));
+    const db = await localDb(nw); setRun(a2 || "localrun01");
+    // rows that merely look like test rows: another run's, and upper-case ones — they must all survive
+    db.exec("INSERT INTO listings (id,pkey,type,status,first_seen,last_seen) VALUES ('d1t-oldrun01-1','d1test:oldrun01:m1|used','BIN','live',1,1),('D1T-LOCALRUN01-1','x','BIN','live',1,1),('d1t-localrun010-1','x','BIN','live',1,1)");
+    const R = runTest(localExec(db), oldTpl, querySql(nw), +(a1 || 15000));
+    const kept = db.prepare("SELECT COUNT(*) n FROM listings WHERE id IN ('d1t-oldrun01-1','D1T-LOCALRUN01-1','d1t-localrun010-1')").get().n;
+    out((kept === 3 ? "PASS" : "FAIL") + ` look-alike rows kept (another run's d1t- row, an upper-case D1T- row, a longer tag that starts the same): ${kept}/3`);
     const deals = db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE name='deals'").get().n; out((deals ? "PASS" : "FAIL") + " other tables untouched (stand-in for phone-test deals)");
-    process.exit(R.checks.every((c) => c.status === "PASS") && deals ? 0 : 1);
+    process.exit(R.checks.every((c) => c.status === "PASS") && deals && kept === 3 ? 0 : 1);
   }
   if (cmd === "remote" || cmd === "cleanup") {
+    try { setRun(cmd === "cleanup" ? a1 : a4); } catch (e) { out("REFUSED: " + e.message); process.exit(1); }
     const wr = process.env.WRANGLER || "wrangler";
     const l = spawnSync(wr, ["d1", "list", "--json"], { encoding: "utf8" }); const s = l.stdout || "", i = s.search(/^\[/m);
     const g = guardList(i < 0 ? [] : JSON.parse(s.slice(i))); if (!g.ok) { out("REFUSED: " + g.why); process.exit(1); }
@@ -185,8 +207,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     if (LIVE_NAMES.some((n) => fs.readFileSync(cfg, "utf8").includes(`"${n}"`)) || fs.readFileSync(cfg, "utf8").includes(g.liveId)) { out("REFUSED: live name or id in the test config"); process.exit(1); }
     const ex = remoteExec(cfg, wr);
     if (cmd === "cleanup") { const c = contentOf(ex), bad = guardContent(c); if (bad) { out("REFUSED: " + bad); process.exit(1); }
-      ex(`DELETE FROM listings WHERE id LIKE '${ID_PREFIX}%'`); const n = ex(`SELECT COUNT(*) n FROM listings WHERE id LIKE '${ID_PREFIX}%'`).rows[0].n; out(`cleanup: ${n} test rows left`); process.exit(n ? 1 : 0); }
-    const R = runTest(ex, querySql(wj(a1)), querySql(wj(a2)), +(a3 || 15000), Date.now());
+      ex(`DELETE FROM listings WHERE ${mine()}`); const c2 = contentOf(ex); out(`cleanup of run "${TAG}": ${c.ours} rows removed, ${c2.ours} left; other rows ${c.other} → ${c2.other} (other test runs ${c.otherTest} → ${c2.otherTest})`);
+      process.exit(c2.ours === 0 && c2.other === c.other ? 0 : 1); }
+    fs.rmSync("d1-test-started", { force: true });
+    const R = runTest(ex, querySql(wj(a1)), querySql(wj(a2)), +a3, Date.now(), () => fs.writeFileSync("d1-test-started", TAG));
     fs.mkdirSync("results", { recursive: true }); fs.writeFileSync("results/d1-query-test.json", JSON.stringify(R, null, 1));
     process.exit(R.checks.every((c) => c.status === "PASS") ? 0 : 1);
   }

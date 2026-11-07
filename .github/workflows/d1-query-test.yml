@@ -1,7 +1,10 @@
 name: D1 query test (test database only)
 # Tests the asking-price query fix (status='live' → +status='live') on Cloudflare's own database engine, using ONLY the
 # disposable test database "flipscout-phonetest-db". Nothing is deployed; the live database is never written to.
-# Runs only when .github/d1-test/request.txt on branch test/d1-query-fix says exactly "run" (or "cleanup" to remove test rows).
+# Runs ONLY when a commit on branch test/d1-query-fix changes .github/d1-test/request.txt to a NEW request:
+#   "run <tag>"      e.g. "run run20261107a"  (tag: 6-24 lowercase letters/digits, never used before)
+#   "cleanup <tag>"  removes only that run's rows ("d1t-<tag>-...")
+# No schedule, no manual button, no other branch, no other file. A request identical to the previous one does nothing.
 on:
   push:
     branches: [test/d1-query-fix]
@@ -22,11 +25,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: What was asked (only "run" or "cleanup" do anything)
+      - name: What was asked (only a NEW "run <tag>" or "cleanup <tag>" does anything)
+        env:
+          BEFORE: ${{ github.event.before }}
         run: |
-          M=$(tr -d '[:space:]' < .github/d1-test/request.txt)
-          case "$M" in run|cleanup) ;; *) M=hold;; esac
-          echo "MODE=$M" >> $GITHUB_ENV; echo "mode: $M"
+          REQ=$(head -1 .github/d1-test/request.txt | tr -s ' ' | sed 's/^ //; s/ $//')
+          PREV=$(git show "$BEFORE:.github/d1-test/request.txt" 2>/dev/null | head -1 | tr -s ' ' | sed 's/^ //; s/ $//' || true)
+          M=hold; T=""
+          if [[ "$REQ" =~ ^(run|cleanup)\ ([a-z0-9]{6,24})$ ]]; then M=${BASH_REMATCH[1]}; T=${BASH_REMATCH[2]}; fi
+          if [ "$M" != hold ] && [ "$REQ" = "$PREV" ]; then echo "same request as before - not repeated"; M=hold; fi
+          [ "$M" != hold ] || T=""
+          echo "MODE=$M" >> $GITHUB_ENV; echo "TAG=$T" >> $GITHUB_ENV; echo "mode: $M ${T:+(run tag $T)}"
       - name: Stop if the phone-test automation is running (it shares the test database)
         if: env.MODE != 'hold'
         env:
@@ -42,7 +51,7 @@ jobs:
         if: env.MODE != 'hold'
         run: |
           node --no-warnings tests/d1/d1-test.mjs selftest
-          node --no-warnings tests/d1/d1-test.mjs local 15000
+          node --no-warnings tests/d1/d1-test.mjs local 8000
       - name: On the TEST database only - insert test rows, compare old/new query, remove test rows
         id: remote
         if: env.MODE == 'run'
@@ -52,15 +61,15 @@ jobs:
         run: |
           npm i -g wrangler@4.157.0 >/dev/null 2>&1
           git show 6460dbc~1:worker.js > old-worker.js   # the code before the fix
-          node --no-warnings tests/d1/d1-test.mjs remote old-worker.js worker.js 15000
-      - name: Remove test rows (always, even if the test failed)
-        if: always() && (env.MODE == 'cleanup' || (env.MODE == 'run' && steps.remote.outcome != 'skipped'))
+          node --no-warnings tests/d1/d1-test.mjs remote old-worker.js worker.js 8000 "$TAG"
+      - name: Remove this run's test rows (always, even if the test failed - but only if this run created them)
+        if: always() && (env.MODE == 'cleanup' || (env.MODE == 'run' && steps.remote.outcome != 'skipped' && hashFiles('d1-test-started') != ''))
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           which wrangler >/dev/null || npm i -g wrangler@4.157.0 >/dev/null 2>&1
-          node --no-warnings tests/d1/d1-test.mjs cleanup
+          node --no-warnings tests/d1/d1-test.mjs cleanup "$TAG"
       - uses: actions/upload-artifact@v4
         if: always() && env.MODE == 'run'
         with:

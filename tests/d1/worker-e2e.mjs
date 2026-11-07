@@ -16,9 +16,11 @@ async function ids() {
   for (const k of Object.keys(NAMES)) if (!/phonetest/.test(NAMES[k]) || NAMES[k] === LIVE[k]) fail("not a test name: " + NAMES[k]);
   const dbs = await cf("/d1/database?per_page=100"), kvs = await cf("/storage/kv/namespaces?per_page=100");
   const one = (list, name, key) => { const m = list.filter((x) => (x.name || x.title) === name); return m.length === 1 ? m[0][key] : null; };
-  const t = { db: one(dbs, NAMES.db, "uuid"), kv: one(kvs, NAMES.kv, "id") }, l = { db: one(dbs, LIVE.db, "uuid"), kv: one(kvs, LIVE.kv, "id") };
+  // the live backup store is found the way the live deploy job finds it: the store whose name ENDS with "flipscout-backup"
+  const liveKvs = kvs.filter((x) => String(x.title || "").endsWith(LIVE.kv)).map((x) => x.id);
+  const t = { db: one(dbs, NAMES.db, "uuid"), kv: one(kvs, NAMES.kv, "id") }, l = { db: one(dbs, LIVE.db, "uuid"), kv: liveKvs.length === 1 ? liveKvs[0] : null };
   if (!t.db || !t.kv || !l.db || !l.kv) fail(`not found exactly once (nothing is created): test database ${!!t.db}, test backup store ${!!t.kv}, live database ${!!l.db}, live backup store ${!!l.kv}; backup stores listed: ${kvs.length}, databases listed: ${dbs.length}`);
-  if (t.db === l.db || t.kv === l.kv) fail("test ids equal the live ones");
+  if (t.db === l.db || t.kv === l.kv || liveKvs.includes(t.kv)) fail("test ids equal the live ones");
   const n = (await q(t.db, "SELECT COUNT(*) n FROM listings")).results[0].n;
   if (n > 20000) fail(`test database holds ${n} listings — looks like a real database`);
   return t;

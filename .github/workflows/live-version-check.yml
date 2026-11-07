@@ -1,0 +1,69 @@
+name: Live version check (read-only)
+# READ-ONLY: compares the code of the active "flipscout-search" version with main 5f14582 built offline.
+# Only GET requests to Cloudflare; the offline build runs WITHOUT Cloudflare access. Nothing is uploaded, deployed or changed.
+on:
+  push:
+    branches: [check/live-version]
+permissions:
+  contents: read
+jobs:
+  check:
+    if: github.ref == 'refs/heads/check/live-version'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build main 5f14582 offline exactly as the 3 Nov deploy did (wrangler 3.114.17, dry run, no Cloudflare access)
+        run: |
+          mkdir -p offline && git show 5f14582:worker.js > offline/worker.js && cd offline
+          printf 'name = "flipscout-search"\nmain = "worker.js"\ncompatibility_date = "2024-09-23"\nkeep_vars = true\n\n[[kv_namespaces]]\nbinding = "BACKUP"\nid = "00000000000000000000000000000000"\n\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "flipscout-db"\ndatabase_id = "00000000-0000-0000-0000-000000000000"\n\n[triggers]\ncrons = ["* * * * *"]\n' > wrangler.toml
+          env -u CLOUDFLARE_API_TOKEN npx -y wrangler@3.114.17 deploy --dry-run --outdir dist > dry.txt 2>&1 || { cat dry.txt; exit 1; }
+          ls -la dist; sha256sum worker.js dist/*.js
+      - name: Read from Cloudflare (GET only) and compare
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACC: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          node - <<'JS'
+          const fs = require("fs"), crypto = require("crypto");
+          const base = `https://api.cloudflare.com/client/v4/accounts/${process.env.CF_ACC}/workers/scripts/flipscout-search`;
+          const get = async (p, raw) => { const r = await fetch(base + p, { method: "GET", headers: { Authorization: `Bearer ${process.env.CF_TOKEN}` } });
+            if (raw) return { status: r.status, type: r.headers.get("content-type") || "", buf: Buffer.from(await r.arrayBuffer()) };
+            const j = await r.json(); if (!j.success) throw new Error(`GET ${p} failed: ${r.status} ${JSON.stringify(j.errors).slice(0, 200)}`); return j.result; };
+          const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
+          const short = (id) => String(id).slice(0, 8);
+          const pickMeta = (v) => ({ id: short(v.id), number: v.number, created: v.metadata && v.metadata.created_on, source: v.metadata && v.metadata.source, triggered_by: v.annotations && v.annotations["workers/triggered_by"], message: v.annotations && v.annotations["workers/message"] });
+          (async () => {
+            const dep1 = await get("/deployments"); const active1 = (dep1.deployments || [])[0];
+            console.log("ACTIVE DEPLOYMENT (before reading code):", JSON.stringify((active1.versions || []).map((v) => ({ version: short(v.version_id), percent: v.percentage })), null, 0), "created", active1.created_on, "source", active1.source);
+            const vl = await get("/versions?per_page=10"); const items = vl.items || vl;
+            console.log("LATEST VERSIONS:"); for (const v of items.slice(0, 6)) console.log("  " + JSON.stringify(pickMeta(v)));
+            const find = (p) => items.find((v) => v.id.startsWith(p)); const a = find("85627a8b"), b = find("f721a965");
+            if (!a || !b) throw new Error("85627a8b or f721a965 not in the latest versions list");
+            const da = await get(`/versions/${a.id}`), db = await get(`/versions/${b.id}`);
+            const res = (d) => d.resources || {}, et = (d) => (res(d).script || {}).etag, bind = (d) => (res(d).bindings || []).map((x) => `${x.type}:${x.name}`).sort();
+            console.log("85627a8b script etag:", et(da)); console.log("f721a965 script etag:", et(db));
+            console.log("85627a8b bindings (names/types only):", bind(da).join(", ")); console.log("f721a965 bindings (names/types only):", bind(db).join(", "));
+            console.log("85627a8b schedule/runtime:", JSON.stringify((res(da).script_runtime || {}))); 
+            const c = await get("/content/v2", true);
+            let code = c.buf;
+            if (/multipart/.test(c.type)) { const bnd = c.type.match(/boundary=([^;]+)/)[1]; const parts = c.buf.toString("utf8").split("--" + bnd).filter((p) => /name="[^"]*"/.test(p));
+              console.log("content parts:", parts.map((p) => (p.match(/name="([^"]*)"/) || [])[1]).join(", ")); const m = parts.find((p) => /\.js"/.test(p)) || parts[0]; code = Buffer.from(m.slice(m.indexOf("\r\n\r\n") + 4).replace(/\r\n$/, ""), "utf8"); }
+            console.log("live code: HTTP", c.status, c.type.split(";")[0], code.length, "bytes, sha256", sha(code));
+            const dep2 = await get("/deployments"); const active2 = (dep2.deployments || [])[0];
+            const same = JSON.stringify(active1.versions) === JSON.stringify(active2.versions); console.log("active deployment unchanged while reading:", same);
+            const dist = fs.readdirSync("offline/dist").filter((f) => f.endsWith(".js")).map((f) => fs.readFileSync("offline/dist/" + f));
+            const src = fs.readFileSync("offline/worker.js");
+            const norm = (b) => b.toString("utf8").replace(/\r\n/g, "\n").replace(/\n?\/\/# sourceMappingURL=.*$/m, "").trimEnd();
+            const exact = dist.some((d) => sha(d) === sha(code)), normal = dist.some((d) => norm(d) === norm(code)) || norm(src) === norm(code);
+            console.log("offline build of 5f14582:", dist.map((d) => `${d.length} bytes sha256 ${sha(d)}`).join("; "));
+            console.log("RESULT exact byte match:", exact); console.log("RESULT match after line-ending/sourcemap normalisation:", normal);
+            if (!normal) { const L = norm(code).split("\n"), M = norm(dist[0] || src).split("\n"); let d = 0; for (let i = 0; i < Math.max(L.length, M.length); i++) if (L[i] !== M[i]) { if (d < 8) console.log(`  line ${i + 1}: live ${JSON.stringify((L[i] || "").slice(0, 90))} | main ${JSON.stringify((M[i] || "").slice(0, 90))}`); d++; } console.log("  differing lines:", d, "of", L.length, "vs", M.length); }
+            console.log("85627a8b vs f721a965 same script etag:", et(da) === et(db));
+          })().catch((e) => { console.log("ERROR:", e.message); process.exit(1); });
+          JS

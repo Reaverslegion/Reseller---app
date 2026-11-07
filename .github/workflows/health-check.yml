@@ -68,11 +68,11 @@ jobs:
             const intro = await gql(`{__type(name:"AccountD1QueriesAdaptiveGroupsDimensions"){fields{name}}}`, {});
             console.log("\n(available per-query dimensions:", ((intro.data && intro.data.__type && intro.data.__type.fields) || []).map((f) => f.name).join(", ") || JSON.stringify(intro.errors || "").slice(0, 150), ")");
             // the scanner's own status rows (read-only SELECT)
-            const sql = "SELECT k, v FROM kv WHERE k IN ('lastRun','lastReport','lastCrash','lastClean')";
+            const sql = "SELECT k, v FROM kv WHERE k IN ('lastRun','lastReport','lastCrash','lastClean','quota')";
             const r = await (await fetch(`${api}/accounts/${ACC}/d1/database/${DBID}/query`, { method: "POST", headers: H, body: JSON.stringify({ sql }) })).json();
             if (!r.success) console.log("\nstatus rows: not readable -", JSON.stringify(r.errors).slice(0, 200));
             else { console.log("\nscanner status rows (read-only):"); for (const row of r.result[0].results) { let v = row.v; try { v = JSON.parse(v); } catch (e) {}
-              if (row.k === "lastReport" && v && typeof v === "object") { const o = {}; for (const [k2, x] of Object.entries(v)) if (typeof x !== "object" || x === null) o[k2] = x; v = o; }
+              if (row.k === "lastReport" && v && typeof v === "object") { const o = {}; for (const [k2, x] of Object.entries(v)) if (typeof x !== "object" || x === null) o[k2] = x; else if (Array.isArray(x) && x.every((y) => typeof y === "string")) o[k2] = x.slice(0, 8).map((y) => y.slice(0, 160)); v = o; }
               const t = typeof v === "number" ? new Date(v).toISOString() : v && v.at ? new Date(v.at).toISOString() : ""; console.log(`  ${row.k} (${t}):`, JSON.stringify(v).slice(0, 500)); } }
             console.log("\nHEALTH CHECK DONE");
           })().catch((e) => { console.log("ERROR:", e.message); process.exit(1); });

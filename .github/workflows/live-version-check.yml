@@ -1,5 +1,6 @@
 name: Live version check (read-only)
-# READ-ONLY: compares the code of the active "flipscout-search" version with main 5f14582 built offline.
+# READ-ONLY: compares the code of the active "flipscout-search" version with the commit in .github/live-check/expect.txt built offline,
+# checks the expected active version, and reads Worker metrics (requests/errors) since a given time. Fails on any mismatch.
 # Only GET requests to Cloudflare; the offline build runs WITHOUT Cloudflare access. Nothing is uploaded, deployed or changed.
 on:
   push:
@@ -18,9 +19,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Build main 5f14582 offline exactly as the 3 Nov deploy did (wrangler 3.114.17, dry run, no Cloudflare access)
+      - name: Build the expected commit offline as the deploy job does (wrangler 3.114.17, dry run, no Cloudflare access)
         run: |
-          mkdir -p offline && git show 5f14582:worker.js > offline/worker.js && cd offline
+          C=$(grep -o '^commit=[0-9a-f]*' .github/live-check/expect.txt | cut -d= -f2); echo "expected commit: $C"
+          mkdir -p offline && git show $C:worker.js > offline/worker.js && cd offline
           printf 'name = "flipscout-search"\nmain = "worker.js"\ncompatibility_date = "2024-09-23"\nkeep_vars = true\n\n[[kv_namespaces]]\nbinding = "BACKUP"\nid = "00000000000000000000000000000000"\n\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "flipscout-db"\ndatabase_id = "00000000-0000-0000-0000-000000000000"\n\n[triggers]\ncrons = ["* * * * *"]\n' > wrangler.toml
           env -u CLOUDFLARE_API_TOKEN npx -y wrangler@3.114.17 deploy --dry-run --outdir dist > dry.txt 2>&1 || { cat dry.txt; exit 1; }
           ls -la dist; sha256sum worker.js dist/*.js
@@ -65,5 +67,20 @@ jobs:
             console.log("RESULT exact byte match:", exact); console.log("RESULT match after line-ending/sourcemap normalisation:", normal);
             if (!normal) { const L = norm(code).split("\n"), M = norm(dist[0] || src).split("\n"); let d = 0; for (let i = 0; i < Math.max(L.length, M.length); i++) if (L[i] !== M[i]) { if (d < 8) console.log(`  line ${i + 1}: live ${JSON.stringify((L[i] || "").slice(0, 90))} | main ${JSON.stringify((M[i] || "").slice(0, 90))}`); d++; } console.log("  differing lines:", d, "of", L.length, "vs", M.length); }
             console.log("85627a8b vs f721a965 same script etag:", et(da) === et(db));
+            const ex = Object.fromEntries(fs.readFileSync(".github/live-check/expect.txt", "utf8").split("\n").filter(Boolean).map((l) => l.split("=")));
+            const act = (active2.versions || []).map((v) => short(v.version_id) + "@" + v.percentage).join(",");
+            const act_ok = !ex.active || act === `${ex.active}@100`;
+            const cur = items.find((v) => v.id === (active2.versions[0] || {}).version_id) || {};
+            const dcur = cur.id ? await get(`/versions/${cur.id}`) : {};
+            console.log("ACTIVE VERSION NOW:", act, "| expected", ex.active || "(any)", "|", act_ok ? "OK" : "MISMATCH");
+            console.log("active version bindings:", bind(dcur).join(", "), "| compatibility", JSON.stringify((res(dcur).script_runtime || {}).compatibility_date));
+            const sch = await get("/schedules"); console.log("schedule:", JSON.stringify((sch.schedules || []).map((x) => x.cron)));
+            if (ex.since) { try {
+              const q = { query: `query($a:String!,$s:Time!){viewer{accounts(filter:{accountTag:$a}){workersInvocationsAdaptive(limit:50,filter:{scriptName:"flipscout-search",datetime_geq:$s}){sum{requests errors subrequests} dimensions{status scriptVersion}}}}}`, variables: { a: process.env.CF_ACC, s: ex.since } };
+              const r = await fetch("https://api.cloudflare.com/client/v4/graphql", { method: "POST", headers: { Authorization: `Bearer ${process.env.CF_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify(q) }); // read-only analytics query
+              const j = await r.json(); if (j.errors) console.log("metrics: not readable -", JSON.stringify(j.errors).slice(0, 200));
+              else for (const x of j.data.viewer.accounts[0].workersInvocationsAdaptive) console.log("metrics since", ex.since, ":", JSON.stringify({ status: x.dimensions.status, version: short(x.dimensions.scriptVersion || ""), requests: x.sum.requests, errors: x.sum.errors }));
+            } catch (e) { console.log("metrics: not readable -", e.message); } }
+            const ok = normal && act_ok && same; console.log(ok ? "CHECK PASSED" : "CHECK FAILED"); if (!ok) process.exit(1);
           })().catch((e) => { console.log("ERROR:", e.message); process.exit(1); });
           JS

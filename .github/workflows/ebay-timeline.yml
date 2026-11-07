@@ -1,0 +1,62 @@
+name: eBay 429 timeline (read-only)
+# READ-ONLY: Cloudflare analytics + one SELECT of non-secret status rows. Sends NO requests to eBay.
+on:
+  push:
+    branches: [check/live-version]
+    paths: [".github/live-check/ebay.txt"]
+permissions:
+  contents: read
+jobs:
+  timeline:
+    if: github.ref == 'refs/heads/check/live-version'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Read timeline (read-only)
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACC: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          node - <<'JS'
+          const H = { Authorization: `Bearer ${process.env.CF_TOKEN}`, "content-type": "application/json" }, ACC = process.env.CF_ACC, api = "https://api.cloudflare.com/client/v4";
+          const gql = async (query, variables) => (await fetch(api + "/graphql", { method: "POST", headers: H, body: JSON.stringify({ query, variables }) })).json(); // analytics: read-only
+          const iso = (t) => new Date(t).toISOString(), HR = 3600e3, now = Date.now(), endH = Math.floor(now / HR) * HR + HR;
+          (async () => {
+            const dl = await (await fetch(`${api}/accounts/${ACC}/d1/database?name=flipscout-db`, { headers: H })).json(); const DB = dl.result.find((d) => d.name === "flipscout-db").uuid;
+            const W = `query($a:String!,$s:Time!,$e:Time!){viewer{accounts(filter:{accountTag:$a}){workersInvocationsAdaptive(limit:1000,filter:{scriptName:"flipscout-search",datetime_geq:$s,datetime_lt:$e}){sum{requests errors subrequests} dimensions{datetimeHour}}}}}`;
+            const Q = `query($a:String!,$d:String!,$s:Time!,$e:Time!){viewer{accounts(filter:{accountTag:$a}){d1QueriesAdaptiveGroups(limit:10000,filter:{databaseId:$d,datetime_geq:$s,datetime_lt:$e}){count sum{rowsRead rowsWritten} dimensions{datetimeHour query}}}}}`;
+            const hours = {};
+            for (let d = 6; d >= 0; d--) {
+              const s = iso(endH - (d + 1) * 24 * HR), e = iso(endH - d * 24 * HR);
+              const w = await gql(W, { a: ACC, s, e }); if (w.errors) { console.log("worker metrics error", JSON.stringify(w.errors).slice(0, 200)); continue; }
+              for (const x of w.data.viewer.accounts[0].workersInvocationsAdaptive) { const h = (hours[x.dimensions.datetimeHour] ||= {}); h.runs = (h.runs || 0) + x.sum.requests; h.err = (h.err || 0) + x.sum.errors; h.sub = (h.sub || 0) + x.sum.subrequests; }
+              const q = await gql(Q, { a: ACC, d: DB, s, e }); if (q.errors) { console.log("d1 metrics error", JSON.stringify(q.errors).slice(0, 200)); continue; }
+              for (const x of q.data.viewer.accounts[0].d1QueriesAdaptiveGroups) { const h = (hours[x.dimensions.datetimeHour] ||= {}); const t = x.dimensions.query;
+                if (/^INSERT INTO listings \(id,cat/.test(t)) { h.saves = (h.saves || 0) + x.count; h.saved = (h.saved || 0) + x.sum.rowsWritten; }
+                if (/^SELECT pkey, id, price\+ship AS t FROM listings WHERE pkey IN/.test(t)) h.ask = (h.ask || 0) + x.count;
+                h.rows = (h.rows || 0) + x.sum.rowsRead; }
+            }
+            console.log("HOURLY (UTC): worker runs | errors | outgoing calls (eBay + others) | listing-save queries (rows written) | asking-price lookups | D1 rows read");
+            for (const k of Object.keys(hours).sort()) { const h = hours[k]; console.log(`${k.slice(0, 13)}  runs ${String(h.runs || 0).padStart(3)} | err ${h.err || 0} | calls ${String(h.sub || 0).padStart(4)} | saves ${String(h.saves || 0).padStart(4)} (${String(h.saved || 0).padStart(6)}) | ask ${String(h.ask || 0).padStart(3)} | rows ${Math.round((h.rows || 0) / 1e6 * 10) / 10}M`); }
+            // eBay-day totals of outgoing calls, for both candidate reset times
+            for (const [nm, off] of [["UTC midnight", 0], ["US Pacific midnight (08:00 UTC in November)", 8]]) {
+              const days = {}; for (const [k, h] of Object.entries(hours)) { const t = Date.parse(k) - off * HR; const d = iso(t).slice(0, 10); days[d] = (days[d] || 0) + (h.sub || 0); }
+              console.log(`outgoing calls per day, day starting at ${nm}:`, JSON.stringify(days)); }
+            // 15-minute detail around the start of the 429s
+            const F = `query($a:String!,$d:String!,$s:Time!,$e:Time!){viewer{accounts(filter:{accountTag:$a}){d1QueriesAdaptiveGroups(limit:10000,filter:{databaseId:$d,datetime_geq:$s,datetime_lt:$e,query_like:"INSERT INTO listings (id,cat%"}){count sum{rowsWritten} dimensions{datetimeFifteenMinutes}}}}}`;
+            const f = await gql(F, { a: ACC, d: DB, s: "2026-11-07T00:00:00Z", e: "2026-11-07T03:00:00Z" });
+            if (f.errors) console.log("15-min detail error", JSON.stringify(f.errors).slice(0, 200)); else { console.log("listing saves per 15 min, 7 Nov 00:00-03:00 UTC:"); for (const x of f.data.viewer.accounts[0].d1QueriesAdaptiveGroups.sort((a, b) => a.dimensions.datetimeFifteenMinutes < b.dimensions.datetimeFifteenMinutes ? -1 : 1)) console.log("  ", x.dimensions.datetimeFifteenMinutes, `saves ${x.count}, rows ${x.sum.rowsWritten}`); }
+            // scanner's own counters (no tokens or keys selected)
+            const sql = "SELECT k, v FROM kv WHERE k IN ('quota','giUse','config','lastReport','lastRun')";
+            const r = await (await fetch(`${api}/accounts/${ACC}/d1/database/${DB}/query`, { method: "POST", headers: H, body: JSON.stringify({ sql }) })).json();
+            for (const row of (r.result && r.result[0].results) || []) { let v; try { v = JSON.parse(row.v); } catch (e) { v = row.v; }
+              if (row.k === "config") v = { interval: v.interval, categories: (v.cats || []).length, paused: v.paused, types: v.types, region: v.region };
+              if (row.k === "lastReport") v = { at: iso(v.at), checked: v.checked, errors: (v.errors || []).length, firstError: (v.errors || [])[0], kinds: [...new Set((v.errors || []).map((e) => e.replace(/^[^:]*: /, "")))] };
+              if (row.k === "lastRun") v = iso(v);
+              console.log(`${row.k}:`, JSON.stringify(v)); }
+            console.log("TIMELINE DONE");
+          })().catch((e) => { console.log("ERROR:", e.message); process.exit(1); });
+          JS

@@ -1377,7 +1377,7 @@ async function sweep(env, manual) {
     for (const row of br.results || []) bookBy[row.pkey] = row;
     const sr = await D.prepare(`SELECT pkey, price, at FROM sales WHERE pkey IN (${q}) AND at>?`).bind(...chunk, now - 30 * DAY).all();
     for (const row of sr.results || []) { (soldBy[row.pkey] = soldBy[row.pkey] || []).push(row.price); soldLast[row.pkey] = Math.max(soldLast[row.pkey] || 0, row.at || 0); }
-    const ar = await D.prepare(`SELECT pkey, id, price+ship AS t FROM listings WHERE pkey IN (${q}) AND first_seen>? AND last_seen>? AND type='BIN' AND status='live'`).bind(...chunk, now - 7 * DAY, now - 2 * DAY).all();
+    const ar = await D.prepare(`SELECT pkey, id, price+ship AS t FROM listings WHERE pkey IN (${q}) AND first_seen>? AND last_seen>? AND type='BIN' AND +status='live'`).bind(...chunk, now - 7 * DAY, now - 2 * DAY).all();
     for (const row of ar.results || []) (askBy[row.pkey] = askBy[row.pkey] || []).push([row.id, row.t]);
   }
   // Looser matches (e.g. "similar title") need more evidence before we trust a price.

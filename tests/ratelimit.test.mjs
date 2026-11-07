@@ -142,13 +142,15 @@ const CFG = { cats: [{ id: "27386", name: "Graphics Cards" }, { id: "9355", name
 await t("scan while paused: no eBay calls, a clear message for the app (written once, not every minute); Scan now explains why", async () => {
   const W = load(), env = mkEnv(newDb()); await W.schema(env); await W.kvSet(env, "config", CFG);
   const until = Date.now() + 90 * 60000; await W.kvSet(env, "ebayGate", { browse: { until, why: "limit", src: "ebay figures", tries: 0 } });
+  const realScan = { at: Date.now() - 3 * 3600e3, checked: 17, newDeals: 2, hidden: 0, tracked: 374739, why: { judged: 900, fair: 800, noData: 50, risky: 10 }, errors: [] };
+  await W.kvSet(env, "lastReport", realScan);
   const r = await W.sweep(env, false);
   assert.equal(r.skipped, "eBay paused"); assert.equal(browseCalls(), 0, "nothing sent to eBay");
-  const rep = await W.kvGet(env, "lastReport"); assert.equal(rep.checked, 0); assert.equal(rep.errors[0], `eBay's daily limit is reached: eBay searches and checks paused until ${uk(until)} (UK time), when eBay resets it`);
+  const rep = await W.kvGet(env, "lastReport"); assert.equal(rep.at, realScan.at, "'Scanned … ago' still shows the last REAL scan"); assert.equal(rep.tracked, 374739); assert.equal(rep.errors[0], `eBay's daily limit is reached: eBay searches and checks paused until ${uk(until)} (UK time), when eBay resets it`);
   assert.equal(rep.paused.until, until);
   const at = rep.at; await new Promise((r) => setTimeout(r, 5)); await W.kvSet(env, "lastRun", 0); await W.sweep(env, false);
   assert.equal((await W.kvGet(env, "lastReport")).at, at, "same pause: report not rewritten");
-  const m = await W.sweep(env, true); assert.match(m.error, /paused until/);
+  const m = await W.sweep(env, true); assert.equal(m.error, undefined, "not an error reply (the app would show 'no connection')"); assert.match(m.errors[0], /paused until/);
 });
 
 await t("refused mid-scan: the scan stops asking eBay straight away and reports it once", async () => {
@@ -213,7 +215,7 @@ await t("phone search while paused: a clear message, nothing sent; when allowed,
   await run((ctx) => m0.default.fetch(new Request("https://x/?config=1", H), env, ctx));
   db.prepare("INSERT INTO kv(k,v) VALUES('ebayGate',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").run(JSON.stringify({ browse: { until: Date.now() + 1800e3, why: "slow", src: "retry-after", tries: 0 } }));
   const m1 = await fresh();
-  const r1 = await run((ctx) => m1.default.fetch(new Request("https://x/?q=rtx%203070", H), env, ctx)); const j1 = await r1.json();
+  const r1 = await run((ctx) => m1.default.fetch(new Request("https://x/?q=rtx%203070", H), env, ctx)); const j1 = await r1.json(); assert.equal(r1.status, 200, "ordinary reply, so the app shows the message");
   assert.match(j1.error, /eBay asked FlipScout to slow down: eBay searches and checks paused until \d\d:\d\d \(UK time\)/); assert.equal(browseCalls(), 0);
   db.prepare("DELETE FROM kv WHERE k='ebayGate'").run(); const m2 = await fresh();
   const r2 = await run((ctx) => m2.default.fetch(new Request("https://x/?q=rtx%203070", H), env, ctx)); assert.equal(r2.status, 200);

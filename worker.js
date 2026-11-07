@@ -1217,8 +1217,10 @@ async function sweep(env, manual) {
   const gp = await pausedFor(env, "browse", true);
   if (gp) {
     const msg = pauseMsg("browse", gp), lr = await kvGet(env, "lastReport", null);
-    if (!lr || !lr.paused || lr.paused.until !== gp.until) await kvSet(env, "lastReport", { at: now, checked: 0, newDeals: 0, hidden: 0, errors: [msg], paused: { until: gp.until, why: gp.why } });
-    return manual ? { error: msg } : { skipped: "eBay paused", message: msg };
+    // keep the last real scan's details and time (so "Scanned … ago" stays true) and add the pause message to its problems line
+    if (!lr || !lr.paused || lr.paused.until !== gp.until) await kvSet(env, "lastReport", { ...(lr && !lr.paused && !lr.budget ? lr : { at: now, checked: 0, newDeals: 0, hidden: 0 }), errors: [msg], paused: { until: gp.until, why: gp.why } });
+    // Scan now gets an ordinary report (the app shows "Check had problems: <message>"); an "error" reply would read as no connection
+    return manual ? { checked: 0, newDeals: 0, hidden: 0, errors: [msg], paused: { until: gp.until, why: gp.why } } : { skipped: "eBay paused", message: msg };
   }
   // stay under eBay's daily calls: scans and background jobs keep to 90% of the day (the rest is for your phone); near the limit,
   // scans space themselves out so calls last until eBay's reset (eBay's own figures when known, otherwise midnight US Pacific)
@@ -1229,7 +1231,7 @@ async function sweep(env, manual) {
       if (why === "eBay daily limit reached") {
         const msg = `FlipScout has used today's eBay allowance for automatic scans (${used} of ${rate ? rate.limit : EBAY_DAILY} calls); scans start again at ${ukTime(now + minsToEbayReset(now, rate) * 60000)} (UK time). Searches from your phone still work.`;
         const lr = await kvGet(env, "lastReport", null);
-        if (!lr || !lr.budget) await kvSet(env, "lastReport", { at: now, checked: 0, newDeals: 0, hidden: 0, errors: [msg], budget: true });
+        if (!lr || !lr.budget) await kvSet(env, "lastReport", { ...(lr && !lr.paused ? lr : { at: now, checked: 0, newDeals: 0, hidden: 0 }), errors: [msg], budget: true });
       }
       return { skipped: why };
     }
@@ -2294,6 +2296,8 @@ async function route(request, env, ctx) {
       });
       return json({ items });
     } catch (e) {
+      // paused for eBay's limit: an ordinary reply carrying the message, so the app shows it (instead of "service error 500")
+      if (e instanceof EbayPaused) return json({ error: e.message, paused: true });
       return json({ error: e.message }, 500);
     }
   }

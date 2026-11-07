@@ -22,12 +22,97 @@
 let TOKEN = null, TOKEN_EXP = 0, SCHEMA = false, CALLS = 0;
 // eBay allows 5,000 Browse calls a day on our keyset. We count them and hold back optional work near the limit.
 const EBAY_DAILY = 5000;
+// automatic work (scans, auction learning, deal checks) uses at most this share of the day; the rest is kept for your phone
+const AUTO_SHARE = 0.9;
 const today = () => new Date().toISOString().slice(0, 10);
-async function quota(env) { const q = await kvGet(env, "quota", null); return q && q.d === today() ? q.n : 0; }
+// eBay's day runs midnight to midnight US Pacific time: 08:00 UK most of the year, 07:00 for a few weeks in March and Oct/Nov
+// when the US and UK change their clocks on different dates. The time zone below handles all of that.
+const LA_FMT = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+function laParts(t) { const p = Object.fromEntries(LA_FMT.formatToParts(new Date(t)).map((x) => [x.type, x.value])); return { day: `${p.year}-${p.month}-${p.day}`, mins: +p.hour * 60 + +p.minute }; }
+const ebayDay = (t = Date.now()) => laParts(t).day;
+// minutes until eBay's next reset: eBay's own reset time when known, otherwise midnight US Pacific
+function minsToEbayReset(t = Date.now(), rate) { return rate && rate.reset > t ? Math.max(1, Math.ceil((rate.reset - t) / 60000)) : Math.max(1, 1440 - laParts(t).mins); }
+async function quota(env) { const q = await kvGet(env, "quota", null); return q && q.d === ebayDay() ? q.n : 0; }
 async function saveQuota(env) {
-  if (!CALLS) return;
-  const n = (await quota(env)) + CALLS; CALLS = 0;
-  await kvSet(env, "quota", { d: today(), n });
+  if (!CALLS || !env.DB) return;
+  const n = CALLS; CALLS = 0;
+  // one statement adds this run's calls to the day's total, so two runs at the same time can't overwrite each other's count
+  try {
+    await env.DB.prepare("INSERT INTO kv(k,v) VALUES('quota', json_object('d', ?1, 'n', ?2)) ON CONFLICT(k) DO UPDATE SET v = json_object('d', ?1, 'n', (CASE WHEN json_extract(kv.v, '$.d') = ?1 THEN json_extract(kv.v, '$.n') ELSE 0 END) + ?2)").bind(ebayDay(), n).run();
+  } catch (e) { CALLS += n; }
+}
+
+/* ---------------- eBay rate-limit protection ---------------- */
+// When eBay answers 429 ("too many requests"), FlipScout stops calling that eBay API (Browse, Taxonomy or Trading) until it's allowed:
+//   1. eBay's Retry-After, if eBay sends one;
+//   2. otherwise eBay's own figures (rate_limit): if 0 calls are left, until eBay's reset time;
+//   3. otherwise short, growing pauses (2, 5, 15, 30, 60 minutes), because a 429 isn't always the daily limit.
+const BACKOFF_MIN = [2, 5, 15, 30, 60];
+let GATE = null, GATE_AT = 0;
+class EbayPaused extends Error {}
+const apiOf = (path) => (/^\/buy\/browse\//.test(path) ? "browse" : /^\/commerce\/taxonomy\//.test(path) ? "taxonomy" : "other");
+const ukTime = (t) => new Date(t).toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" });
+async function gates(env, fresh) {
+  if (fresh || !GATE || Date.now() - GATE_AT > 30000) { GATE = (env.DB ? await kvGet(env, "ebayGate", {}) : {}) || {}; GATE_AT = Date.now(); }
+  return GATE;
+}
+async function pausedFor(env, api, fresh) { const g = (await gates(env, fresh))[api]; return g && g.until > Date.now() ? g : null; }
+function pauseMsg(api, g) {
+  const what = api === "trading" ? "sold-details lookups" : "eBay searches and checks";
+  return g.why === "limit" ? `eBay's daily limit is reached: ${what} paused until ${ukTime(g.until)} (UK time), when eBay resets it`
+    : `eBay asked FlipScout to slow down: ${what} paused until ${ukTime(g.until)} (UK time), then tried again`;
+}
+// eBay's own call figures for one API (developer analytics, rate_limit): the resource with the fewest calls left
+async function officialLimits(env, ctx, name) {
+  try {
+    const token = await getToken(env);
+    const r = await fetch(`https://api.ebay.com/developer/analytics/v1_beta/rate_limit/?api_context=${ctx}&api_name=${name}`, { headers: { Authorization: "Bearer " + token } });
+    if (!r.ok) return null;
+    const d = await r.json(); let best = null;
+    for (const rl of d.rateLimits || []) for (const res of rl.resources || []) for (const x of res.rates || []) {
+      if (typeof x.remaining !== "number" || typeof x.limit !== "number") continue;
+      const reset = Date.parse(x.reset);
+      if (!best || x.remaining < best.remaining) best = { resource: res.name, limit: x.limit, remaining: x.remaining, reset: isNaN(reset) ? 0 : reset, window: x.timeWindow };
+    }
+    return best;
+  } catch (e) { return null; }
+}
+const OFFICIAL = { browse: ["buy", "browse"], taxonomy: ["commerce", "taxonomy"], trading: ["tradingapi", "tradingapi"] };
+// eBay's figures for Browse, read at most once an hour by the scheduled job (never per phone request)
+async function refreshRate(env, now = Date.now()) {
+  const old = await kvGet(env, "ebayRate", null);
+  if (old && now - old.at < 3600e3) return old;
+  const b = await officialLimits(env, ...OFFICIAL.browse);
+  const v = b ? { at: now, ...b } : { at: now, unavailable: true };
+  await kvSet(env, "ebayRate", v);
+  // eBay says none left: pause before even one refused call
+  if (b && b.remaining <= 0 && b.reset > now && !(await pausedFor(env, "browse", true))) await setPause(env, "browse", { until: b.reset, why: "limit", src: "ebay figures", tries: 0, info: { at: now, ebay: b } });
+  return v;
+}
+// eBay's figures if recent and still for the current window
+async function freshRate(env, now = Date.now()) { const r = await kvGet(env, "ebayRate", null); return r && !r.unavailable && now - r.at < 90 * 60000 && r.reset > now ? r : null; }
+async function setPause(env, api, p) { const all = { ...(await gates(env, true)) }; all[api] = p; await kvSet(env, "ebayGate", all); GATE = all; GATE_AT = Date.now(); return p; }
+async function onLimited(env, api, res, bodyText) {
+  const now = Date.now(), info = { at: now, status: res.status };
+  const ra = res.headers && res.headers.get("retry-after");
+  let raMs = 0;
+  if (ra) { const sec = Number(ra); raMs = Number.isFinite(sec) ? sec * 1000 : Math.max(0, Date.parse(ra) - now) || 0; info.retryAfter = String(ra).slice(0, 40); }
+  try { info.headers = [...res.headers].filter(([k]) => /retry|rate|limit|quota/i.test(k)).map(([k, v]) => `${k}: ${String(v).slice(0, 80)}`).slice(0, 8); } catch (e) {}
+  try { const t = bodyText != null ? bodyText : await res.text(); let e0 = null; try { e0 = (JSON.parse(t).errors || [])[0]; } catch (x) {}
+    info.error = e0 ? `${e0.errorId || ""} ${e0.message || ""}`.trim().slice(0, 160) : String(t || "").replace(/\s+/g, " ").slice(0, 160); } catch (e) {}
+  const prev = (await gates(env, true))[api];
+  let p;
+  if (raMs > 0) p = { until: now + Math.min(raMs, DAY), why: raMs >= 3 * 3600e3 ? "limit" : "slow", src: "retry-after", tries: 0 };
+  else {
+    const off = OFFICIAL[api] ? await officialLimits(env, ...OFFICIAL[api]) : null;
+    if (off) info.ebay = off;
+    if (off && off.remaining <= 0 && off.reset > now) p = { until: off.reset, why: "limit", src: "ebay figures", tries: 0 };
+    else {
+      const tries = prev && now - prev.until < 2 * 3600e3 ? Math.min((prev.tries || 0) + 1, BACKOFF_MIN.length) : 1;
+      p = { until: now + BACKOFF_MIN[tries - 1] * 60000, why: "slow", src: off ? "ebay says calls are left" : "backoff", tries };
+    }
+  }
+  return setPause(env, api, { ...p, info });
 }
 const DAY = 864e5;
 // compares the app key in constant time, so its length or letters can't be guessed from how fast "wrong key" comes back
@@ -71,6 +156,8 @@ async function getToken(env) {
   return TOKEN;
 }
 async function ebay(env, path) {
+  const api = apiOf(path), g = env.DB ? await pausedFor(env, api) : null;
+  if (g) throw new EbayPaused(pauseMsg(api, g)); // paused: no request is sent to eBay
   const token = await getToken(env);
   CALLS++;
   const r = await fetch("https://api.ebay.com" + path, {
@@ -81,6 +168,7 @@ async function ebay(env, path) {
     },
   });
   if (r.status === 404) return { notFound: true };
+  if (r.status === 429 && env.DB) { const p = await onLimited(env, api, r); throw new EbayPaused(pauseMsg(api, p)); }
   if (!r.ok) throw new Error("eBay request failed (" + r.status + ")");
   return r.json();
 }
@@ -776,6 +864,8 @@ async function getItemTrading(env, tok, id) {
   const res = await fetch("https://api.ebay.com/ws/api.dll", { method: "POST", body, headers: { "X-EBAY-API-IAF-TOKEN": tok, "Content-Type": "text/xml",
     "X-EBAY-API-SITEID": "3", "X-EBAY-API-COMPATIBILITY-LEVEL": "1423", "X-EBAY-API-CALL-NAME": "GetItem" } });
   const x = await res.text();
+  // over eBay's limit (HTTP 429, or Trading error 518 "call usage limit"): pause sold-details lookups; the item is NOT marked missing
+  if ((res.status === 429 || /<ErrorCode>518<\/ErrorCode>/.test(x)) && env.DB) { const p = await onLimited(env, "trading", res, x); throw new EbayPaused(pauseMsg("trading", p)); }
   if (/<ErrorCode>(?:21917053|931|932|21916984)<\/ErrorCode>/.test(x)) throw new Error("eBay token no longer accepted"); // expired or revoked
   if (!/<Ack>(?:Success|Warning)<\/Ack>/.test(x)) return { missing: true, err: xmlTag(x, "ErrorCode") };
   const st = xmlTag(x, "StartTime");
@@ -788,6 +878,7 @@ async function soldDetails(env, report) {
   const use = await kvGet(env, "giUse", { d: day, n: 0 });
   if (use.d !== day) { use.d = day; use.n = 0; }
   if (use.n >= GI_DAILY) return;
+  if (await pausedFor(env, "trading")) return;
   const tok = await ebayUserToken(env);
   if (!tok) return;
   const rows = (await D.prepare("SELECT id FROM fillseen WHERE gi_at IS NULL AND at > ? ORDER BY at ASC LIMIT ?").bind(now - 92 * DAY, Math.min(GI_PER_SCAN, GI_DAILY - use.n)).all()).results || [];
@@ -795,7 +886,7 @@ async function soldDetails(env, report) {
   const up = [];
   for (const r of rows) {
     let g;
-    try { g = await getItemTrading(env, tok, r.id); } catch (e) { report.errors.push("sold details: " + e.message); if (/no longer accepted/.test(e.message)) await kvSet(env, "ebayUser", { ...(await kvGet(env, "ebayUser", {})), broken: now }); break; }
+    try { g = await getItemTrading(env, tok, r.id); } catch (e) { report.errors.push("sold details: " + e.message); if (e instanceof EbayPaused) break; if (/no longer accepted/.test(e.message)) await kvSet(env, "ebayUser", { ...(await kvGet(env, "ebayUser", {})), broken: now }); break; }
     use.n++;
     if (g.missing) { missing++; up.push(D.prepare("UPDATE fillseen SET gi_at=0 WHERE id=?").bind(r.id)); continue; }
     found++;
@@ -1006,11 +1097,12 @@ async function weeklyExport(env) {
 // automatic scan timing: a focused search (1–2 categories) is cheap in eBay calls, so it can run every 5 minutes
 const autoInterval = (ticked) => (ticked <= 2 ? 5 : 10);
 // should this scheduled scan wait, to keep eBay calls within the day? used = calls so far today, sinceLast = ms since last scan
-function paceSkip(used, now, cats, interval, sinceLast) {
-  const left = EBAY_DAILY * 0.97 - used, d = new Date(now), minsLeft = 1440 - (d.getUTCHours() * 60 + d.getUTCMinutes()), perScan = Math.min(cats, 8) * 3 + 10;
+function paceSkip(used, now, cats, interval, sinceLast, lim) {
+  const daily = (lim && lim.daily) || EBAY_DAILY, minsLeft = Math.min(1440, (lim && lim.minsLeft) || minsToEbayReset(now));
+  const budget = daily * AUTO_SHARE, left = budget - used, perScan = Math.min(cats, 8) * 3 + 10;
   if (left < perScan) return "eBay daily limit reached";
   const need = Math.ceil(minsLeft / Math.max(1, Math.floor(left / perScan)));
-  const ahead = used > EBAY_DAILY * 0.9 * ((1440 - minsLeft) / 1440) + 200; // using calls faster than the day allows
+  const ahead = used > budget * ((1440 - minsLeft) / 1440) + 200; // using calls faster than the day allows
   return ahead && need > interval && sinceLast < need * 60000 - 30000 ? "slowed to stay under eBay's daily limit" : "";
 }
 /* ---------------- full stock check ---------------- */
@@ -1116,8 +1208,27 @@ async function sweep(env, manual) {
     if (now - last < cfg.interval * 60000 - 30000) return { skipped: "not due" };
   }
   if (!cfg.cats.length) return { error: "Add some categories first." };
-  // stay under eBay's 5,000 calls a day: near the limit, scans space themselves out so calls last until midnight (UTC)
-  if (!manual) { const why = paceSkip(await quota(env), now, cfg.cats.length, cfg.interval, now - last); if (why) return { skipped: why }; }
+  // eBay paused (429): no eBay calls; the app shows why and until when
+  const gp = await pausedFor(env, "browse", true);
+  if (gp) {
+    const msg = pauseMsg("browse", gp), lr = await kvGet(env, "lastReport", null);
+    if (!lr || !lr.paused || lr.paused.until !== gp.until) await kvSet(env, "lastReport", { at: now, checked: 0, newDeals: 0, hidden: 0, errors: [msg], paused: { until: gp.until, why: gp.why } });
+    return manual ? { error: msg } : { skipped: "eBay paused", message: msg };
+  }
+  // stay under eBay's daily calls: scans and background jobs keep to 90% of the day (the rest is for your phone); near the limit,
+  // scans space themselves out so calls last until eBay's reset (eBay's own figures when known, otherwise midnight US Pacific)
+  if (!manual) {
+    const rate = await freshRate(env, now), used = Math.max(await quota(env), rate ? rate.limit - rate.remaining : 0);
+    const why = paceSkip(used, now, cfg.cats.length, cfg.interval, now - last, { daily: rate ? rate.limit : EBAY_DAILY, minsLeft: minsToEbayReset(now, rate) });
+    if (why) {
+      if (why === "eBay daily limit reached") {
+        const msg = `FlipScout has used today's eBay allowance for automatic scans (${used} of ${rate ? rate.limit : EBAY_DAILY} calls); scans start again at ${ukTime(now + minsToEbayReset(now, rate) * 60000)} (UK time). Searches from your phone still work.`;
+        const lr = await kvGet(env, "lastReport", null);
+        if (!lr || !lr.budget) await kvSet(env, "lastReport", { at: now, checked: 0, newDeals: 0, hidden: 0, errors: [msg], budget: true });
+      }
+      return { skipped: why };
+    }
+  }
   await kvSet(env, "lastRun", now);
   const D = env.DB, r = cfg.rules, report = { checked: 0, newDeals: 0, hidden: 0, errors: [] };
 
@@ -1256,8 +1367,9 @@ async function sweep(env, manual) {
         const d = await ebay(env, `/buy/browse/v1/item_summary/search?category_ids=${c.id}&limit=${lim}${off ? "&offset=" + off : ""}&sort=${sort}&filter=${encodeURIComponent([...base, f].join(","))}`);
         for (const it of d.itemSummaries || []) { const x = toListing(it, c, type); if (x) seen.push(x); }
         report.checked++;
-      } catch (e) { report.errors.push(c.name + ": " + e.message); }
+      } catch (e) { report.errors.push(e instanceof EbayPaused ? e.message : c.name + ": " + e.message); if (e instanceof EbayPaused) break; }
     }
+    if (report.errors.some((m) => /paused until/.test(m))) break; // eBay paused mid-scan: stop asking
   }
   // full stock check: every listing for sale in your categories, a few pages per scan (see stockStep)
   if ((await quota(env)) + CALLS < EBAY_DAILY * STOCK_UNTIL) {
@@ -1728,7 +1840,7 @@ async function getMany(env, ids) {
       // listings missing from the answer may have ended: check a couple one by one
       for (const id of ids.filter((x) => !out.has(String(x))).slice(0, 2)) { try { out.set(String(id), await ebay(env, `/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id=${id}`)); } catch (e) {} }
       return out;
-    } catch (e) { await kvSet(env, "multi", { ok: false, at: Date.now() }); out.clear(); }
+    } catch (e) { if (e instanceof EbayPaused) throw e; await kvSet(env, "multi", { ok: false, at: Date.now() }); out.clear(); }
   }
   for (const id of ids.slice(0, 6)) { try { out.set(String(id), await ebay(env, `/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id=${id}`)); } catch (e) {} }
   return out;
@@ -1864,16 +1976,27 @@ export default {
     ctx.waitUntil((async () => {
       // errors here used to vanish; keep the latest one so it can be looked at ("lastCrash" in the kv table)
       const crash = (where) => (e) => kvSet(env, "lastCrash", { at: Date.now(), where, msg: String((e && e.message) || e).slice(0, 300) }).catch(() => {});
+      await refreshRate(env).catch(() => {}); // eBay's own call figures, at most once an hour
       const r = await sweep(env, false).catch((e) => (crash("scan")(e), {}));
       await weeklyExport(env).catch(crash("weekly price export"));
-      if (r && r.skipped) {
-        await closing(env).catch(crash("auction learning"));
-        await spareVerify(env).catch(crash("deal check"));
+      if (r && r.skipped && !(await pausedFor(env, "browse"))) {
+        const rate = await freshRate(env), used = Math.max(await quota(env), rate ? rate.limit - rate.remaining : 0);
+        if (used < (rate ? rate.limit : EBAY_DAILY) * AUTO_SHARE) {
+          await closing(env).catch((e) => (e instanceof EbayPaused ? null : crash("auction learning")(e)));
+          await spareVerify(env).catch((e) => (e instanceof EbayPaused ? null : crash("deal check")(e)));
+        }
       }
+      await saveQuota(env).catch(() => {});
     })());
   },
 
   async fetch(request, env, ctx) {
+    try { return await route(request, env, ctx); }
+    finally { if (CALLS && env.DB) ctx.waitUntil(saveQuota(env).catch(() => {})); } // eBay calls made for the phone are counted too
+  },
+};
+async function route(request, env, ctx) {
+  {
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     const u = new URL(request.url), P = (k) => u.searchParams.get(k);
     // the app sends the key in a header; older app versions put it in the address, which still works
@@ -2168,5 +2291,5 @@ export default {
     } catch (e) {
       return json({ error: e.message }, 500);
     }
-  },
-};
+  }
+}

@@ -1119,6 +1119,7 @@ const POST_ALLOW = 5;
 // already inside "sells for", so it is counted once. When similar items sold with free postage (0) or postage isn't
 // known, you still pay to send it, so your own postage setting is used, never £0 (7 Nov 2026 profit check: 507 deals
 // assumed £0). Big items cost more to send than a normal parcel, so for these categories at least this is used.
+// £12 / £15 are PROVISIONAL ESTIMATES (owner-approved for testing, 7 Nov 2026), not real shipping quotes.
 // It only ever raises the postage, never lowers it below your setting or what buyers paid.
 const BULKY_POST = [[/monitor|television|\btvs?\b|projector/i, 12], [/desktop|all-in-one|pc tower|server|computer case|printer/i, 15]];
 function bulkyPost(catName) { for (const [re, v] of BULKY_POST) if (re.test(String(catName || ""))) return v; return 0; }

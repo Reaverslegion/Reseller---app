@@ -144,7 +144,8 @@ await t("risk allowance: a setting (0 = off by default) checked by the Scan serv
 await t("app: auction card says which profit is at the max bid and which at the current bid; postage source explained", async () => {
   assert.match(app, /first figure if you pay your max bid, second at the current bid/);
   assert.match(app, /at the current bid \$\{sgn\(d\.profit\)\}/, "ending-later list shows both");
-  assert.match(app, /"Large item to post":\["Large item to post"/);
+  assert.match(app, /"Large item to post":\["Large item – postage estimated"/); assert.match(app, /not real shipping prices/);
+  assert.match(app, /estimate for a large item, not a quote/); assert.match(src, /PROVISIONAL ESTIMATES/);
   assert.match(app, /your postage setting \(similar ones sold with free or unknown postage\)/);
   assert.equal((app.match(/"Few sales behind the price":/g) || []).length, 1, "one explanation per tag");
 });

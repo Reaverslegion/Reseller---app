@@ -755,7 +755,9 @@ function vSettings(){
    <div class="hint">On: the most FlipScout lets you pay still breaks even if it sells at the low end of recent sales. This is safer but shows fewer deals, and for anything over about £40 it matters more than your minimum profit. Off: your minimum profit decides.</div>
    <div class="row"><div><label for="hp">Your postage out £</label><input id="hp" inputmode="decimal" value="${H().post}" onchange="setHunt('post',this.value)"></div><div><label for="hk">Packaging £</label><input id="hk" inputmode="decimal" value="${H().pack}" onchange="setHunt('pack',this.value)"></div></div>
    <div class="hint">What it costs you to send it on. Typical medium parcel: about £5 to £7.</div>
-   <label class="chkrow" style="min-height:44px"><input type="checkbox" ${H().bpf?"checked":""} onchange="H().bpf=this.checked;save();pushConfig()"><span>Add eBay's buyer protection fee to costs (estimate) ${ti("bpf")}</span></label></div>
+   <label class="chkrow" style="min-height:44px"><input type="checkbox" ${H().bpf?"checked":""} onchange="H().bpf=this.checked;save();pushConfig()"><span>Add eBay's buyer protection fee to costs (estimate) ${ti("bpf")}</span></label>
+   <label for="hr">Optional risk allowance % <span class="mu">(0 = off)</span></label><input id="hr" inputmode="decimal" value="${+H().riskPct||0}" onchange="setRisk(this.value)">
+   <div class="hint">Not a fee. A cushion for returns, faults or selling cheaper. Shown as a separate line under each deal's profit. It never changes your minimum profit, the score or which deals you see. A sensible start is 3 to 5%.</div></div>
   ${(()=>{const h=H();return`<div class="card"><b>Phone alerts</b>${!connected()?`<div class="mu">Connect your Scan service first (below).</div>`
    :!PUSH.native?`<div class="mu">Alerts work in the installed FlipScout app on your phone.</div>`
    :!(h.alerts&&PUSH.registered)?`<div class="mu">Get a FlipScout notification the moment a strong deal appears or a followed listing hits your price, even with the app closed.</div><button onclick="enableAlerts()">Turn on alerts</button>${PUSH.err?`<div class="hint warn">${esc(PUSH.err)}</div>`:""}`
@@ -787,6 +789,9 @@ const hourOpts=v=>Array.from({length:24},(_,i)=>`<option value="${i}"${+v===i?" 
 function setConn(v){v=String(v||"").trim();const i=v.indexOf("#");if(i>0){S.set.url=v.slice(0,i);S.set.key=v.slice(i+1)}else S.set.url=v;save();render();toast("Saved.");afterConn()}
 function afterConn(){if(connected()){CT=null;HD.deals=null;FL.list=null;if(H().cats.length)pushConfig();autoPush();if(!S.items.length&&!S.base.length)cloudCheck(true);else cloudSoon()}}
 async function copySetup(){const t=S.set.url+"#"+S.set.key;try{await navigator.clipboard.writeText(t);toast("Setup code copied. Keep it somewhere private.")}catch(e){openSheet(`<h2 style="margin-top:0">Setup code</h2><div class="mu">Long-press and copy. Keep it private.</div><textarea readonly>${esc(t)}</textarea><button onclick="closeSheet()">Done</button>`)}}
+function setRisk(v){if(String(v).trim()==="")v="0";if(!isNum(v)){toast("Type a number.");render();return}const n=num(v);if(n<0||n>30){toast("Use 0 to 30%.");render();return}H().riskPct=n;save();pushConfig();toast(n?"Saved. Shown under each deal's profit.":"Risk allowance off.");render()}
+// optional risk allowance (your %, of the sale price): NOT a fee, never taken off profit, filters or score; only shown beside them
+const riskAmt=d=>{const p=+H().riskPct||0;return p>0&&known(d.med)?Math.round(d.med*p)/100:0};
 function setHunt(k,v){if(String(v).trim()===""){toast("Left unchanged.");render();return}if(!isNum(v)){toast("Type a number.");render();return}const n=num(v);if(n<0){toast("Can't be negative.");render();return}H()[k]=n;save();pushConfig();toast("Saved.")}
 function setSeller(v){S.rules.seller=v;save();pushConfig();render();toast(v==="private"?"Private seller: no final value fee.":"Business seller fees on.")}
 function setRule(k,v){if(String(v).trim()===""){toast("Left unchanged.");render();return}if(!isNum(v)){toast("Type a number.");render();return}const n=num(v);if(n<0){toast("Can't be negative.");render();return}S.rules[k]=n;if(k==="maxPrice")reLimit();save();pushConfig();toast("Saved.")}
@@ -863,7 +868,7 @@ function vScan(){
 }
 
 /* ---------- HUNTING (Today's Deals, Following, My categories, alerts) ---------- */
-const HDEF={cats:[],types:{bin:true,auction:true,misspelt:true,spares:false},alerts:false,interval:0,alertScore:70,minScore:40,post:5,pack:1,bpf:true,paused:false,quiet:{on:false,from:23,to:7}};
+const HDEF={cats:[],types:{bin:true,auction:true,misspelt:true,spares:false},alerts:false,interval:0,alertScore:70,minScore:40,post:5,pack:1,bpf:true,riskPct:0,paused:false,quiet:{on:false,from:23,to:7}};
 let HD={cat:(()=>{try{const v=localStorage.getItem("flipscout_dcat")||"";return/^\d+$/.test(v)?v:""}catch(e){return""}})(),deals:null,report:null,learned:[],busy:false,err:"",filter:"all",at:0,q:"",sort:(()=>{try{const v=localStorage.getItem("flipscout_sort");return!v||(v==="score"&&!localStorage.getItem("flipscout_sort2"))?"now":v}catch(e){return"now"}})()},FL={list:null,busy:false,err:""},DV=null;
 const H=()=>{S.hunt={...HDEF,...(S.hunt||{}),types:{...HDEF.types,...((S.hunt||{}).types||{})}};return S.hunt};
 // Cloudflare's database has brief hiccups ("D1_ERROR … internal error"): try once more before showing an error
@@ -912,7 +917,7 @@ let pcT=null;
 function pushConfig(now){clearTimeout(pcT);try{localStorage.setItem("flipscout_cfg_pending","1")}catch(x){} // cleared once the Scan service has it
   const go_=async()=>{if(!connected())return;const h=H(),r=S.rules;
   try{await api("config=1",{cats:h.cats,types:h.types,alerts:!!h.alerts,interval:h.interval,paused:h.paused,quiet:h.quiet,region:S.set.region,
-   rules:{cheap:r.cheap!==false,maxSpend:+r.maxPrice||0,minProfit:r.minProfit,minRoi:r.minRoi,seller:r.seller,feePct:r.feePct,feeFixed:r.feeFixed,post:h.post,pack:h.pack,bpf:h.bpf,alertScore:h.alertScore,minScore:h.minScore}})}
+   rules:{cheap:r.cheap!==false,maxSpend:+r.maxPrice||0,minProfit:r.minProfit,minRoi:r.minRoi,seller:r.seller,feePct:r.feePct,feeFixed:r.feeFixed,post:h.post,pack:h.pack,bpf:h.bpf,riskPct:+h.riskPct||0,alertScore:h.alertScore,minScore:h.minScore}})}
   catch(e){try{localStorage.setItem("flipscout_cfg_pending","1")}catch(x){}toast("Couldn't save hunting settings yet ("+errText(e)+"). They'll be sent when the connection is back.");return}
   try{localStorage.removeItem("flipscout_cfg_pending")}catch(x){}};
   if(now)return go_();pcT=setTimeout(go_,800)}
@@ -972,6 +977,8 @@ function dealTotals(L){const D=(L||[]).filter(d=>d.kind!=="spares"&&d.profit!=nu
   const lo=D.reduce((a,d)=>a+(risky(d)?0:Math.max(0,d.type==="AUC"?(d.profitAtMax??d.profit):(d.lowProfit??d.profit))),0),hi=D.reduce((a,d)=>a+Math.max(0,d.profit),0);
   const cost=D.reduce((a,d)=>a+(d.cost||0),0),r=x=>"£"+fmtN(Math.round(x));
   return`<div class="mu" style="font-size:13px;margin:-4px 4px 10px">${D.length} deals here: about <b class="ok">${r(lo)}–${r(hi)}</b> profit · ${r(cost)} to buy them all</div>`}
+// where the postage-out figure comes from (Scan service postSrc; older deals don't have it)
+const postOutTxt=d=>d.postSrc==="size"?"large item: about "+gbp((d.out||0)-(+H().pack||0))+" to send, plus packing":d.postSrc==="setting"?"your postage setting (similar ones sold with free or unknown postage), plus packing":d.postSrc==="sold"?"what buyers paid for postage, plus packing":"";
 function shownProfit(d){return d.type==="AUC"&&d.profitAtMax!=null?d.profitAtMax:d.profit}
 // buyer protection fee: only on private sellers' items, and only if that setting is on
 const dBpf=d=>d.bpfOn!=null?!!d.bpfOn&&!!H().bpf:!!H().bpf&&!(d.seller&&d.seller.biz);
@@ -1057,9 +1064,10 @@ const TAGS={"New listing":["Just listed","Listed in the last hour, so few people
  "Price from price book":["✓ You checked this price","The sells-for price comes from eBay sold prices you checked and saved."],
  "Special version":["Special version – check prices","Water-cooled, blower, low-profile, mini, OEM and similar versions can sell for more or less than the standard model. Check sold prices for this exact version before buying."],
  "Price from category check":["✓ From your category check","The sells-for price comes from recent eBay sales collected when you filled prices for this category."],
- "Slow seller":["Slow to sell","These don't sell often, so it may take a while to resell."],"Fault in description":["Fault in description","The seller's description mentions a fault (battery, charger, screen, lock or damage). It will likely sell for much less than a working one. Read it before buying."],"Very cheap":["Very cheap: check it's genuine","Under 60% of what this model usually sells for. That's often the wrong item, a hidden fault, a locked phone or a scam. Read the description and check the photos before buying."],"Not verified yet":["Not verified yet","FlipScout hasn't yet been checked on how well it recognises products in this category. Make sure it's the same model and check sold prices before buying. No alerts for these."],"Few sales behind the price":["Few sales","The sell price comes from fewer than 10 sales, so it's less certain. Check sold prices before buying."],
+ "Slow seller":["Slow to sell","These don't sell often, so it may take a while to resell."],"Fault in description":["Fault in description","The seller's description mentions a fault (battery, charger, screen, lock or damage). It will likely sell for much less than a working one. Read it before buying."],"Very cheap":["Very cheap: check it's genuine","Under 60% of what this model usually sells for. That's often the wrong item, a hidden fault, a locked phone or a scam. Read the description and check the photos before buying."],"Not verified yet":["Not verified yet","FlipScout hasn't yet been checked on how well it recognises products in this category. Make sure it's the same model and check sold prices before buying. No alerts for these."],"Few sales behind the price":["Few sales – rough price","The sell price comes from fewer than 10 sales, so it's less certain. Deals need at least 8; spares can have fewer. Check sold prices before buying."],
  "Prices falling":["Prices dropping","Sold prices for this have been going down lately."],
  "Postage not known":["Postage not known","eBay doesn't give a postage price for this listing (it's worked out at checkout, or not stated). FlipScout allows £5, or this model's usual postage if that's higher. That covers most small parcels, but heavier items (over 2kg, e.g. consoles, PCs, monitors) often cost £6–£15 to post, so the real profit can be lower than shown. Check the real postage on eBay before buying."],
+ "Large item to post":["Large item to post","Big items cost more to send than a normal parcel, so FlipScout counts at least £12 (monitors, TVs) or £15 (desktop PCs) for postage out, even if your postage setting is lower."],
  "Postage estimated":["Postage estimated","eBay works the postage out for each buyer; the figure shown is eBay's estimate for a UK address. It may be a little different at checkout."]};
 const tagOf=t=>TAGS[t]||(/^Ships from /.test(t)?[t,"The item is posted from outside the UK, so delivery may be slow and you may pay import charges."]:[t,""]);
 function tagSheet(t){const[l,m]=tagOf(t);openSheet(`<h2 style="margin-top:0">${esc(l)}</h2><div style="font-size:16px">${esc(m)}</div><div class="btns"><button onclick="closeSheet()">Got it</button></div>`)}
@@ -1092,7 +1100,7 @@ function cardMoney(d){
   const prof=auc?(d.profitAtMax!=null?d.profitAtMax:d.profit):d.profit,rg=profRange(d);
   const lo=rg?rg[0]:prof,hi=rg?rg[1]:prof,loss=hi<0,good=lo>0;
   const lab=rg?(loss?"Est. loss if you win":"Est. profit if you win"):(loss?"Est. loss":"Est. profit");
-  const sub=(rg?"at your max bid → at today's bid · after fees & postage":"after fees, postage & packing")+(postAllow(d)?" · postage allowed for, not known":"");
+  const sub=(rg?"first figure if you pay your max bid, second at the current bid · after fees & postage":"after fees, postage & packing")+(postAllow(d)?" · postage allowed for, not known":"");
   const val=rg?`${sgn(rg[0])} <span style="font-weight:600">to</span> ${sgn(rg[1])}`:known(prof)?sgn(prof):"Not calculated";
   const cell=(label,v,note,cls)=>`<div style="min-width:0"><div class="mu" style="font-size:12px">${label}</div><div class="num-t ${cls||""}" style="font-weight:800;font-size:19px;line-height:1.25">${v}</div>${note?`<div class="mu" style="font-size:12px">${note}</div>`:""}</div>`;
   return`<div style="margin-top:10px;background:var(--inset,var(--card2))">
@@ -1102,7 +1110,8 @@ function cardMoney(d){
    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:8px 12px">
     ${cell(auc?"Current bid":"Buy it now",gbpK(d.price),auc?(d.bids?d.bids+" bid"+(d.bids>1?"s":""):"no bids yet")+" · "+postNote(d):postNote(d))}
     ${auc||(!under&&mx!=null)?cell(auc?"Your max bid":"Max offer",mx!=null?gbp(mx):"—",auc?"eBay bids for you up to this":bo?"offer this or less":"",'ok')
-      :mx!=null?cell("Max item price",gbp(mx),"before post & buyer fee"):cell("Sells for about",gbp0K(d.med),"estimate, incl. post")}</div></div>`}
+      :mx!=null?cell("Max item price",gbp(mx),"before post & buyer fee"):cell("Sells for about",gbp0K(d.med),"estimate, incl. post")}</div>
+   ${riskAmt(d)&&known(lo)?`<div class="mu" style="font-size:12px;padding:0 12px 8px">After your ${+H().riskPct}% risk allowance (not a fee): <b class="num-t">${sgn(lo-riskAmt(d))}</b>${rg?" at your max bid":""}</div>`:""}</div>`}
 // tap the score on a card: what the number means and how it was worked out
 function scoreSheet(i){const d=(HD.deals||[])[i];if(!d)return;
   const ev=d.src==="book"?`Saved price: sells for about ${gbpK(d.med,"not available")} incl. postage. Saved ${ago(d.bookAt)}`:d.src==="sold"?`${d.n} sold prices in the last 30 days`:`${d.n} asking prices (no sales recorded yet, so it scores lower)`;
@@ -1209,7 +1218,7 @@ function laterBox(qq){if(!["all","auc","col"].includes(HD.filter))return"";
    <div style="display:flex;gap:12px">${d.img?`<img src="${esc(d.img)}" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:12px;flex:none">`:""}
     <div style="min-width:0;flex:1"><b style="font-weight:700">${esc(d.title)}</b><div class="mu" style="font-size:13px">${esc(left(d.end))} · ${d.bids?d.bids+" bid"+(d.bids>1?"s":""):"no bids yet"} · seen ${ago(d.seen)}</div></div></div>
    <div class="li" style="padding:8px 0 0;font-size:15px"><span style="flex:1">Current bid <b>${pp(d)}</b></span><span>Your max bid <b class="ok">${gbp(d.maxBid)}</b></span></div>
-   <div class="mu" style="font-size:14px;margin-top:4px">Sells for about ${gbpK(d.med,"not available")}${d.profitAtMax!=null?` · profit at your max bid <b class="ok">${sgn(d.profitAtMax)}</b>`:""}</div>
+   <div class="mu" style="font-size:14px;margin-top:4px">Sells for about ${gbpK(d.med,"not available")}${d.profitAtMax!=null?` · profit at your max bid <b class="ok">${sgn(d.profitAtMax)}</b>`:""}${d.profit!=null?` · at the current bid ${sgn(d.profit)}`:""}</div>
    <div class="btns" style="margin-top:10px"><button onclick="followLater(${i})">Follow · max ${gbp(d.maxBid)}</button><a href="${esc(ukUrl(d.url))}" target="_blank" rel="noopener"><button class="s">View on eBay</button></a></div></div>`}).join("")}
 function followLater(i){const d=(HD.later||[])[i];if(!d)return;DV={...d,kind:"deal"};followSheet()}
 // "Why only N deals?": what happened to every 100 listings checked today (the same listing is checked on every scan, so shares, not totals)
@@ -1317,11 +1326,12 @@ function moneyLines(d){
    <div style="margin-top:12px">
     ${ln("Sale price (estimate)",gbpK(d.med,"not available"))}
     ${fee?ln("eBay fees when you sell","−"+gbp(fee)):""}
-    ${ln("Your postage &amp; packing","−"+gbp(out))}
+    ${ln("Your postage &amp; packing","−"+gbp(out),{sub:postOutTxt(d)})}
     ${ln("You get back",gbp(back),{tot:1})}
     ${ln(auc?"Cost at your max bid":"Cost to buy","−"+gbp(pay),{sub:`${auc?"max bid":"price"} ${gbp(item)} + post ${gbpK(d.ship)}${bf?` + buyer fee ${gbp(bf)} ${ti("bpf")}`:H().bpf&&d.seller&&d.seller.biz?" · no buyer fee (business seller)":""}`})}
     ${ln(rg?"Profit at your max bid":"Profit",sign(prof),{tot:1,cls:prof>=0?"ok":"bad"})}
     ${rg?ln("Profit at today's bid",sign(d.profit),{cls:d.profit>=0?"ok":"bad",sub:"if no one bids higher"}):""}
+    ${riskAmt(d)?ln(`Risk allowance ${+H().riskPct}%`,"−"+gbp(riskAmt(d)),{sub:"optional cushion you set, not a fee"})+ln(rg?"Profit at max bid after allowance":"Profit after allowance",sign(prof-riskAmt(d)),{cls:prof-riskAmt(d)>=0?"ok":"bad"}):""}
    </div>`}
 // One panel answering "can I trust this?": plain checks, the score, and a way to confirm the price
 function trustCard(d){const p=d.parts||{},sel=d.seller||{},v=k=>p[k]!=null?+p[k]:null;

@@ -68,13 +68,17 @@ async function officialLimits(env, ctx, name) {
     const token = await getToken(env);
     const r = await fetch(`https://api.ebay.com/developer/analytics/v1_beta/rate_limit/?api_context=${ctx}&api_name=${name}`, { headers: { Authorization: "Bearer " + token } });
     if (!r.ok) return null;
-    const d = await r.json(); let best = null;
-    for (const rl of d.rateLimits || []) for (const res of rl.resources || []) for (const x of res.rates || []) {
-      if (typeof x.remaining !== "number" || typeof x.limit !== "number") continue;
-      const reset = Date.parse(x.reset);
-      if (!best || x.remaining < best.remaining) best = { resource: res.name, limit: x.limit, remaining: x.remaining, reset: isNaN(reset) ? 0 : reset, window: x.timeWindow };
+    const d = await r.json(); let best = null, all = [];
+    // only this API's figures (Browse, Taxonomy or Trading), even if eBay sends others too
+    for (const rl of d.rateLimits || []) {
+      if (String(rl.apiName || "").toLowerCase() !== name || (rl.apiContext && String(rl.apiContext).toLowerCase() !== ctx)) continue;
+      for (const res of rl.resources || []) for (const x of res.rates || []) {
+        if (typeof x.remaining !== "number" || typeof x.limit !== "number") continue;
+        const reset = Date.parse(x.reset), v = { resource: res.name, limit: x.limit, remaining: x.remaining, reset: isNaN(reset) ? 0 : reset, window: x.timeWindow };
+        all.push(v); if (!best || x.remaining < best.remaining) best = v;
+      }
     }
-    return best;
+    return best ? { ...best, resources: all.length, allEmpty: all.every((v) => v.remaining <= 0) } : null;
   } catch (e) { return null; }
 }
 const OFFICIAL = { browse: ["buy", "browse"], taxonomy: ["commerce", "taxonomy"], trading: ["tradingapi", "tradingapi"] };
@@ -85,8 +89,9 @@ async function refreshRate(env, now = Date.now()) {
   const b = await officialLimits(env, ...OFFICIAL.browse);
   const v = b ? { at: now, ...b } : { at: now, unavailable: true };
   await kvSet(env, "ebayRate", v);
-  // eBay says none left: pause before even one refused call
-  if (b && b.remaining <= 0 && b.reset > now && !(await pausedFor(env, "browse", true))) await setPause(env, "browse", { until: b.reset, why: "limit", src: "ebay figures", tries: 0, info: { at: now, ebay: b } });
+  // eBay says none left: pause before even one refused call (only when every Browse allowance is used up; if just one part
+  // is, the first refused call pauses it, so other Browse calls aren't stopped needlessly)
+  if (b && b.allEmpty && b.reset > now && !(await pausedFor(env, "browse", true))) await setPause(env, "browse", { until: b.reset, why: "limit", src: "ebay figures", tries: 0, info: { at: now, ebay: b } });
   return v;
 }
 // eBay's figures if recent and still for the current window

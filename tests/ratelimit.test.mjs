@@ -29,9 +29,12 @@ globalThis.fetch = async (url, o = {}) => {
 };
 const browseCalls = () => LOG.filter((u) => u.includes("/buy/browse/")).length;
 const too = (headers = {}, body = { errors: [{ errorId: 2001, message: "Too many requests. The request limit has been reached for the resource." }] }) => () => reply(429, body, headers);
-const official = (remaining, resetMs, limit = 5000) => () => reply(200, { rateLimits: [{ apiContext: "buy", apiName: "browse", resources: [
-  { name: "buy.browse", rates: [{ limit, remaining, reset: new Date(resetMs).toISOString(), timeWindow: 86400 }] },
-  { name: "buy.browse.item.bulk", rates: [{ limit: 5000, remaining: 4999, reset: new Date(resetMs).toISOString(), timeWindow: 86400 }] }] }] });
+// eBay's figures; Trading (exhausted) is included on purpose: it must never affect Browse
+const official = (remaining, resetMs, limit = 5000, other = 4999) => () => reply(200, { rateLimits: [
+  { apiContext: "buy", apiName: "browse", resources: [
+    { name: "buy.browse", rates: [{ limit, remaining, reset: new Date(resetMs).toISOString(), timeWindow: 86400 }] },
+    { name: "buy.browse.item.bulk", rates: [{ limit: 5000, remaining: other, reset: new Date(resetMs).toISOString(), timeWindow: 86400 }] }] },
+  { apiContext: "TradingAPI", apiName: "TradingAPI", resources: [{ name: "GetItem", rates: [{ limit: 5000, remaining: 0, reset: new Date(resetMs + 7200e3).toISOString(), timeWindow: 86400 }] }] }] });
 const uk = (t) => new Date(t).toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" });
 
 let n = 0; const t = async (name, fn) => { LOG = []; NEXT = {}; await fn(); n++; console.log("✓", name); };
@@ -112,9 +115,22 @@ await t("counting: overlapping runs and phone requests add up exactly (one state
   copies[1].addCalls(3); await copies[1].saveQuota(env); assert.equal((await copies[1].kvGet(env, "quota")).n, 3, "a new eBay day starts from zero");
 });
 
-await t("eBay's figures are read at most once an hour; 0 left → paused before even one refused call", async () => {
+await t("per allowance: another API's exhausted figures (Trading) never pause Browse; one used-up Browse part doesn't pause all Browse early", async () => {
   const W = load(), env = mkEnv(newDb()); await W.schema(env);
-  const reset = Date.now() + 2 * 3600e3; NEXT.analytics = official(0, reset);
+  NEXT.analytics = official(1200, Date.now() + 3 * 3600e3); await W.refreshRate(env);
+  assert.equal(await W.pausedFor(env, "browse", true), null, "Trading at 0 ignored for Browse");
+  assert.equal((await W.freshRate(env)).remaining, 1200, "Browse figure, not Trading's");
+  const W2 = load(), env2 = mkEnv(newDb()); await W2.schema(env2);
+  NEXT.analytics = official(0, Date.now() + 3 * 3600e3, 5000, 4000); await W2.refreshRate(env2);
+  assert.equal(await W2.pausedFor(env2, "browse", true), null, "one Browse part used up: no early pause (its first refusal will pause it)");
+  NEXT.browse = too(); await assert.rejects(W2.ebay(env2, "/buy/browse/v1/item_summary/search?q=a"), (e) => /daily limit is reached/.test(e.message));
+  assert.equal(await W2.pausedFor(env2, "trading", true), null, "Trading not paused by a Browse refusal");
+  assert.equal(await W2.pausedFor(env2, "taxonomy", true), null, "Taxonomy not paused by a Browse refusal");
+});
+
+await t("eBay's figures are read at most once an hour; 0 left everywhere → paused before even one refused call", async () => {
+  const W = load(), env = mkEnv(newDb()); await W.schema(env);
+  const reset = Date.now() + 2 * 3600e3; NEXT.analytics = official(0, reset, 5000, 0);
   await W.refreshRate(env); await W.refreshRate(env);
   assert.equal(LOG.filter((u) => u.includes("analytics")).length, 1, "only once an hour");
   const g = await W.pausedFor(env, "browse", true); near(g.until, reset, 1000); assert.equal(g.why, "limit");
@@ -149,6 +165,18 @@ await t("automatic scans stop at 90% of eBay's day and say so; your phone's sear
   const r = await W.sweep(env, false); assert.equal(r.skipped, "eBay daily limit reached"); assert.equal(browseCalls(), 0);
   const rep = await W.kvGet(env, "lastReport"); assert.match(rep.errors[0], /used today's eBay allowance for automatic scans \(4490 of 5000 calls\); scans start again at \d\d:\d\d \(UK time\)\. Searches from your phone still work\./);
   const d = await W.ebay(env, "/buy/browse/v1/item_summary/search?q=rtx"); assert.ok(d.itemSummaries, "phone search allowed (reserve)");
+});
+
+await t("five scans starting at the same moment near the 90% line: every call counted; the total stays inside the day (the 10% reserve absorbs the overlap)", async () => {
+  const db = newDb(), env = mkEnv(db), copies = [load(), load(), load(), load(), load()]; await copies[0].schema(env); await copies[0].kvSet(env, "config", CFG);
+  for (const c of copies) await c.schema(env); // each copy already running, as in production
+  await copies[0].kvSet(env, "quota", { d: copies[0].ebayDay(), n: 4480 }); await copies[0].kvSet(env, "keyver", 3);
+  const rs = await Promise.all(copies.map((c) => c.sweep(env, false)));
+  const ran = rs.filter((r) => !r.skipped).length, q = (await copies[0].kvGet(env, "quota")).n; console.log("   results:", JSON.stringify(rs.map((r) => r.skipped || "scanned")));
+  assert.equal(q, 4480 + browseCalls(), `every call counted (${browseCalls()} calls by ${ran} overlapping scans)`);
+  assert.ok(q <= 5000, `stays inside eBay's 5,000 (${q})`);
+  console.log(`   (${ran} scans overlapped and made ${browseCalls()} eBay calls: 4480 → ${q})`); assert.ok(ran >= 2, "scans really overlapped"); await copies[0].kvSet(env, "lastRun", 0);
+  const after = await copies[0].sweep(env, false); assert.equal(after.skipped, "eBay daily limit reached", "the next scan stops at the 90% line");
 });
 
 await t("sold details (Trading API): eBay's usage-limit error pauses them and does NOT mark sold items as missing", async () => {

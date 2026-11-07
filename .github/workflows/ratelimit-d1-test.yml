@@ -1,0 +1,61 @@
+name: Rate-limit protection on the test database (simulated eBay)
+# Runs the real counting/pause/scan code against the TEST database "flipscout-phonetest-db" only, with simulated eBay replies.
+# Only a NEW "run <tag>" or "cleanup <tag>" in .github/d1-test/ratelimit-request.txt on branch test/ebay-ratelimit does anything.
+on:
+  push:
+    branches: [test/ebay-ratelimit]
+    paths: [".github/d1-test/ratelimit-request.txt"]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: phonetest-db
+  cancel-in-progress: false
+jobs:
+  d1:
+    if: github.ref == 'refs/heads/test/ebay-ratelimit'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: What was asked (only a NEW request does anything)
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          F=.github/d1-test/ratelimit-request.txt
+          REQ=$(head -1 $F | tr -s ' ' | sed 's/^ //; s/ $//'); PREV=$(git show "$BEFORE:$F" 2>/dev/null | head -1 | tr -s ' ' | sed 's/^ //; s/ $//' || true)
+          M=hold; T=""; if [[ "$REQ" =~ ^(run|cleanup)\ ([a-z0-9]{6,24})$ ]]; then M=${BASH_REMATCH[1]}; T=${BASH_REMATCH[2]}; fi
+          if [ "$M" != hold ] && [ "$REQ" = "$PREV" ]; then echo "same request as before - not repeated"; M=hold; fi
+          [ "$M" != hold ] || T=""; echo "MODE=$M" >> $GITHUB_ENV; echo "TAG=$T" >> $GITHUB_ENV; echo "mode: $M ${T:+(tag $T)}"
+      - name: Stop if the phone-test automation is running (it shares the test database)
+        if: env.MODE != 'hold'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          N=$(gh run list -R $GITHUB_REPOSITORY -w phone-test-service.yml --json status --jq '[.[]|select(.status!="completed")]|length' 2>/dev/null || echo 0)
+          test "$N" = 0 || { echo "REFUSED: phone-test automation is running"; exit 1; }
+      - uses: actions/setup-node@v4
+        if: env.MODE != 'hold'
+        with:
+          node-version: 22
+      - name: Existing tests and the whole test on a local copy first (no Cloudflare)
+        if: env.MODE != 'hold'
+        run: |
+          node tests/run-all.mjs
+          node --no-warnings tests/d1/ratelimit-d1.mjs local localcheck01
+      - name: On the TEST database only (simulated eBay replies)
+        id: remote
+        if: env.MODE == 'run'
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACC: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RL_MARK: rl-started
+        run: node --no-warnings tests/d1/ratelimit-d1.mjs remote "$TAG"
+      - name: Remove this run's rows (always, but only if this run created them)
+        if: always() && (env.MODE == 'cleanup' || (env.MODE == 'run' && steps.remote.outcome != 'skipped' && hashFiles('rl-started') != ''))
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACC: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node --no-warnings tests/d1/ratelimit-d1.mjs cleanup "$TAG"

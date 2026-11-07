@@ -17,7 +17,7 @@ async function ids() {
   const dbs = await cf("/d1/database?per_page=100"), kvs = await cf("/storage/kv/namespaces?per_page=100");
   const one = (list, name, key) => { const m = list.filter((x) => (x.name || x.title) === name); return m.length === 1 ? m[0][key] : null; };
   const t = { db: one(dbs, NAMES.db, "uuid"), kv: one(kvs, NAMES.kv, "id") }, l = { db: one(dbs, LIVE.db, "uuid"), kv: one(kvs, LIVE.kv, "id") };
-  if (!t.db || !t.kv || !l.db || !l.kv) fail("test or live database/backup store not found exactly once (nothing is created)");
+  if (!t.db || !t.kv || !l.db || !l.kv) fail(`not found exactly once (nothing is created): test database ${!!t.db}, test backup store ${!!t.kv}, live database ${!!l.db}, live backup store ${!!l.kv}; backup stores listed: ${kvs.length}, databases listed: ${dbs.length}`);
   if (t.db === l.db || t.kv === l.kv) fail("test ids equal the live ones");
   const n = (await q(t.db, "SELECT COUNT(*) n FROM listings")).results[0].n;
   if (n > 20000) fail(`test database holds ${n} listings — looks like a real database`);

@@ -109,11 +109,14 @@ jobs:
         run: node --no-warnings tests/d1/worker-e2e.mjs seed
       - name: Test Scan service replies while paused (over the internet, like the phone)
         run: sleep 5 && node --no-warnings tests/d1/worker-e2e.mjs check
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Existing Android app (exact 2.0.122 page) against the test Scan service
         run: |
           node --no-warnings tests/d1/worker-e2e.mjs resetManual
           git show 490a27e:index.html > app-122.html
-          pip install -q playwright==1.47.0 && python3 -m playwright install --with-deps chromium >/dev/null 2>&1
+          pip install -q playwright && python3 -m playwright install --with-deps chromium >/dev/null 2>&1
           python3 tests/d1/app-check.py app-122.html results
       - name: Restore the test database's settings exactly (always)
         if: always() && steps.snap.outcome == 'success'

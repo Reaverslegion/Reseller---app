@@ -1,0 +1,69 @@
+name: D1 query test (test database only)
+# Tests the asking-price query fix (status='live' → +status='live') on Cloudflare's own database engine, using ONLY the
+# disposable test database "flipscout-phonetest-db". Nothing is deployed; the live database is never written to.
+# Runs only when .github/d1-test/request.txt on branch test/d1-query-fix says exactly "run" (or "cleanup" to remove test rows).
+on:
+  push:
+    branches: [test/d1-query-fix]
+    paths: [".github/d1-test/request.txt"]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: phonetest-db
+  cancel-in-progress: false
+jobs:
+  d1:
+    name: Asking-price query on the test database
+    if: github.ref == 'refs/heads/test/d1-query-fix'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: What was asked (only "run" or "cleanup" do anything)
+        run: |
+          M=$(tr -d '[:space:]' < .github/d1-test/request.txt)
+          case "$M" in run|cleanup) ;; *) M=hold;; esac
+          echo "MODE=$M" >> $GITHUB_ENV; echo "mode: $M"
+      - name: Stop if the phone-test automation is running (it shares the test database)
+        if: env.MODE != 'hold'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          N=$(gh run list -R $GITHUB_REPOSITORY -w phone-test-service.yml --json status --jq '[.[]|select(.status!="completed")]|length')
+          test "$N" = 0 || { echo "REFUSED: phone-test automation is running"; exit 1; }
+      - uses: actions/setup-node@v4
+        if: env.MODE != 'hold'
+        with:
+          node-version: 22
+      - name: Safety rules and the whole test on a local copy first (no Cloudflare)
+        if: env.MODE != 'hold'
+        run: |
+          node --no-warnings tests/d1/d1-test.mjs selftest
+          node --no-warnings tests/d1/d1-test.mjs local 15000
+      - name: On the TEST database only - insert test rows, compare old/new query, remove test rows
+        id: remote
+        if: env.MODE == 'run'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npm i -g wrangler@4.157.0 >/dev/null 2>&1
+          git show 6460dbc~1:worker.js > old-worker.js   # the code before the fix
+          node --no-warnings tests/d1/d1-test.mjs remote old-worker.js worker.js 15000
+      - name: Remove test rows (always, even if the test failed)
+        if: always() && (env.MODE == 'cleanup' || (env.MODE == 'run' && steps.remote.outcome != 'skipped'))
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          which wrangler >/dev/null || npm i -g wrangler@4.157.0 >/dev/null 2>&1
+          node --no-warnings tests/d1/d1-test.mjs cleanup
+      - uses: actions/upload-artifact@v4
+        if: always() && env.MODE == 'run'
+        with:
+          name: results-d1-query-test
+          path: results/
+          retention-days: 14

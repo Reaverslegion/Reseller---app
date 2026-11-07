@@ -976,7 +976,7 @@ const VERIFIED_CATS = {
   "80053": "2026-10-26", // Monitors
   "15709": "2026-10-26", // Trainers
 };
-const DEFAULT_RULES = { cheap: true, maxSpend: 0, minProfit: 20, minRoi: 0, seller: "business", feePct: 12.8, feeFixed: 0.4, post: 5, pack: 1, bpf: true, alertScore: 70, minScore: 40 };
+const DEFAULT_RULES = { cheap: true, maxSpend: 0, minProfit: 20, minRoi: 0, seller: "business", feePct: 12.8, feeFixed: 0.4, post: 5, pack: 1, bpf: true, alertScore: 70, minScore: 40, riskPct: 0 };
 function cleanConfig(c) {
   c = c || {};
   return {
@@ -987,7 +987,7 @@ function cleanConfig(c) {
     rules: (() => { const r = { ...DEFAULT_RULES, ...(c.rules || {}) }, D0 = DEFAULT_RULES;
       const num = (k, lo, hi) => { const v = +r[k]; r[k] = Number.isFinite(v) && v >= lo && v <= hi ? v : D0[k]; };
       r.maxSpend = Math.max(0, Math.min(100000, +r.maxSpend || 0));
-      num("minProfit", 0, 10000); num("minRoi", 0, 1000); num("feePct", 0, 50); num("feeFixed", 0, 10); num("post", 0, 200); num("pack", 0, 100); num("alertScore", 0, 100); num("minScore", 0, 100);
+      num("minProfit", 0, 10000); num("minRoi", 0, 1000); num("feePct", 0, 50); num("feeFixed", 0, 10); num("post", 0, 200); num("pack", 0, 100); num("alertScore", 0, 100); num("minScore", 0, 100); num("riskPct", 0, 30); // riskPct: optional risk allowance, shown only, never a fee
       r.seller = r.seller === "private" ? "private" : "business"; r.bpf = r.bpf !== false; r.cheap = r.cheap !== false; return r; })(),
     types: { bin: true, auction: true, misspelt: true, spares: false, ...(c.types || {}) },
     region: c.region === "any" ? "any" : "uk",
@@ -1115,6 +1115,18 @@ async function stockStep(env, cfg, seen, report) {
 // For calc and unknown, sums use a careful allowance (POST_ALLOW, or the model's usual postage if higher) so profit is
 // never overstated; the app says the postage isn't known. (Before 4 Nov these were all counted as free postage.)
 const POST_ALLOW = 5;
+// Postage OUT (what it costs you to send it on once sold). The price book's postage is what buyers paid, and it is
+// already inside "sells for", so it is counted once. When similar items sold with free postage (0) or postage isn't
+// known, you still pay to send it, so your own postage setting is used, never £0 (7 Nov 2026 profit check: 507 deals
+// assumed £0). Big items cost more to send than a normal parcel, so for these categories at least this is used.
+// £12 / £15 are PROVISIONAL ESTIMATES (owner-approved for testing, 7 Nov 2026), not real shipping quotes.
+// It only ever raises the postage, never lowers it below your setting or what buyers paid.
+const BULKY_POST = [[/monitor|television|\btvs?\b|projector/i, 12], [/desktop|all-in-one|pc tower|server|computer case|printer/i, 15]];
+function bulkyPost(catName) { for (const [re, v] of BULKY_POST) if (re.test(String(catName || ""))) return v; return 0; }
+function postOutFor(bookPost, r, catName) {
+  const sold = bookPost > 0 ? bookPost : null, base = sold != null ? sold : r.post, size = bulkyPost(catName);
+  return size > base ? { post: size, src: "size" } : { post: base, src: sold != null ? "sold" : "setting" };
+}
 function postageOf(it) {
   const L = (it.shippingOptions || []).filter(Boolean), pickup = (it.pickupOptions || []).length > 0;
   if (!L.length) return { ship: 0, post: "collect" };
@@ -1435,7 +1447,8 @@ async function sweep(env, manual) {
       const m = market(s.workKey, s.id, s.workQ || 0.5);
       if (!m || s.price + s.ship > m.med * 0.6) continue;
       if (SCAM_WORDS.test(s.title)) { hidden++; whyId[s.id] = "scam shield"; continue; }
-      spares.push({ ...s, kind: "spares", tags: [], score: 0, cost: Math.round((s.price + s.ship + extra) * 100) / 100, workMed: Math.round(m.med), n: m.n, src: m.src });
+      const sales = m.src === "asking" ? 0 : m.src === "book" ? (m.bookN || m.n || 0) : m.n;
+      spares.push({ ...s, kind: "spares", tags: sales === 0 ? ["Price not confirmed by sales"] : sales < MIN_SALES ? ["Few sales behind the price"] : [], score: 0, cost: Math.round((s.price + s.ship + extra) * 100) / 100, workMed: Math.round(m.med), n: m.n, src: m.src, sales, bookN: m.bookN || null });
       continue;
     }
     if (RISK_WORDS.test(s.title)) { why.risky++; whyId[s.id] = "risky"; continue; }
@@ -1458,7 +1471,7 @@ async function sweep(env, manual) {
     // a Buy It Now at under a fifth of what it sells for is almost always a box, a photo, a code or a scam
     // under 40% of the usual price is almost always the wrong item, a fault or a scam (30 Oct audit), so it isn't shown
     if (s.type !== "AUC" && cost < m.med * HIDE_BELOW) { hidden++; whyId[s.id] = "far below usual price"; continue; }
-    const ri = m.post != null ? { ...r, post: m.post } : r; // postage out for this product, from the price book
+    const po = postOutFor(m.post, r, s.catName), ri = { ...r, post: po.post }; // postage out for this product (see postOutFor)
     // the most to pay in total, never above your spending limit (so max bids and max offers stay under it too)
     const mp = r.maxSpend > 0 ? Math.min(maxPay(m.med, m.low, ri), r.maxSpend) : maxPay(m.med, m.low, ri);
     if (mp <= 0) { why.fair++; whyId[s.id] = "fair"; continue; }
@@ -1527,6 +1540,7 @@ async function sweep(env, manual) {
     if (veryCheap) { score = Math.min(score, r.alertScore - 1, 69); tags.push("Very cheap"); }
     if (m.src === "book") tags.push(m.fill ? "Price from category check" : "Price from price book");
     if (m.src === "book" && m.bookN && m.bookN < 10) tags.push("Few sales behind the price");
+    if (po.src === "size") tags.push("Large item to post");
     if (SPECIAL.test(s.title)) tags.push("Special version");
     if (s.shipAllow) tags.push("Postage not known"); else if (s.post === "est") tags.push("Postage estimated");
     if (slow) tags.push("Slow seller");
@@ -1541,7 +1555,9 @@ async function sweep(env, manual) {
       profitAtMax: (() => { const it = s.type === "AUC" ? maxBid : Math.floor((mp - s.ship - (pf ? bpf(mp) : 0)) * 100) / 100; return Math.round((m.med - sellFee(m.med, r) - out - (it + s.ship + (pf ? bpf(it) : 0))) * 100) / 100; })(),
       med: Math.round(m.med * 100) / 100, low: Math.round(m.low * 100) / 100,
       n: m.n, src: m.src, fill: !!m.fill, bookN: m.bookN || null, score, parts: { evidence: ev, match, seller: sel, margin: mar, competition: comp, demand: dem }, tags,
-      sellFee: Math.round(sellFee(m.med, r) * 100) / 100, out: Math.round(out * 100) / 100,
+      sellFee: Math.round(sellFee(m.med, r) * 100) / 100, out: Math.round(out * 100) / 100, postSrc: po.src,
+      // comparable sales behind "sells for" (asking-price guesses have none)
+      sales: m.src === "asking" ? 0 : m.src === "book" ? (m.bookN || m.n || 0) : m.n,
       st: m.st != null ? m.st : null, trend: m.trend || null, bookAt: m.at || null, speed, speedKey: m.row && m.row.sn >= SPEED_MIN_SALES ? m.row.pkey : null,
       // evidence shown on the deal page: typical price range and how recent the newest evidence is
       rangeLo: m.lo != null ? Math.round(m.lo) : null, rangeHi: m.hi != null ? Math.round(m.hi) : null, lastAt: m.lastAt || null,

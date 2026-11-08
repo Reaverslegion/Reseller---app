@@ -196,7 +196,7 @@ a{color:inherit;text-decoration:none}
 .fzc .pr{font-size:15px;color:var(--t2);margin-top:4px}.fzc .pr b{color:var(--tx);font-weight:700}
 .fzc .foot{display:flex;justify-content:space-between;align-items:flex-end;gap:10px;border-top:1px solid var(--bd);padding:8px 14px 10px}
 .fzc .ev{font-size:13px;color:var(--mu);line-height:1.5;min-width:0}.fzc .ev .link{font-size:13px;font-weight:650}
-.fzsc{display:inline;background:none;border:0;min-height:0;padding:0;margin:0;font:inherit;font-size:13px;color:var(--mu);text-decoration:underline dotted;cursor:pointer}
+.fzsc{display:inline-block;background:none;border:0;min-height:24px;padding:2px 0;line-height:20px;vertical-align:baseline;margin:0;font:inherit;font-size:13px;color:var(--mu);text-decoration:underline dotted;cursor:pointer}
 .fzpf{text-align:right;line-height:1.15;flex:none}.fzpf b{font-size:20px;font-weight:800;color:var(--ok);display:block;white-space:nowrap}.fzpf b.l{color:var(--bad)}
 .fzpf small{display:block;font-size:12px;color:var(--mu)}.fzpf .nw{font-size:14px;font-weight:650;color:var(--t2);margin-top:4px;white-space:nowrap}
 .fzc .acts{display:flex;border-top:1px solid var(--bd)}
@@ -1080,7 +1080,7 @@ function speedCard(d){const sp=d.speed;if(!sp||d.kind==="spares")return"";const 
   return`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>How fast it sells</b>${badge}</div>${body}
    ${b||sp.band===null?`<div class="mu" style="font-size:13px;margin-top:10px;line-height:1.45">An estimate at the typical price, not a promise. Cheaper usually goes faster, dearer slower, and condition and photos matter too.</div>`:""}</div>`}
 // "From 30 sales" opens every sale behind the price, newest first
-const salesLink=(d,txt)=>`<button class="link" style="margin:0;min-height:26px;padding:3px 0;font:inherit;color:var(--ac);text-decoration:underline" onclick="event.stopPropagation();salesSheet(${esc(JSON.stringify(d.pkey||""))},${esc(JSON.stringify(d.matchLabel||d.title||""))})">${txt} ›</button>`;
+const salesLink=(d,txt)=>`<button class="link" aria-label="${esc(String(txt).replace(/<[^>]*>/g,""))}: see the sales" style="margin:0;min-height:26px;padding:3px 0;font:inherit;color:var(--ac);text-decoration:underline" onclick="event.stopPropagation();salesSheet(${esc(JSON.stringify(d.pkey||""))},${esc(JSON.stringify(d.matchLabel||d.title||""))})">${txt} ›</button>`;
 let salesFails=0;
 async function salesSheet(key,label){if(!key)return;const tok=salesSheet.tok=(salesSheet.tok||0)+1;openSheet(`<h2 style="margin-top:0">Sales behind this price</h2><div class="mu">${esc(label)}</div><div class="mu" style="margin-top:10px">Loading sales…</div>`);
   let r;try{r=await api("sales="+encodeURIComponent(key));salesFails=0;if(tok!==salesSheet.tok||!sheetOn)return}catch(e){if(tok!==salesSheet.tok||!sheetOn)return;if(++salesFails===2)report("sales-load-failed",errText(e)+" (2 times in a row)","sales list");openSheet(`<h2 style="margin-top:0">Sales behind this price</h2><div class="mu">Couldn't load: ${esc(errText(e))}</div><div class="btns"><button onclick="closeSheet()">Close</button></div>`);return}
@@ -1176,7 +1176,7 @@ function dealCard(d,i){
    :auc?`<div class="fzpf"><small>at your max bid</small><b class="${pmax!=null&&pmax<0?"l":""}">${pmax!=null?sgn(pmax):"—"}</b><div class="nw">${known(d.profit)?sgn(d.profit):"—"}<small>if it ended now · not final</small></div></div>`
    :`<div class="fzpf"><b class="${d.profit<0?"l":""}">${known(d.profit)?sgn(d.profit):"—"}</b><small>est. profit</small></div>`;
   const act=(txt,on,al,cls)=>`<button class="dbtn${cls||""}" onclick="event.stopPropagation();${on}" aria-label="${al}">${txt}</button>`;
-  return`<div class="fzc dcard" data-id="${esc(d.id)}" role="button" tabindex="0" onclick="openDeal(${i})" onkeydown="if(event.target===this&&(event.key==='Enter'||event.key===' ')){event.preventDefault();openDeal(${i})}" aria-label="${esc(d.title)}">
+  return`<div class="fzc dcard" data-id="${esc(d.id)}" tabindex="0" onclick="openDeal(${i})" onkeydown="if(event.target===this&&(event.key==='Enter'||event.key===' ')){event.preventDefault();openDeal(${i})}" aria-label="${esc(d.title)}">
   <div class="top">${d.img?`<img class="ph" src="${esc(d.img)}" alt="" loading="lazy">`:`<div class="ph" aria-hidden="true">No photo</div>`}
    <div style="min-width:0;flex:1"><div class="tt">${isNew(d)?`<span class="newb">NEW</span> `:""}${esc(d.title||"(No title)")}</div>
    <div class="meta">${d.cond?`<span>${esc(d.cond)} ·</span>`:""}${type}</div>

@@ -1,4 +1,11 @@
 # TEST PIPELINE: runs on every change to any branch EXCEPT main, and on every request to merge into main.
+# Two levels (owner-approved 8 Nov 2026, to stay inside the free GitHub allowance):
+#  - QUICK, on every upload to a test branch: unit tests, dependency/secret scan, app build, private test Scan service,
+#    phone test build. The emulator suites are reported as NOT TESTED (quick check), never as passed.
+#  - FULL, on every request to merge into main (whatever changed, back end included) and by default when run by hand
+#    (Actions > Test changes > Run workflow): everything, including the emulator and the other Android versions.
+#    Run FULL by hand before any test app is built for the owner's phone.
+#  The Capacitor 8 trial only runs when ticked on a manual run.
 # It never deploys anything, never touches the live Scan service or live database, and uses no real keys:
 # the Scan service is tested as a private local copy with a throwaway database and a fake eBay.
 # Results: the run's Summary page shows the testing report (PASS / FAIL / NOT TESTED / PARTIALLY TESTED).
@@ -7,7 +14,7 @@ on:
   push:
     branches-ignore: [main]
     # the phone-test request file and documents don't need the full test suite
-    paths-ignore: [".github/phone-test/**", "docs/**"]
+    paths-ignore: [".github/phone-test/**", "docs/**", "**.md"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -15,6 +22,15 @@ on:
       part:
         description: "Emulator part to run: all, journeys, integrity (Stage 3), stage4, or none (skip the main emulator suites)"
         default: all
+      level:
+        description: "full = everything incl. the emulator (default); quick = the fast checks only"
+        default: full
+        type: choice
+        options: [full, quick]
+      cap8:
+        description: "Also run the Capacitor 8 trial (an upgrade experiment)"
+        default: false
+        type: boolean
 permissions:
   contents: read
 concurrency:
@@ -152,6 +168,8 @@ jobs:
   build-cap8:
     # TRIAL ONLY: builds the emulator test app with Capacitor 8 to see what the upgrade would change (never the live build)
     name: Capacitor 8 trial build
+    # manual only: tick "Also run the Capacitor 8 trial" on a full manual run
+    if: github.event_name == 'workflow_dispatch' && inputs.cap8 && inputs.level != 'quick'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     continue-on-error: true
@@ -197,6 +215,7 @@ jobs:
     name: Other Android versions
     needs: [build-e2e, build-cap8]
     if: always() && needs.build-e2e.result == 'success'
+    # (build-e2e only runs at the FULL level, so this only runs then too)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -298,6 +317,7 @@ jobs:
 
   build-e2e:
     name: Build emulator test app
+    if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.level != 'quick'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -327,6 +347,7 @@ jobs:
   emulator:
     name: Real app on Android emulator
     needs: [build-e2e, build]
+    if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.level != 'quick'))
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -412,6 +433,7 @@ jobs:
           node-version: 22
       - run: node tests/ci/report.mjs results
         env:
+          TEST_LEVEL: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.level != 'quick')) && 'full' || 'quick' }}
           JOB_RESULTS: '{"Unit tests":"${{ needs.unit.result }}","Dependencies":"${{ needs.supply.result }}","Build":"${{ needs.build.result }}","Test Scan service":"${{ needs.service.result }}","Android emulator":"${{ needs.emulator.result }}","Capacitor 8 trial":"${{ needs.build-cap8.result }}","Other Android versions":"${{ needs.compat.result }}","Phone test build":"${{ needs.build-phone.result }}","Emulator test app build":"${{ needs.build-e2e.result }}"}'
       - if: always()
         uses: actions/upload-artifact@v4

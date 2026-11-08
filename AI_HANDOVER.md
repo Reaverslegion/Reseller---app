@@ -10,6 +10,7 @@ Purpose: shared asynchronous handovers for Claude and ChatGPT. GitHub is the sha
 5. Include what changed, tests performed, failures, risks, open questions and a single recommended next step. Distinguish confirmed facts from assumptions.
 6. Never include secrets, access tokens, customer personal information or credentials in handovers.
 7. If concurrent work risks conflicts, use separate task branches and agree ownership before edits. Never force-push or overwrite someone else's work.
+8. GitHub Actions minutes (owner-approved 8 Nov 2026): commit locally and upload once per finished task, not after every small step. Uploads to test branches get the quick check; run the FULL test suite by hand (Actions > Test changes > Run workflow, level "full") before any test app is built for the owner's phone. Every request to merge into main runs the full suite automatically, and it must pass.
 
 ## 2026-11-08 — ChatGPT — coordination setup
 Branch: `testing`. This entry documents the repository safety review and collaboration arrangement.

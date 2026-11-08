@@ -6,6 +6,8 @@ on:
     paths: [worker.js, .github/workflows/deploy-worker.yml]
 jobs:
   deploy:
+    # safety lock: the live deployment only runs from main, never from another branch
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

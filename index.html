@@ -57,7 +57,7 @@ h2{font-size:20px;margin:6px 4px 12px}
 .dcard .scorebtn{display:flex;align-items:center;gap:6px;background:none;border:0;padding:0;margin:0 0 0 auto;min-height:0;color:inherit;cursor:pointer}
 .dcard .sc{display:inline-grid;place-items:center;width:32px;height:32px;background:var(--scbg,var(--card));font-weight:800;font-size:14px;flex:none}
 .dcard .dbtn.quiet{background:transparent;border-color:transparent;color:var(--mu)}
-.dcard,.dcard *{border-radius:0!important}.dcard .sc{border-radius:50%!important}.dcard .pill{border-radius:99px!important}
+.dcard:not(.fzc),.dcard:not(.fzc) *{border-radius:0!important}.dcard .sc{border-radius:50%!important}.dcard .pill{border-radius:99px!important}
 .dcard.ds .dbtn{border-radius:99px!important}.dcard.ds .dbtn.s{background:transparent;border-color:var(--bd)}
 .card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:12px;box-shadow:var(--shadow)}
 :root.calm .card{margin-bottom:16px}
@@ -1146,8 +1146,8 @@ const fzMax=d=>d.maxItem!=null?d.maxItem:d.type==="AUC"?d.maxBid:null;
 const fzEnded=d=>d.gone==="ended"||(d.type==="AUC"&&d.end&&d.end<=Date.now());
 // how many sales the selling price rests on, in a few words (tappable: opens the sales)
 function fzEv(d,long){
-  if(d.src==="book")return d.fill?salesLink(d,d.bookN?`${fmtN(d.bookN)} sales${long?" behind this price":""}`:"Recent sales"):salesLink(d,"Sold prices you checked");
-  if(d.src==="sold")return salesLink(d,`${d.n} sale${d.n===1?"":"s"}${long?" behind this price":""}`);
+  if(d.src==="book")return d.fill?salesLink(d,d.bookN?(long?`${fmtN(d.bookN)} sales behind this price`:`From ${fmtN(d.bookN)} sales`):"Recent sales"):salesLink(d,"Sold prices you checked");
+  if(d.src==="sold")return salesLink(d,long?`${d.n} sale${d.n===1?"":"s"} behind this price`:`From ${d.n} sale${d.n===1?"":"s"}`);
   return`<span class="warn" style="font-weight:650">No sales yet: asking prices</span>`}
 // material warnings, only from data the app already has (tags from the Scan service, the live listing check, settings)
 function fzRisks(d){const T=new Set(d.tags||[]),R=[],info=d.info||{};
@@ -1176,7 +1176,7 @@ function dealCard(d,i){
    :auc?`<div class="fzpf"><small>at your max bid</small><b class="${pmax!=null&&pmax<0?"l":""}">${pmax!=null?sgn(pmax):"—"}</b><div class="nw">${known(d.profit)?sgn(d.profit):"—"}<small>if it ended now · not final</small></div></div>`
    :`<div class="fzpf"><b class="${d.profit<0?"l":""}">${known(d.profit)?sgn(d.profit):"—"}</b><small>est. profit</small></div>`;
   const act=(txt,on,al)=>`<button onclick="event.stopPropagation();${on}" aria-label="${al}">${txt}</button>`;
-  return`<div class="fzc" data-id="${esc(d.id)}" role="button" tabindex="0" onclick="openDeal(${i})" onkeydown="if(event.target===this&&(event.key==='Enter'||event.key===' ')){event.preventDefault();openDeal(${i})}" aria-label="${esc(d.title)}">
+  return`<div class="fzc dcard" data-id="${esc(d.id)}" role="button" tabindex="0" onclick="openDeal(${i})" onkeydown="if(event.target===this&&(event.key==='Enter'||event.key===' ')){event.preventDefault();openDeal(${i})}" aria-label="${esc(d.title)}">
   <div class="top">${d.img?`<img class="ph" src="${esc(d.img)}" alt="" loading="lazy">`:`<div class="ph" aria-hidden="true">No photo</div>`}
    <div style="min-width:0;flex:1"><div class="tt">${isNew(d)?`<span class="newb">NEW</span> `:""}${esc(d.title||"(No title)")}</div>
    <div class="meta">${d.cond?`<span>${esc(d.cond)} ·</span>`:""}${type}</div>
@@ -1959,14 +1959,14 @@ async function testAlert(){try{await api("test=1");toast("Test alert sent. It sh
 /* ---------- WELCOME ---------- */
 const OB=[
  ["logo","Your 24/7 bargain hunter","Pick the eBay categories you know. FlipScout checks them every few minutes and finds listings priced below what they sell for."],
- ["bolt","Only real deals","Every deal shows your profit after fees and how sure FlipScout is. Tap Details to read the seller's description and check real sold prices. A scam shield hides risky listings."],
+ ["bolt","Estimates, with the evidence","Every deal shows an estimated profit after fees and postage, and the sales it's based on. Profits are estimates, not promises: always read the listing and check the sold prices before you buy. Risky-looking listings are flagged or hidden, but not every problem can be spotted."],
  ["bell","Follow and get alerts","Set the most you'd pay. Your phone pings when a deal appears or a followed listing drops to your price."],
  ["seller","How do you sell on eBay?","This sets your fees so the profit figures are right. You can change it later in Settings."]];
 function showOnb(){$("onb").style.display="flex";renderOnb()}
 function renderOnb(){
-  const s=OB[ob],last=ob===OB.length-1,logo=document.querySelector(".brand img").src;
+  const s=OB[ob],last=ob===OB.length-1;
   $("onb").innerHTML=`<div style="text-align:right">${last?"":`<button class="link" onclick="finishOnb()">Skip</button>`}</div>
-  <div class="art">${s[0]==="logo"?`<img src="${logo}" alt="">`:s[0]==="seller"?"":I[s[0]]}<h1>${s[1]}</h1><p>${s[2]}</p>
+  <div class="art">${s[0]==="logo"?`<div class="wm" style="font-size:40px;margin-bottom:8px" aria-label="Fliptimize"><b>flip</b>timize</div>`:s[0]==="seller"?"":I[s[0]]}<h1>${s[1]}</h1><p>${s[2]}</p>
   ${last?`<div style="width:100%;margin-top:14px"><button class="choice ${S.rules.seller==="private"?"on":""}" onclick="S.rules.seller='private';save();pushConfig();renderOnb()">Private seller<small>Selling my own things now and then</small></button><button class="choice ${S.rules.seller!=="private"?"on":""}" onclick="S.rules.seller='business';save();pushConfig();renderOnb()">Business seller<small>Buying to resell regularly</small></button></div>`:""}</div>
   <div class="dots">${OB.map((_,i)=>`<i class="${i===ob?"on":""}"></i>`).join("")}</div>
   ${last?`<button style="width:100%;margin:0" onclick="finishOnb()">Start using FlipScout</button>`

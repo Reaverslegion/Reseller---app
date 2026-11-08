@@ -24,7 +24,8 @@ await t("Menu always has the connection box, so a wrong address or key can be fi
   assert.doesNotMatch(html, /connected\(\)\?"":connCard\(\)/);
 });
 await t("a failed deals load offers Try again (and Check address and key for a wrong key), and never also says Loading deals…", async () => {
-  assert.match(html, /HD\.deals===null\?\(HD\.err\?"":`<div class="card mu">Loading deals…<\/div>`\)/);
+  // Fliptimize redesign: loading shows skeleton cards; still nothing at all when the load failed
+  assert.match(html, /HD\.deals===null\?\(HD\.err\?"":`<div class="mu" role="status"[^`]*>Loading deals…<\/div>`\+/);
   assert.match(html, /onclick="HD\.err='';render\(\)">Try again<\/button>/);
   assert.match(html, /\/wrong key\/i\.test\(HD\.err\)\?`<button class="s" onclick="goConnect\(\)">Check address and key ›<\/button>`/);
 });

@@ -103,7 +103,7 @@ await J("Menu and settings", async (step) => {
   await step("switching to Business seller is saved to the test Scan service", async () => { await app.tap("Business seller"); await app.waitText("Business seller fees on", 5000); await sleep(2500);
     const c = await query("SELECT v FROM kv WHERE k='config'"); ok(c[0] && /"seller":"business"/.test(c[0].v), "the Scan service didn't get the change"); });
   await step("switching back to Private seller", async () => { await app.tap("Private seller"); await app.waitText("Private seller: no final value fee", 5000); });
-  await step("Dark theme applies", async () => { await app.tap({ text: "Dark", exact: true }); await app.waitFor(`document.documentElement.dataset.theme==="dark"`, 4000, "dark theme"); await app.shot("dark theme"); await app.tap({ text: "Auto", exact: true }); });
+  await step("Dark theme applies", async () => { await app.tap({ text: "Dark", exact: true }); await app.waitFor(`document.documentElement.dataset.theme==="dark"`, 4000, "dark theme"); await app.shot("dark theme"); await app.tap({ text: "Follow system", exact: true }); });
 });
 
 await J("Turn on admin tools", async (step) => {

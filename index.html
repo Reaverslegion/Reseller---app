@@ -518,6 +518,47 @@ function plRows(){if(BK.list==null)return`<div class="card mu">${BK.err?"Couldn'
   return`<div class="mu" style="margin:0 4px 6px">${fmtN(all)} model${all===1?"":"s"}${all>300?" · showing 300, search to narrow":""}</div><div class="card" style="padding-top:4px;padding-bottom:4px">${L.map(p=>`<div class="li" style="padding:9px 0;gap:10px">
    <span style="flex:1;min-width:0"><b style="font-weight:700">${esc(p.label)}</b><div class="mu" style="font-size:13px">${p.n?`${fmtN(p.n)} sold`:"checked by you"}${p.lo!=null&&p.hi!=null?` · most £${Math.round(p.lo)}–£${Math.round(p.hi)}`:""} · ${ago(p.at)}${p.fresh===false?" · old":""}</div>${p.speed&&p.speed.band!=="none"?`<div style="margin-top:5px">${spChip(p.speed)}</div>`:p.n?`<div class="mu" style="font-size:12px;margin-top:3px">Sell speed: needs more pages read</div>`:""}${sellLine(p.sell)}</span>
    <span style="text-align:right;flex:none"><b class="num-t" style="font-size:17px">${gbp(p.avg)}</b><div class="mu" style="font-size:12px">${p.post!=null?`+ ${gbp(p.post)} post`:"post not known"}</div></span></div>`).join("")}</div>`}
+/* ---------- OWNER: Prediction Lab (records predictions before auctions end, checks them later; nothing is bought) ---------- */
+const LB={d:null,busy:false,err:""};
+async function loadLab(){if(!connected()||LB.busy)return;LB.busy=true;LB.err="";try{LB.d=await api("lab=1")}catch(e){LB.err=errText(e)}LB.busy=false;if(tab==="lab")render()}
+async function labSwitch(on){try{await api("lab=1",{on});toast(on?"Prediction Lab on. It saves a few auctions per category over the next scans.":"Prediction Lab paused. Saved predictions are kept.");LB.d=null;loadLab()}catch(e){toast("Couldn't change it: "+errText(e))}}
+async function labCsvGet(){try{const r=await kfetch(S.set.url,S.set.key,"lab=1&csv=1");if(!r.ok)throw new Error("error "+r.status);const t=await r.text(),name="prediction-lab.csv";
+  try{const f=new File([t],name,{type:"text/csv"});if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f],title:name});return}}catch(e){if(e&&e.name==="AbortError")return}
+  try{if(navigator.share){await navigator.share({text:t,title:name});return}}catch(e){if(e&&e.name==="AbortError")return}
+  try{await navigator.clipboard.writeText(t);toast("Results copied as CSV. Paste into a spreadsheet.");return}catch(e){}
+  openSheet(`<h2 style="margin-top:0">Results (CSV)</h2><div class="mu">Long-press, Select all, Copy, then paste into a spreadsheet.</div><textarea readonly style="min-height:200px">${esc(t)}</textarea><button onclick="closeSheet()">Done</button>`)}catch(e){toast("Couldn't export: "+errText(e))}}
+const pctN=(p,k,n)=>p==null?`<span class="mu">no results yet</span>`:`<b class="num-t">${p}%</b> <span class="mu">(${k} of ${n})</span>`;
+const labSt={win:"Within max bid",loss:"Above max bid",unknown:"Unknown",pending:"Waiting for result",running:"Still running"};
+function labTable(rows,title){if(!rows.length)return"";return`<div class="card"><b>${title}</b>${rows.map(g=>`<div class="li" style="padding:8px 0;gap:10px;align-items:flex-start"><span style="flex:1;min-width:0"><b style="font-weight:700">${esc(g.name)}</b><div class="mu" style="font-size:13px">${g.n} tracked · ${g.win} within · ${g.loss} above · ${g.unknown} unknown · ${g.pending} waiting</div></span>
+  <span style="text-align:right;flex:none;font-size:14px">${g.decided?`${g.winPct}% within <span class="mu">(n=${g.decided})</span>`:`<span class="mu">no results</span>`}<div class="mu" style="font-size:12px">${g.resaleN?`resale off by ${g.resaleErr}% (n=${g.resaleN})`:"no later sales yet"}</div></span></div>`).join("")}</div>`}
+function vLab(){if(!S.set.admin)return`<div class="card">Owner tools are off.</div>`;
+  if(!connected())return`<h2>Prediction Lab</h2><div class="card mu">Connect your Scan service first (Settings › Advanced).</div>`;
+  if(!LB.d&&!LB.busy&&!LB.err)setTimeout(loadLab,0);const d=LB.d;
+  if(!d)return`<h2>Prediction Lab</h2><div class="card mu">${LB.err?"Couldn't load: "+esc(LB.err)+(/wrong|unknown|404|not found/i.test(LB.err)?"<br>Your Scan service may not have Prediction Lab yet.":""):"Loading…"}</div>`;
+  const on=d.lab&&d.lab.on,r=d.resale||{};
+  return`<h2>Prediction Lab</h2><div class="mu" style="margin:-6px 4px 12px">Saves FlipScout's prediction for a few auctions before they end, then checks what really happened. Simulated only: nothing is bid on or bought.</div>
+  <div class="card"><div class="li ${on?"ok":""}">${on?"✓":"•"} <span>${on?`On since ${d.lab.since?new Date(d.lab.since).toLocaleDateString("en-GB",{day:"numeric",month:"short"}):"recently"}. Up to 3 auctions per category, at least 4 days apart.`:"Off. Turn on to start saving predictions."}</span></div>
+   <div class="btns"><button ${on?'class="s"':""} onclick="labSwitch(${!on})">${on?"Pause":"Turn on"}</button><button class="s" onclick="LB.d=null;loadLab();render()">Refresh</button></div>
+   <div class="hint">Experiment ${esc(d.exp)} · calculation ${esc(d.calc)}</div></div>
+  <div class="card"><b>Auctions</b>
+   <div class="li" style="padding:6px 0"><span style="flex:1">Tracked</span><b class="num-t">${d.tracked}</b></div>
+   <div class="li" style="padding:6px 0"><span style="flex:1">Still running</span><b class="num-t">${d.running}</b></div>
+   <div class="li" style="padding:6px 0"><span style="flex:1">Ended, waiting for result</span><b class="num-t">${d.pending}</b></div>
+   <div class="li" style="padding:6px 0"><span style="flex:1">Final price within our max bid (simulated win)</span><b class="num-t">${d.win}</b></div>
+   <div class="li" style="padding:6px 0"><span style="flex:1">Final price above our max bid (simulated loss)</span><b class="num-t">${d.loss}</b></div>
+   <div class="li" style="padding:6px 0"><span style="flex:1">Unknown (no sale, or result not available)</span><b class="num-t">${d.unknown}</b></div>
+   <div class="li" style="padding:8px 0;border-top:1px solid var(--bd);margin-top:4px"><span style="flex:1">Within our max bid</span><span>${pctN(d.winPct,d.win,d.decided)}</span></div></div>
+  <div class="card"><b>Resale price accuracy</b><div class="mu" style="font-size:13px">Only sales recorded after each prediction count.</div>
+   <div class="li" style="padding:6px 0"><span style="flex:1">Typical gap: our price vs later sales</span><span>${r.n?`<b class="num-t">${r.medErrPct}%</b> <span class="mu">(n=${r.n})</span>`:`<span class="mu">no later sales yet</span>`}</span></div>
+   <div class="li" style="padding:6px 0"><span style="flex:1">Simple median of past sales (baseline)</span><span>${r.baseN?`<b class="num-t">${r.baseMedErrPct}%</b> <span class="mu">(n=${r.baseN})</span>`:`<span class="mu">not enough data</span>`}</span></div>
+   ${r.baseN?`<div class="hint">Ours was closer than the baseline for ${r.beatBase} of ${r.baseN}.</div>`:""}</div>
+  ${d.decided<30?`<div class="card" style="border-color:var(--warn)"><b>Early days</b><div class="mu">${d.decided} auction${d.decided===1?"":"s"} with a result. Under about 30, percentages can swing a lot, so treat them as early signs, not proof.</div></div>`:""}
+  ${labTable(d.byCat,"By category")}${labTable(d.byScore,"By deal score")}
+  ${d.items.length?`<details class="card"><summary>Every auction (${d.items.length})</summary>${d.items.slice().reverse().map(i=>`<div class="li" style="padding:8px 0;gap:10px;align-items:flex-start"><span style="flex:1;min-width:0"><b style="font-weight:700">${esc(i.title||i.id)}</b><div class="mu" style="font-size:13px">${esc(i.cat)} · saved ${new Date(i.created).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}${i.score!=null?` · score ${i.score}`:" · not a deal"}</div>
+   <div class="mu" style="font-size:13px">Max bid ${gbp(i.max_bid)} · predicted resale ${gbp(i.pred)}${i.final!=null?` · final ${gbp(i.final)}`:""}${i.later!=null?` · later sales ${gbp(i.later)} (n=${i.laterN})`:""}${i.hyp!=null?` · hypothetical profit ${gbp(i.hyp)}`:""}</div>${i.why?`<div class="mu" style="font-size:12px">${esc(i.why)}</div>`:""}</span>
+   <span class="chip" style="flex:none">${labSt[i.status]||esc(i.status)}</span></div>`).join("")}</details>`:""}
+  <div class="card"><b>Limits of these results</b>${d.limits.map(l=>`<div class="mu" style="margin-top:8px">${esc(l)}</div>`).join("")}</div>
+  <button class="s" onclick="labCsvGet()" style="width:100%">Export results (CSV)</button>`}
 function goConnect(){go("settings");setTimeout(()=>{const a=$("adv");if(a){a.open=true;a.scrollIntoView({behavior:"smooth",block:"start"})}},60)}
 function go(t){if(t===tab)return;prev.push(tab);if(prev.length>20)prev.shift();tab=t;render()}
 function onBack(){
@@ -545,13 +586,13 @@ function render(){
   if(render.last&&tab!==render.last){SCROLLS[render.last]=window.scrollY;const c=[...document.querySelectorAll(".dcard[data-id]")].find(c=>c.getBoundingClientRect().bottom>70);
     ANCH[render.last]=c&&window.scrollY>0?{id:c.dataset.id,top:c.getBoundingClientRect().top}:null}
   applyTheme();
-  const sub=["settings","deal","cats","admin","plist"].includes(tab);
+  const sub=["settings","deal","cats","admin","plist","lab"].includes(tab);
   // settings now lives in the bottom bar (Menu); the top button is only a Back button on pages opened from somewhere else
-  const back=["deal","cats","admin","plist"].includes(tab),menuOn=["settings","cats","admin","plist"].includes(tab);
+  const back=["deal","cats","admin","plist","lab"].includes(tab),menuOn=["settings","cats","admin","plist","lab"].includes(tab);
   $("gear").style.visibility=back?"visible":"hidden";$("gear").innerHTML=I.back;$("gear").onclick=()=>{onBack()};
   $("gear").setAttribute("aria-label","Back");
   $("nav").innerHTML=TABS.map(t=>`<button class="${tab===t[0]||(t[0]==="settings"&&menuOn)?"on":""}" onclick="go('${t[0]}')" aria-label="${t[1]}"><span class="pill">${I[t[2]]}</span>${t[1]}</button>`).join("");
-  $("app").innerHTML=({calc:vCalc,deals:vHunt,follow:vFollow,cats:vCats,deal:vDeal,book:vBook,stock:vStock,dash:vDash,settings:vSettings,admin:vAdmin,plist:vPList,scan:vScan,saved:vDeals})[tab]();
+  $("app").innerHTML=({calc:vCalc,deals:vHunt,follow:vFollow,cats:vCats,deal:vDeal,book:vBook,stock:vStock,dash:vDash,settings:vSettings,admin:vAdmin,plist:vPList,lab:vLab,scan:vScan,saved:vDeals})[tab]();
   if(tab==="calc")recalc();
   if(tab!==render.last){const y=render.restore?SCROLLS[tab]||0:0,a=render.restore&&ANCH[tab];window.scrollTo(0,y);
     const back=()=>{const c=a&&[...document.querySelectorAll(".dcard[data-id]")].find(c=>c.dataset.id===a.id);if(c)window.scrollBy(0,c.getBoundingClientRect().top-a.top);else if(y)window.scrollTo(0,y)};
@@ -845,7 +886,8 @@ function vSettings(){
    ${S.set.admin?`<details><summary>Manual backup (copy and paste)</summary><div class="btns" style="margin-top:-6px"><button class="s" onclick="backup()">Copy backup text</button><button class="s" onclick="restoreSheet()">Paste backup</button></div></details>`:""}</div>
   ${connCard()}
   <div class="card"><button class="s" onclick="ob=0;showOnb()">Show the welcome guide again</button><div class="mu" style="margin-top:10px;user-select:none" onclick="admTap()">FlipScout version ${VER}</div></div>
-  ${S.set.admin?`<div class="card"><b>Admin tools</b><div class="mu">For building the price database. Not for customers.</div><button class="s" onclick="go('admin')">Open admin tools</button></div>`:""}`;
+  ${S.set.admin?`<div class="card"><b>Admin tools</b><div class="mu">For building the price database. Not for customers.</div><button class="s" onclick="go('admin')">Open admin tools</button></div>
+  <div class="card"><b>Prediction Lab (owner only)</b><div class="mu">Checks how accurate FlipScout's max bids and resale prices are on real auctions. Simulated: nothing is bought.</div><button class="s" onclick="LB.d=null;go('lab')">Open Prediction Lab</button></div>`:""}`;
 }
 function connCard(){const s=S.set;return `<details class="card" id="adv" ${connected()?"":"open"}><summary>${connected()?"Advanced: Scan connection":"Connect your Scan service"}</summary>
    <div class="mu">The address and key of your Scan service.</div>

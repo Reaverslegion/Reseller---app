@@ -119,6 +119,12 @@ async function schema(env) {
   // every sold item a fill has read (matched to a model or not), by eBay item number: tells the next fill which sales are
   // already saved, and is matched against listings FlipScout saw for sale to learn how long they took to sell
   try { await D.prepare("CREATE TABLE IF NOT EXISTS deal_out (id TEXT PRIMARY KEY, at INTEGER, why TEXT, price REAL, title TEXT)").run(); } catch (e) {}
+  // Prediction Lab (owner-only experiment): predictions, outcomes and later sales are kept apart; a prediction can never be changed
+  for (const sql of ["CREATE TABLE IF NOT EXISTS lab_snap (item_id TEXT PRIMARY KEY, exp TEXT, cat TEXT, cat_name TEXT, created INTEGER, end_at INTEGER, calc TEXT, snap TEXT)",
+    "CREATE TABLE IF NOT EXISTS lab_out (item_id TEXT PRIMARY KEY, exp TEXT, status TEXT, final_price REAL, checked_at INTEGER, tries INTEGER, source TEXT, detail TEXT)",
+    "CREATE TABLE IF NOT EXISTS lab_comp (item_id TEXT, sale_id TEXT, price REAL, at INTEGER, kind TEXT, PRIMARY KEY (item_id, sale_id))",
+    "CREATE TRIGGER IF NOT EXISTS lab_snap_lock BEFORE UPDATE ON lab_snap BEGIN SELECT RAISE(ABORT, 'Prediction Lab snapshots are permanent'); END"])
+    try { await D.prepare(sql).run(); } catch (e) {}
   try { await D.prepare("CREATE TABLE IF NOT EXISTS fillseen (id TEXT PRIMARY KEY, cat TEXT, price REAL, at INTEGER)").run(); } catch (e) {}
   for (const sql of ["ALTER TABLE listings ADD COLUMN data TEXT", "ALTER TABLE deals ADD COLUMN checked INTEGER DEFAULT 0",
     "ALTER TABLE listings ADD COLUMN sold_at INTEGER", "ALTER TABLE listings ADD COLUMN sold_price REAL", "ALTER TABLE listings ADD COLUMN ended_at INTEGER", "ALTER TABLE listings ADD COLUMN ended_from INTEGER",
@@ -800,7 +806,9 @@ async function getItemTrading(env, tok, id) {
   if (!/<Ack>(?:Success|Warning)<\/Ack>/.test(x)) return { missing: true, err: xmlTag(x, "ErrorCode") };
   const st = xmlTag(x, "StartTime");
   return { start: st ? Date.parse(st) : null, seller: (xmlTag(x, "UserID") || "").slice(0, 64) || null, fmt: xmlTag(x, "ListingType"),
-    qty: +xmlTag(x, "Quantity") || null, sold: +xmlTag(x, "QuantitySold") || null };
+    qty: +xmlTag(x, "Quantity") || null, sold: +xmlTag(x, "QuantitySold") || null,
+    // used by Prediction Lab to check how an auction ended
+    listStatus: xmlTag(x, "ListingStatus") || null, price: +xmlTag(x, "CurrentPrice") || null, cur: (x.match(/<CurrentPrice currencyID="(\w+)"/) || [])[1] || null, bids: xmlTag(x, "BidCount") != null ? +xmlTag(x, "BidCount") : null };
 }
 // a batch of sold items each scan, oldest first (eBay stops answering about 90 days after a listing ends)
 async function soldDetails(env, report) {
@@ -824,6 +832,120 @@ async function soldDetails(env, report) {
   for (let i = 0; i < up.length; i += 50) await D.batch(up.slice(i, i + 50));
   await kvSet(env, "giUse", use);
   if (rows.length) report.soldDetails = { found, missing, today: use.n };
+}
+
+
+/* ---------------- Prediction Lab (owner-only experiment; off until switched on) ----------------
+   Phase 1: before auctions end, save what FlipScout predicted, chosen by fixed rules (not by how good they look).
+   Phase 2: after they end, look up the result with eBay's GetItem (the same permitted call and daily budget as sold details).
+   Phase 3: sales recorded AFTER a prediction (never the ones it was based on) are used to check the resale estimate.
+   No bids, no purchases, no extra searches, no scraping. */
+const LAB_EXP = "lab1", LAB_CALC = "profit-2026-11-07", LAB_PER_CAT = 3, LAB_SPREAD = 4 * DAY, LAB_MIN_LEFT = 60 * 60000, LAB_MAX_LEFT = 12 * 3600e3, LAB_CHECKS_PER_RUN = 5, LAB_MAX_TRIES = 5;
+const labHash = (t) => { let h = 2166136261; for (const c of String(t)) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; };
+// choose at most ONE auction per category every LAB_SPREAD, up to LAB_PER_CAT, in a fixed pseudo-random order
+function labPick(cands, have, now) {
+  const day = new Date(now).toISOString().slice(0, 10), groups = {}, out = [];
+  for (const c of cands) { const left = c.end_at - now; if (!(left >= LAB_MIN_LEFT && left <= LAB_MAX_LEFT)) continue; (groups[c.cat] = groups[c.cat] || []).push(c); }
+  for (const [cat, list] of Object.entries(groups)) {
+    const h = have[cat]; if (h && (h.n >= LAB_PER_CAT || now - h.last < LAB_SPREAD)) continue;
+    list.sort((a, b) => labHash(a.item_id + day) - labHash(b.item_id + day) || (a.item_id < b.item_id ? -1 : 1));
+    out.push(list[0]);
+  }
+  return out;
+}
+async function labSnapshot(env, cands, now) {
+  const lab = await kvGet(env, "lab", { on: false });
+  if (!lab.on || !cands.length) return 0;
+  const D = env.DB, st = (await D.prepare("SELECT cat, COUNT(*) n, MAX(created) last FROM lab_snap WHERE exp=? GROUP BY cat").bind(LAB_EXP).all()).results || [];
+  const picks = labPick(cands, Object.fromEntries(st.map((r) => [String(r.cat), r])), now);
+  if (!picks.length) return 0;
+  await D.batch(picks.map((c) => D.prepare("INSERT OR IGNORE INTO lab_snap (item_id,exp,cat,cat_name,created,end_at,calc,snap) VALUES (?,?,?,?,?,?,?,?)").bind(c.item_id, LAB_EXP, c.cat, c.cat_name || null, now, c.end_at, LAB_CALC, JSON.stringify({ ...c, created: now, exp: LAB_EXP, calc: LAB_CALC }))));
+  return picks.length;
+}
+// how an ended auction compares with the max bid saved before it ended (a simulation, not a purchase)
+function labClassify(snap, g) {
+  if (!g || g.missing) return { status: "pending", why: `eBay didn't return the listing${g && g.err ? " (" + g.err + ")" : ""}` };
+  if (!/^(Completed|Ended)$/.test(g.listStatus || "")) return { status: "pending", why: `not finished yet (${g.listStatus || "status unknown"})` };
+  const src = "ebay-getitem";
+  if (g.fmt && g.fmt !== "Chinese") return { status: "unknown", why: `not an auction (${g.fmt})`, source: src };
+  if (g.cur && g.cur !== "GBP") return { status: "unknown", why: `price in ${g.cur}, not pounds`, source: src };
+  if (!(g.sold >= 1)) return { status: "unknown", why: "ended without a sale", noSale: true, source: src };
+  if (!(g.price > 0)) return { status: "unknown", why: "sold, but eBay gave no final price", source: src };
+  if (snap.max_bid == null) return { status: "unknown", why: "no max bid was saved", final: g.price, source: src };
+  const win = g.price <= snap.max_bid;
+  return { status: win ? "win" : "loss", final: g.price, bids: g.bids, source: src, why: win ? "final price at or below the saved max bid" : "final price above the saved max bid" };
+}
+async function labOutcomes(env, report, now) {
+  const lab = await kvGet(env, "lab", { on: false });
+  if (!lab.on) return;
+  const D = env.DB;
+  const due = (await D.prepare("SELECT s.item_id, s.snap, o.tries FROM lab_snap s LEFT JOIN lab_out o ON o.item_id=s.item_id WHERE s.exp=? AND s.end_at<? AND (o.item_id IS NULL OR (o.status='pending' AND o.tries<? AND o.checked_at<?)) ORDER BY s.end_at LIMIT ?")
+    .bind(LAB_EXP, now - 30 * 60000, LAB_MAX_TRIES, now - 6 * 3600e3, LAB_CHECKS_PER_RUN).all()).results || [];
+  if (!due.length) return;
+  const day = new Date(now).toISOString().slice(0, 10), use = await kvGet(env, "giUse", { d: day, n: 0 });
+  if (use.d !== day) { use.d = day; use.n = 0; }
+  if (use.n + due.length > GI_DAILY) return; // shares the sold-details daily budget
+  if (typeof pausedFor === "function") { try { if (await pausedFor(env, "trading")) return; } catch (e) {} } // respects an eBay pause where the live code has one
+  const tok = await ebayUserToken(env), up = [];
+  for (const r of due) {
+    let res, snap = {};
+    try { snap = JSON.parse(r.snap); } catch (e) {}
+    if (!tok) res = { status: "pending", why: "eBay account not connected (needed to look up ended listings)" };
+    else { try { const g = await getItemTrading(env, tok, r.item_id); use.n++; res = labClassify(snap, g); } catch (e) { res = { status: "pending", why: "lookup failed: " + String(e.message || e).slice(0, 80) }; } }
+    const tries = (r.tries || 0) + 1;
+    if (res.status === "pending" && tries >= LAB_MAX_TRIES) res = { ...res, status: "unknown", why: res.why + ` (gave up after ${tries} tries)` };
+    up.push(D.prepare("INSERT OR REPLACE INTO lab_out (item_id,exp,status,final_price,checked_at,tries,source,detail) VALUES (?,?,?,?,?,?,?,?)")
+      .bind(r.item_id, LAB_EXP, res.status, res.final != null ? res.final : null, now, tries, res.source || null, JSON.stringify(res)));
+  }
+  await D.batch(up);
+  await kvSet(env, "giUse", use);
+  report.lab = { ...(report.lab || {}), checked: due.length };
+}
+// sales of the same model recorded AFTER the prediction (sales are only ever added, so these are new evidence)
+async function labComps(env, now) {
+  if (now - (await kvGet(env, "labCompsAt", 0)) < 6 * 3600e3) return;
+  await kvSet(env, "labCompsAt", now);
+  await env.DB.prepare("INSERT OR IGNORE INTO lab_comp (item_id,sale_id,price,at,kind) SELECT s.item_id, x.id, x.price, x.at, x.kind FROM lab_snap s JOIN sales x ON x.pkey=json_extract(s.snap,'$.pkey') WHERE s.exp=? AND x.at>s.created AND x.id<>s.item_id AND x.price>0")
+    .bind(LAB_EXP).run();
+}
+// the dashboard figures: worked out from the saved rows each time, never stored over them
+function labSummary(rows, now) {
+  const band = (sc) => sc == null ? "Not a deal (no score)" : sc >= 70 ? "Score 70+" : sc >= 50 ? "Score 50–69" : "Score under 50";
+  const items = rows.map((r) => {
+    const s = r.snap || {}, comps = (r.comps || []).map((c) => c.price).filter((x) => x > 0), later = comps.length ? median(comps) : null;
+    const err = later && s.med ? Math.abs(s.med - later) / later : null, berr = later && s.base_med ? Math.abs(s.base_med - later) / later : null;
+    // hypothetical: if bought at the final price and resold at the later median, with the costs saved at the time (not a real sale)
+    let hyp = null;
+    if (r.status === "win" && later != null && s.rules) hyp = later - sellFee(later, s.rules) - (s.post_out || 0) - (s.pack || 0) - (r.final + (s.ship || 0) + (s.bpf_on ? bpf(r.final) : 0));
+    return { id: r.item_id, cat: s.cat_name || r.cat, title: s.title, created: r.created, end_at: r.end_at, status: r.status || (r.end_at < now ? "pending" : "running"), final: r.final ?? null, max_bid: s.max_bid, bid_then: s.price,
+      pred: s.med, base: s.base_med ?? null, later, laterN: comps.length, err, berr, hyp: hyp != null ? Math.round(hyp * 100) / 100 : null, predAtMax: s.profit_at_max, score: s.score ?? null, band: band(s.score ?? null), why: r.why || null, shown: !!s.shown_as_deal };
+  });
+  const grp = (key) => { const m = {}; for (const i of items) { const g = (m[i[key]] = m[i[key]] || { n: 0, win: 0, loss: 0, unknown: 0, pending: 0, errs: [] }); g.n++; if (i.status === "win") g.win++; else if (i.status === "loss") g.loss++; else if (i.status === "unknown") g.unknown++; else g.pending++; if (i.err != null) g.errs.push(i.err); }
+    return Object.entries(m).map(([k, g]) => ({ name: k, n: g.n, win: g.win, loss: g.loss, unknown: g.unknown, pending: g.pending, decided: g.win + g.loss, winPct: g.win + g.loss ? Math.round((g.win / (g.win + g.loss)) * 100) : null, resaleN: g.errs.length, resaleErr: g.errs.length ? Math.round(median(g.errs) * 100) : null })).sort((a, b) => b.n - a.n); };
+  const c = (st) => items.filter((i) => i.status === st).length, win = c("win"), loss = c("loss"), withLater = items.filter((i) => i.err != null), both = withLater.filter((i) => i.berr != null);
+  return {
+    exp: LAB_EXP, calc: LAB_CALC, tracked: items.length, running: c("running"), pending: c("pending"), win, loss, unknown: c("unknown"), decided: win + loss,
+    winPct: win + loss ? Math.round((win / (win + loss)) * 100) : null,
+    resale: { n: withLater.length, medErrPct: withLater.length ? Math.round(median(withLater.map((i) => i.err)) * 100) : null, baseN: both.length, baseMedErrPct: both.length ? Math.round(median(both.map((i) => i.berr)) * 100) : null, beatBase: both.filter((i) => i.err < i.berr).length },
+    byCat: grp("cat"), byScore: grp("band"), items,
+    limits: ["Wins and losses are simulated: the auction's final price compared with the max bid saved before it ended. Nothing was bought or bid on.",
+      "An auction that ended without a sale, or whose result eBay won't give, stays Unknown. It is never counted as sold.",
+      "Resale accuracy uses only sales recorded after each prediction, matched by FlipScout's model key (same model and condition group). Most later sales come from your price checks and ended auctions, so some models will have none.",
+      "Hypothetical profit = bought at the final price and resold at the later typical price, with the costs saved at the time. It is not real profit.",
+      "Small numbers: under about 30 decided auctions, percentages can swing a lot. Treat them as early signs, not proof."] };
+}
+async function labRows(env) {
+  const D = env.DB;
+  const snaps = (await D.prepare("SELECT s.item_id, s.cat, s.created, s.end_at, s.snap, o.status, o.final_price, o.detail FROM lab_snap s LEFT JOIN lab_out o ON o.item_id=s.item_id WHERE s.exp=? ORDER BY s.created").bind(LAB_EXP).all()).results || [];
+  const comps = (await D.prepare("SELECT item_id, price, at, kind FROM lab_comp").all()).results || [];
+  const by = {}; for (const c of comps) (by[c.item_id] = by[c.item_id] || []).push(c);
+  return snaps.map((r) => { let snap = {}, det = {}; try { snap = JSON.parse(r.snap); } catch (e) {} try { det = JSON.parse(r.detail || "{}"); } catch (e) {}
+    return { item_id: r.item_id, cat: r.cat, created: r.created, end_at: r.end_at, snap, status: r.status || null, final: r.final_price, why: det.why || null, comps: by[r.item_id] || [] }; });
+}
+function labCsv(sum) {
+  const cols = ["id", "cat", "title", "created", "end_at", "status", "final", "max_bid", "bid_then", "pred", "base", "later", "laterN", "err", "berr", "hyp", "predAtMax", "score", "shown", "why"];
+  const q = (v) => v == null ? "" : /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
+  return [cols.join(","), ...sum.items.map((i) => cols.map((k) => q(k === "created" || k === "end_at" ? (i[k] ? new Date(i[k]).toISOString() : "") : i[k])).join(","))].join("\n");
 }
 
 /* ---------------- how long listings take to sell ---------------- */
@@ -1433,7 +1555,7 @@ async function sweep(env, manual) {
   }
 
   // 5. judge each listing
-  const deals = [], spares = [], later = [], whyId = {}; // whyId: why each listing isn't a deal (kept for removed deals)
+  const deals = [], spares = [], later = [], whyId = {}, labCands = []; // whyId: why each listing isn't a deal (kept for removed deals)
   let hidden = 0;
   for (const s of cands) {
     // postage calculated by eBay without a figure, or not stated: count a careful allowance, never £0 (see postageOf)
@@ -1498,6 +1620,16 @@ async function sweep(env, manual) {
       const h = ukHour(s.end);
       if (h >= 0 && h < 6) tags.push("Ends overnight");
       if (s.bids <= 2) tags.push(s.bids ? s.bids + " bid" + (s.bids > 1 ? "s" : "") : "No bids yet");
+      // Prediction Lab: every priced auction is a candidate, chosen later by fixed rules (only the figures already worked out here)
+      if (maxBid != null && s.end) try { const base = trim((soldBy[s.pkey] || []).filter((x) => x > 0)), atMax = maxBid + s.ship + (pf ? bpf(maxBid) : 0);
+        labCands.push({ item_id: String(s.id), cat: String(s.cat), cat_name: s.catName, title: String(s.title || "").slice(0, 140), cond: s.cond || null, url: s.url || null, pkey: s.pkey, match: s.matchLabel || null, match_q: s.matchQ || null,
+          price: s.price, ship: s.ship, bids: s.bids, end_at: s.end, seen_at: now, left_min: Math.round((s.end - now) / 60000),
+          max_bid: maxBid, max_total: Math.round(mp * 100) / 100, med: Math.round(m.med * 100) / 100, low: Math.round(m.low * 100) / 100, lo: m.lo ?? null, hi: m.hi ?? null,
+          src: m.src, book_n: m.bookN ?? null, sold_n: m.n ?? null, price_at: m.at || m.lastAt || null, trend: m.trend || null, st: m.st ?? null, ev: m.ev ?? null, spread: m.spread ?? null,
+          base_med: base.length >= 3 ? Math.round(median(base) * 100) / 100 : null, base_n: base.length,
+          fee_at_med: Math.round(sellFee(m.med, r) * 100) / 100, post_out: po.post, post_src: po.src, pack: r.pack, bpf_on: !!pf, bpf_at_max: pf ? Math.round(bpf(maxBid) * 100) / 100 : 0,
+          profit_now: Math.round(profit * 100) / 100, low_profit_now: Math.round(lowProfit * 100) / 100, profit_at_max: Math.round((m.med - sellFee(m.med, r) - out - atMax) * 100) / 100, slow: !!slow,
+          rules: { ...r } }); } catch (e) { /* never let the experiment disturb a scan */ }
     }
     if (!ok) {
       why.fair++;
@@ -1724,6 +1856,14 @@ async function sweep(env, manual) {
       await kvSet(env, "tracked", { at: now, m: report.tracked });
     }
   } catch (e) {}
+  try {
+    const dm = new Map(deals.map((d) => [String(d.id), d]));
+    for (const c of labCands) { const d = dm.get(c.item_id); c.score = d ? d.score : null; c.tags = d ? d.tags || [] : []; c.shown_as_deal = !!d; }
+    const nl = await labSnapshot(env, labCands, now);
+    if (nl) report.lab = { saved: nl };
+    await labOutcomes(env, report, now);
+    await labComps(env, now);
+  } catch (e) { report.lab = { ...(report.lab || {}), error: String(e.message || e).slice(0, 120) }; }
   await kvSet(env, "lastReport", { at: now, ...report, cats: cats.map((c) => c.name) });
   // remember the rules this scan used: a change triggers the 3-day second look on the next scan
   await kvSet(env, "rulesSig", JSON.stringify([r, cfg.cats.map((c) => c.id)]));
@@ -2045,7 +2185,7 @@ export default {
       const rows = (await env.DB.prepare("SELECT src, kind, msg, place, ver, n, first, at, alerted FROM errlog ORDER BY at DESC LIMIT 100").all()).results || [];
       return json({ problems: rows });
     }
-    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "flag", "unflag", "flags", "test", "device", "check", "price", "prices", "unprice", "needs", "lookfor", "fill", "fillstats", "seen", "sales", "ebayconnect", "ebaycode"].some((k) => u.searchParams.has(k));
+    const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "flag", "unflag", "flags", "test", "device", "check", "price", "prices", "unprice", "needs", "lookfor", "fill", "fillstats", "seen", "sales", "ebayconnect", "ebaycode", "lab"].some((k) => u.searchParams.has(k));
     if (huntCall) {
       if (!env.DB) return json({ error: "hunting database not set up yet" }, 501);
       try {
@@ -2057,6 +2197,14 @@ export default {
             return json({ ok: true, config: c });
           }
           return json({ config: cleanConfig(await kvGet(env, "config", null)) });
+        }
+        if (P("lab")) {
+          // Prediction Lab: owner only (needs the app key like every request). POST {on:true|false} switches it on or off.
+          if (request.method === "POST") { const b = await bodyJson(request); const cur = await kvGet(env, "lab", { on: false }); const on = !!(b && b.on);
+            await kvSet(env, "lab", { on, since: on ? cur.since || Date.now() : cur.since || null, changed: Date.now() }); return json({ ok: true, lab: { on } }); }
+          const sum = labSummary(await labRows(env), Date.now());
+          if (u.searchParams.get("csv")) return new Response(labCsv(sum), { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="prediction-lab-${LAB_EXP}.csv"`, "Access-Control-Allow-Origin": "*" } });
+          return json({ lab: await kvGet(env, "lab", { on: false }), ...sum });
         }
         if (P("run")) {
           const last = await kvGet(env, "lastManual", 0);

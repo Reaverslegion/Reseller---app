@@ -200,7 +200,7 @@ a{color:inherit;text-decoration:none}
 .fzpf{text-align:right;line-height:1.15;flex:none}.fzpf b{font-size:20px;font-weight:800;color:var(--ok);display:block;white-space:nowrap}.fzpf b.l{color:var(--bad)}
 .fzpf small{display:block;font-size:12px;color:var(--mu)}.fzpf .nw{font-size:14px;font-weight:650;color:var(--t2);margin-top:4px;white-space:nowrap}
 .fzc .acts{display:flex;border-top:1px solid var(--bd)}
-.fzc .acts button{flex:1;margin:0;min-height:44px;padding:4px 6px;border-radius:0;background:none;color:var(--t2);font-size:14px;font-weight:600;border:0}
+.fzc .acts button,.dcard.fzc .acts .dbtn{flex:1;margin:0;min-height:44px;padding:4px 6px;border-radius:0!important;background:none;color:var(--t2);font-size:14px;font-weight:600;border:0}
 .fzc .acts button+button{border-left:1px solid var(--bd)}
 .fzb{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:650;padding:2px 8px;border-radius:10px;color:var(--t2);background:var(--card2);border:1px solid var(--bd);line-height:1.4}
 .fzb.w{color:var(--warn);background:var(--warnbg);border-color:transparent}.fzb.l{color:var(--bad);background:var(--badbg);border-color:transparent}.fzb.i{color:var(--info);background:var(--infobg);border-color:transparent}
@@ -1175,16 +1175,16 @@ function dealCard(d,i){
    :auc&&over?`<div class="fzpf"><b class="l">${sgn(d.profit)}</b><small>at current bid</small></div>`
    :auc?`<div class="fzpf"><small>at your max bid</small><b class="${pmax!=null&&pmax<0?"l":""}">${pmax!=null?sgn(pmax):"—"}</b><div class="nw">${known(d.profit)?sgn(d.profit):"—"}<small>if it ended now · not final</small></div></div>`
    :`<div class="fzpf"><b class="${d.profit<0?"l":""}">${known(d.profit)?sgn(d.profit):"—"}</b><small>est. profit</small></div>`;
-  const act=(txt,on,al)=>`<button onclick="event.stopPropagation();${on}" aria-label="${al}">${txt}</button>`;
+  const act=(txt,on,al,cls)=>`<button class="dbtn${cls||""}" onclick="event.stopPropagation();${on}" aria-label="${al}">${txt}</button>`;
   return`<div class="fzc dcard" data-id="${esc(d.id)}" role="button" tabindex="0" onclick="openDeal(${i})" onkeydown="if(event.target===this&&(event.key==='Enter'||event.key===' ')){event.preventDefault();openDeal(${i})}" aria-label="${esc(d.title)}">
   <div class="top">${d.img?`<img class="ph" src="${esc(d.img)}" alt="" loading="lazy">`:`<div class="ph" aria-hidden="true">No photo</div>`}
    <div style="min-width:0;flex:1"><div class="tt">${isNew(d)?`<span class="newb">NEW</span> `:""}${esc(d.title||"(No title)")}</div>
    <div class="meta">${d.cond?`<span>${esc(d.cond)} ·</span>`:""}${type}</div>
    ${over?`<div style="margin-top:4px"><span class="fzb l">▼ Bid is above your limit: not profitable</span></div>`:""}${badges?`<div class="meta" style="margin-top:4px">${badges}</div>`:""}
-   <div class="pr">${price}</div></div></div>
+   <div class="pr">${price}</div>${sp?"":`<div class="pn" style="margin-top:2px;font-size:13px;color:var(--mu)">${auc?esc(d.bids?d.bids+" bid"+(d.bids>1?"s":""):"no bids yet")+" · ":""}${postNote(d)}</div>`}</div></div>
   ${sp?"":`<div class="foot"><div class="ev">${fzEv(d)} · ${esc(ago(d.created)||"")}${known(d.score)?` · <button class="fzsc" onclick="event.stopPropagation();scoreSheet(${i})" aria-label="Deal score ${d.score}, ${confWord(d.score)}. How it's worked out">Score ${d.score} · ${confWord(d.score)}</button>`:" · "+"Not scored"}${riskAmt(d)&&known(d.profit)?`<br>After your ${+H().riskPct}% risk allowance (not a fee): ${sgn((auc&&pmax!=null?pmax:d.profit)-riskAmt(d))}`:""}</div>${right}</div>`}
   ${sp?`<div class="foot"><div class="ev">${esc(ago(d.created)||"")}</div>${right}</div>`:""}
-  <div class="acts">${sp?"":isFollowed(d.id)?act("✓ Following","go('follow')","Following this deal"):act("Follow",`quickFollow(${i})`,"Follow this deal and get an alert")}${act("Hide",`hideDeal(${esc(JSON.stringify(d.id))})`,"Hide this deal")}${act("⚑ Report",`flagAsk(${esc(JSON.stringify(d.id))})`,"Report this deal as wrong")}</div></div>`}
+  <div class="acts">${sp?"":isFollowed(d.id)?act("✓ Following","go('follow')","Following this deal"):act("Follow",`quickFollow(${i})`,"Follow this deal and get an alert")}${act("Hide",`hideDeal(${esc(JSON.stringify(d.id))})`,"Hide this deal"," quiet")}${act("⚑ Report",`flagAsk(${esc(JSON.stringify(d.id))})`,"Report this deal as wrong"," quiet flagb")}</div></div>`}
 // (kept for other screens that still use it)
 function cardMoney(d){
   const auc=d.type==="AUC",bo=!auc&&d.bestOffer,mx=d.maxItem!=null?d.maxItem:auc?d.maxBid:null,under=!auc&&mx!=null&&d.price<=mx;

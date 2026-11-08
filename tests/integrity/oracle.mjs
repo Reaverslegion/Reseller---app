@@ -67,16 +67,17 @@ export function card(d0, s = SETTINGS) {
   const d = limited(d0, s), auc = isAuction(d), mx = d.maxItem != null ? d.maxItem : auc ? d.maxBid : null, under = !auc && mx != null && d.price <= mx;
   const post = postText(d);
   const lo = auc && d.profitAtMax != null ? d.profitAtMax : d.profit, hi = d.profit, range = auc && hi != null && lo != null && hi - lo >= 0.5;
-  const profit = range ? `${signed(lo)} to ${signed(hi)}` : known(shownProfit(d)) ? signed(shownProfit(d)) : "Not calculated";
-  const second = auc || (!under && mx != null) ? [auc ? "Your max bid" : "Max offer", mx != null ? gbp(mx) : "—"] : mx != null ? ["Max item price", gbp(mx)] : ["Sells for about", known(d.med) ? gbp0(d.med) : "Not available"];
-  const src = d.src === "book" ? (d.fill ? `From ${d.bookN ? Number(d.bookN).toLocaleString("en-GB") + " sales" : "your category check"}` : "From sold prices you checked")
-    : d.src === "sold" ? `From ${d.n} sale${d.n === 1 ? "" : "s"} in 30 days` : `Guess from ${d.n} asking prices, no sales yet`;
-  const r = returnPct(d, s);
+  // Fliptimize card (8 Nov 2026): auctions show profit at your max bid / if it ended now; Buy It Now shows the total cost
+  const bidAbove = auc && mx != null && known(d.price) && d.price > mx;
+  const profit = bidAbove ? (known(d.profit) ? signed(d.profit) : "—") : auc ? `${known(d.profitAtMax) ? signed(d.profitAtMax) : "—"} / ${known(d.profit) ? signed(d.profit) : "—"}` : known(d.profit) ? signed(d.profit) : "—";
+  const src = d.src === "book" ? (d.fill ? (d.bookN ? `From ${Number(d.bookN).toLocaleString("en-GB")} sales` : "Recent sales") : "Sold prices you checked")
+    : d.src === "sold" ? `From ${d.n} sale${d.n === 1 ? "" : "s"}` : "No sales yet: asking prices";
+  const cost = known(d.cost) ? d.cost : known(d.price) && known(d.ship) ? d.price + d.ship : null;
   return { title: String(d.title), shownTitle: d.title ? String(d.title) : "(No title)", label: d.kind === "spares" ? "Spares or repairs" : auc ? "Auction" : "Buy It Now",
-    score: d.kind === "spares" ? null : known(d.score) ? String(d.score) : "–",
-    profit: d.kind === "spares" ? null : profit, priceLabel: auc ? "Current bid" : "Buy it now", price: known(d.price) ? gbp(d.price) : "Unknown", post,
+    score: d.kind === "spares" ? null : known(d.score) ? String(d.score) : "Not scored",
+    profit: d.kind === "spares" ? null : profit, priceLabel: auc ? "Current bid" : "Cost", price: auc ? (known(d.price) ? gbp(d.price) : "Unknown") : cost != null ? gbp(cost) : null, post,
     bids: auc ? (d.bids ? d.bids + " bid" + (d.bids > 1 ? "s" : "") : "no bids yet") : null,
-    secondLabel: second[0], second: second[1], sells: known(d.med) ? gbp0(d.med) : "Not available", ret: r == null ? null : r + "%", src, allow: !d.collect && (d.shipAllow || d.post === "calc" || d.post === "unknown") };
+    secondLabel: auc ? "Bid up to" : null, second: auc ? (mx != null ? gbp(mx) : "—") : null, sells: null, ret: null, src, allow: !d.collect && (d.shipAllow || d.post === "calc" || d.post === "unknown") };
 }
 // order checks: each sort's key (bigger first), or "ending" (auctions by end time, soonest first, then the rest)
 export const SORT_KEYS = {

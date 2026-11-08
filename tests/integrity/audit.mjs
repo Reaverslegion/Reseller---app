@@ -17,8 +17,8 @@ const READ = `(()=>{const app=document.getElementById("app"),T=app.innerText,m=T
   const chips={};document.querySelectorAll("#chips button").forEach(b=>{const x=b.innerText.trim().match(/^(.*?)\\s+(\\d+)$/);if(x)chips[x[1]]=+x[2]});
   /* cards off the screen are only drawn when scrolled to (for speed); draw them all while reading, as scrolling would */
   const all=[...document.querySelectorAll(".dcard")];all.forEach(c=>c.style.contentVisibility="visible");
-  const cards=all.map(c=>{const t=c.querySelector('.dbody div[style*="font-weight:700"]');
-    return{aria:c.getAttribute("aria-label"),title:t?t.innerText.replace(/^NEW\\s+/,""):"",text:c.innerText,img:!!c.querySelector(".dbody img")}});
+  const cards=all.map(c=>{const t=c.querySelector('.tt');
+    return{aria:c.getAttribute("aria-label"),title:t?t.innerText.replace(/^NEW\\s+/,""):"",text:c.innerText,img:!!c.querySelector(".top img")}});
   const bad=(T.match(/.{0,40}(\\bundefined\\b|\\bNaN\\b|\\bnull\\b|\\[object Object\\]).{0,40}/)||[])[0]||null;
   all.forEach(c=>c.style.contentVisibility="");
   return{count:m?+m[1].replace(/,/g,""):0,empty:/No deals right now/.test(T),chips,cards,bad,loading:/Loading deals…/.test(T),err:(app.querySelector(".card.bad")||{}).innerText||"",
@@ -26,15 +26,17 @@ const READ = `(()=>{const app=document.getElementById("app"),T=app.innerText,m=T
 
 // one card's text → its values (the card's own labels say which number is which)
 export function parseCard(text) {
-  const L = text.split("\n").map((x) => x.trim()).filter(Boolean), at = (re) => L.findIndex((x) => re.test(x));
-  const o = { label: L[0] || "" };
-  const si = at(/^(High|Medium|Low|Not scored)$/); o.score = si >= 0 ? L[si + 1] : null;
-  const pi = at(/^Est\. (profit|loss)( if you win)?$/); o.profit = pi >= 0 ? L[pi + 2] : null;
-  const ci = at(/^(Buy it now|Current bid)$/); if (ci >= 0) { o.priceLabel = L[ci]; o.price = L[ci + 1]; o.note = L[ci + 2]; }
-  const xi = L.findIndex((x, i) => i > ci && /^(Max offer|Your max bid|Max item price|Sells for about)$/.test(x)); if (xi >= 0) { o.secondLabel = L[xi]; o.second = L[xi + 1]; }
-  const sl = L.find((x) => /^Sells for about (£|-£|Not available)/.test(x)); o.sells = sl ? (sl.match(/^Sells for about (-?£[\d,]+|Not available)/) || [])[1] : null;
-  const rl = L.find((x) => /\d+% return$/.test(x)); o.ret = rl ? rl.match(/(-?\d+)% return$/)[1] + "%" : null;
-  const fl = L.find((x) => /^(From .*›|From sold prices you checked|Guess from)/.test(x)); o.src = fl ? fl.replace(/ ›.*$/, "").replace(/ · estimate$/, "") : null;
+  // Fliptimize card (8 Nov 2026): read each labelled part of the card
+  const T = String(text), L = T.split("\n").map((x) => x.trim()).filter(Boolean), g = (re) => (T.match(re) || [])[1];
+  const o = { label: (T.match(/(Spares or repairs|Auction|Buy It Now)/) || [])[1] || "" };
+  o.score = /Not scored/.test(T) ? "Not scored" : g(/Score (\d+)/) || null;
+  const am = T.match(/at your max bid\s*\n\s*([+−-]£[\d,.]+|—)\s*\n\s*([+−-]£[\d,.]+|—)\s*\n\s*if it ended now/);
+  o.profit = am ? am[1] + " / " + am[2] : g(/([+−-]£[\d,.]+|—)\s*\n\s*(?:est\. profit|at current bid)/) || null;
+  if (o.label === "Auction") { o.priceLabel = "Current bid"; o.price = g(/(?:now|Now) (£[\d,.]+|Unknown)/) || null; o.second = g(/[Bb]id up to (£[\d,.]+|—)/) || null; o.secondLabel = o.second != null ? "Bid up to" : null; }
+  else { o.priceLabel = "Cost"; o.price = g(/Cost (£[\d,.]+)/) || null; o.second = null; o.secondLabel = null; }
+  o.note = L.find((x) => /^((\d+ bids?|no bids yet) · )?(free post|\+ |postage |collection only)/.test(x)) || null;
+  o.sells = null; o.ret = null;
+  o.src = g(/(From [\d,]+ sales?|Sold prices you checked|Recent sales|No sales yet: asking prices)/) || null;
   return o;
 }
 // compare one card with what it should say
@@ -155,7 +157,7 @@ export async function runAudit(drv, R, opt = {}) {
         if (kind === "collect") { check(`Postage: ${t} › under the Collection filter, not All`, !c, c ? "shown in All" : ""); continue; }
         const want = O.postText(d), sub = p && p.note;
         check(`Postage: ${t} › card says "${want}"`, sub === want, `card says "${sub}"`);
-        if (allowance) check(`Postage: ${t} › card warns that postage isn't known`, !!c && /postage allowed for, not known/.test(c.text) && /Postage not known/.test(c.text), "");
+        if (allowance) check(`Postage: ${t} › card warns that postage isn't known`, !!c && /allowed/.test(c.text) && /Postage to you not known/.test(c.text), "");
       }
       await compareAll("Deals made by a real scan");
     });

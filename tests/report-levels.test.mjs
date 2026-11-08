@@ -60,4 +60,17 @@ t("workflow: emulator, emulator-app build and the report level use the same FULL
   assert.match(wf, /concurrency:\n  group: test-\$\{\{ github.ref \}\}\n  cancel-in-progress: true/, "superseded runs are still cancelled");
   assert.match(wf, /paths-ignore: \[".github\/phone-test\/\*\*", "docs\/\*\*", "\*\*.md"\]/);
 });
+t("workflow: Android 11 and 15 always run in the full compatibility matrix; the Capacitor 8 row only when that trial was ticked", () => {
+  const m = wf.match(/include: \$\{\{ fromJSON\(format\('\[\{0\}\{1\}\]', '([^']*)', \(([^)]*)\) && '([^']*)' \|\| ''\)\) \}\}/);
+  assert.ok(m, "matrix include expression found");
+  const [, base, cond, trialRow] = m;
+  assert.equal(cond, "github.event_name == 'workflow_dispatch' && inputs.cap8 && inputs.level != 'quick'", "same rule as the trial build");
+  assert.ok(wf.includes("if: " + cond), "the trial build job uses the identical rule");
+  const off = JSON.parse("[" + base + "]"), on = JSON.parse("[" + base + trialRow + "]");
+  assert.deepEqual(off.map((r) => r.label), ["Android 11", "Android 15"]);
+  assert.deepEqual(on.map((r) => r.label), ["Android 11", "Android 15", "Android 15 + Capacitor 8 trial"]);
+  assert.deepEqual(off.map((r) => [r.api, r.apk]), [[30, "flipscout-emulator-test-apk"], [35, "flipscout-emulator-test-apk"]], "normal rows unchanged");
+  assert.deepEqual([on[2].api, on[2].apk], [35, "flipscout-cap8-trial-apk"]);
+  assert.ok(!/- \{ label: "Android 15 \+ Capacitor 8 trial"/.test(wf), "no fixed trial row left");
+});
 console.log(`\n${n} checks passed`);

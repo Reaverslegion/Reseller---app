@@ -221,10 +221,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { label: "Android 11", api: 30, apk: flipscout-emulator-test-apk }
-          - { label: "Android 15", api: 35, apk: flipscout-emulator-test-apk }
-          - { label: "Android 15 + Capacitor 8 trial", api: 35, apk: flipscout-cap8-trial-apk }
+        # Android 11 and Android 15 always; the Capacitor 8 trial row only when that trial was ticked on a manual run
+        include: ${{ fromJSON(format('[{0}{1}]', '{"label":"Android 11","api":30,"apk":"flipscout-emulator-test-apk"},{"label":"Android 15","api":35,"apk":"flipscout-emulator-test-apk"}', (github.event_name == 'workflow_dispatch' && inputs.cap8 && inputs.level != 'quick') && ',{"label":"Android 15 + Capacitor 8 trial","api":35,"apk":"flipscout-cap8-trial-apk"}' || '')) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -21,6 +21,22 @@ Branch: `testing`. This entry documents the repository safety review and collabo
 - No production changes are authorized. No application code changes are included in this coordination setup.
 - Recommended next step: review and agree a safe release/rollback design, with owner approval before implementation.
 
+## 2026-11-08 — Claude — deployment safety lock released (PR #1)
+- Branch and starting commit: `main` at `f76fcd8597306190558d725ec892f72e86c0b268`; PR head `eaaf80e4cd4e15c11e87732e19f4f707ee46654d` (branch `claude/deployment-safety`).
+- Goal and owner approval: merge the 2-line deploy lock into `main` without a live redeploy. Owner explicitly approved "Option A" on 2026-11-08 at 07:37 UK, after ChatGPT's review.
+- Files changed: `.github/workflows/deploy-worker.yml` (+2 lines: comment + `if: github.ref == 'refs/heads/main'`). No other files.
+- Result: `main` is now `465d26b5fc8b77b8edda64779d141183cc3121a2`, a 2-parent merge (`f76fcd8` + `eaaf80e`) with `[skip ci]` in its message. It was a normal fast-forward push with no force. PR #1 automatically shows merged (07:37:39Z).
+- Tests and evidence (before the push): diff vs main = exactly the 2 lines, and the tree is identical to the PR head. `node tests/run-all.mjs` passed 17/17 files. `actionlint` 1.7.7 passed on all workflows.
+- Tests and evidence (after the push): the Actions runs API for `465d26b` shows 0 runs, and 0 runs were created after the push (re-checked at 07:40:01Z, about 2.5 min later: still 0). The latest `Deploy Scan worker` run is still 42389304827 (7 Nov, `f76fcd8`). The lock is present in `main`'s file.
+- Earlier the same day (owner-approved): locks were added to `test/ebay-ratelimit` (`b90ec87`) and `check/live-version` (`6f1b9b2`). The owner deleted `deploy/ebay-ratelimit` (`f841138`) and `hotfix/d1-query-main` (`71cd17e`) manually; both are contained in `main`. ChatGPT verified both.
+- Not verified by Claude: the actual Cloudflare deployment list for `flipscout-search` (no Cloudflare access). The owner should confirm the latest deployment is still from 7 Nov.
+- Issues / risks:
+  - Secrets are repo-wide (free plan: no branch protection or environment secrets on private repos).
+  - `build.yml` on `main` is unlocked: it produces a signed APK artifact from any branch it's manually run on, but deploys nothing.
+  - Direct pushes to `main` are not blocked by GitHub.
+- What remains: owner's Cloudflare check; ChatGPT's independent inspection of the result.
+- Suggested next action: (needs approval) lock `build.yml` on `main` to main/testing, as `testing` already does.
+
 ## Handover template
 ### YYYY-MM-DD — AI / task
 - Branch and starting commit:

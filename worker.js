@@ -64,7 +64,7 @@ async function getToken(env) {
     body: "grant_type=client_credentials&scope=" + encodeURIComponent("https://api.ebay.com/oauth/api_scope"),
   });
   if (!res.ok) throw new Error("eBay login failed (" + res.status + ")");
-  const d = await res.json();
+  const d = await timedBody(env, res.json());
   TOKEN = d.access_token;
   TOKEN_EXP = Date.now() + (d.expires_in - 300) * 1000;
   if (env.DB) { try { await kvSet(env, "token", { t: TOKEN, exp: TOKEN_EXP }); } catch (e) {} }
@@ -83,7 +83,7 @@ async function ebay(env, path) {
   CALLS++;
   if (r.status === 404) return { notFound: true };
   if (!r.ok) throw new Error("eBay request failed (" + r.status + ")");
-  return r.json();
+  return timedBody(env, r.json());
 }
 
 /* ---------------- database ---------------- */
@@ -796,7 +796,7 @@ async function getItemTrading(env, tok, id) {
   const body = `<?xml version="1.0" encoding="utf-8"?><GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents"><ItemID>${String(id).replace(/\D/g, "")}</ItemID><DetailLevel>ReturnAll</DetailLevel></GetItemRequest>`;
   const res = await xfetch(env, "https://api.ebay.com/ws/api.dll", { method: "POST", body, headers: { "X-EBAY-API-IAF-TOKEN": tok, "Content-Type": "text/xml",
     "X-EBAY-API-SITEID": "3", "X-EBAY-API-COMPATIBILITY-LEVEL": "1423", "X-EBAY-API-CALL-NAME": "GetItem" } });
-  const x = await res.text();
+  const x = await timedBody(env, res.text());
   if (/<ErrorCode>(?:21917053|931|932|21916984)<\/ErrorCode>/.test(x)) throw new Error("eBay token no longer accepted"); // expired or revoked
   if (!/<Ack>(?:Success|Warning)<\/Ack>/.test(x)) return { missing: true, err: xmlTag(x, "ErrorCode") };
   const st = xmlTag(x, "StartTime");
@@ -1197,6 +1197,12 @@ function scanScope(env, t0, lim) {
   const wrap = (st) => ({ __st: st, bind: (...a) => wrap(st.bind(...a)), run: async (...a) => { chk(); return st.run(...a); },
     all: async (...a) => { chk(); return st.all(...a); }, first: async (...a) => { chk(); return st.first(...a); }, raw: async (...a) => { chk(); return st.raw(...a); } });
   return { ...env, __scan: sc, DB: { prepare: (q) => wrap(raw.prepare(q)), batch: async (list) => { chk(); return raw.batch(list.map((x) => (x && x.__st) || x)); } } };
+}
+// reading an answer is covered by the same timeout (Cloudflare cancels a stalled body read when the signal fires);
+// this only gives that timeout the same clear wording as one before the headers arrive. Every other error is unchanged.
+async function timedBody(env, p) {
+  try { return await p; }
+  catch (e) { if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw new Error(`no answer within ${Math.round((((env && env.__scan) || {}).net || NET_TIMEOUT) / 1000)} seconds`); throw e; }
 }
 // every outside network call goes through here
 async function xfetch(env, url, opts = {}) {
@@ -1821,7 +1827,7 @@ async function fcmAccess(env) {
     body: "grant_type=" + encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer") + "&assertion=" + head + "." + body + "." + b64url(sig),
   });
   if (!r.ok) throw new Error("alert sign-in failed (" + r.status + ")");
-  const d = await r.json();
+  const d = await timedBody(env, r.json());
   const out = { t: d.access_token, project: sa.project_id, exp: Date.now() + (d.expires_in - 300) * 1000 };
   await kvSet(env, "fcmtok", out);
   return out;

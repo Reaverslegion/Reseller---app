@@ -1,5 +1,5 @@
 // Scan time limits on the PRIVATE TEST Scan service + fake eBay + throwaway database (9 Nov 2026):
-// stalled eBay answers, an exceeded budget, the hard stop, lock release, a safe retry, existing deals kept, and no
+// stalled eBay answers (no answer at all, or headers then a stalled body), an exceeded budget, the hard stop, lock release, a safe retry, existing deals kept, and no
 // overlapping scan while a slow one runs. Short limits are set through kv "scanLimits" (it can only shorten them).
 // Run: TEST_APP_KEY=... node tests/stage4/scan-time.mjs
 import fs from "node:fs";
@@ -38,6 +38,13 @@ try {
   add("…and reports the problem clearly", errs(st).some((e) => /no answer within/.test(e)), errs(st).slice(0, 2).join("; "));
   add("…and the deals already found are kept", JSON.stringify(await dealIds()) === JSON.stringify(have), `${(await dealIds()).length} deals (before ${have.length})`);
   add("…and the lock is released", await lockFree(), "");
+
+  // 1b. eBay sends its headers straight away but the rest of the answer never comes: reading the answer gives up too
+  await seed({ net: 1500, soft: 8000, hard: 12000 }); await mode("stall-body");
+  const sb = await timed(run); await mode("normal");
+  add("stalled answer body (headers arrive, the rest never does): the scan ends instead of waiting", sb.status === 200 && sb.ms < 12000 + 1500 + 5000, `answered ${sb.status} after ${(sb.ms / 1000).toFixed(1)} s`);
+  add("…and reports it as eBay not answering in time", errs(sb).some((e) => /no answer within/.test(e)), errs(sb).slice(0, 2).join("; "));
+  add("…and the deals already found are kept, and the lock is released", JSON.stringify(await dealIds()) === JSON.stringify(have) && (await lockFree()), `${(await dealIds()).length} deals (before ${have.length})`);
 
   // 2. the budget runs out: no new eBay call starts, the scan is marked incomplete, the rest waits for the next scan
   await seed({ net: 3000, soft: 600, hard: 15000 }); await mode("slow"); const c0 = await calls();

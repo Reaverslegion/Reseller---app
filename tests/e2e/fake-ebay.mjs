@@ -34,7 +34,7 @@ http.createServer((req, res) => {
     log({ port: PORT, method: req.method, path: u.pathname, query: u.search });
     if (u.pathname === "/__fake/items" && req.method === "POST") { for (const it of JSON.parse(body || "[]")) items.set(String(it.legacyItemId), it); return send(res, 200, { ok: true, n: items.size }); }
     if (u.pathname === "/__fake/items" && req.method === "DELETE") { items.clear(); return send(res, 200, { ok: true }); }
-    // TEST CONTROL: make the fake eBay misbehave for its Browse API answers (POST /__fake/mode {"mode": "429"|"500"|"garbage"|"slow"|"stall"|"normal"})
+    // TEST CONTROL: make the fake eBay misbehave for its Browse API answers (POST /__fake/mode {"mode": "429"|"500"|"garbage"|"slow"|"stall"|"stall-body"|"normal"})
     if (u.pathname === "/__fake/mode" && req.method === "POST") { mode = (JSON.parse(body || "{}").mode) || "normal"; return send(res, 200, { mode }); }
     if (mode !== "normal" && u.pathname.includes("/buy/browse/")) {
       if (mode === "429") { res.writeHead(429, { "content-type": "application/json", "retry-after": "60" }); return res.end(JSON.stringify({ errors: [{ errorId: 2001, message: "Too many requests (fake eBay)" }] })); }
@@ -42,6 +42,8 @@ http.createServer((req, res) => {
       if (mode === "garbage") { res.writeHead(200, { "content-type": "application/json" }); return res.end("{\"itemSummaries\": [{\"title\": "); }
       if (mode === "slow") await new Promise((r) => setTimeout(r, 500)); // answers normally, half a second late (long scans)
       if (mode === "stall") await new Promise((r) => setTimeout(r, 120000)); // a stuck connection: no answer for 2 minutes
+      // headers and the start of the answer arrive at once, then the rest never comes (for 2 minutes)
+      if (mode === "stall-body") { res.writeHead(200, { "content-type": "application/json" }); res.write('{"total": 1, "itemSummaries": [{"title": "'); const t = setTimeout(() => res.end(), 120000); res.on("close", () => clearTimeout(t)); return; }
     }
     if (u.pathname.includes("/oauth2/token") || u.pathname.includes("/identity/v1/oauth2")) return send(res, 200, { access_token: "fake-token", expires_in: 7200, token_type: "Bearer" });
     if (u.pathname === "/__fake/search" && req.method === "POST") { search = JSON.parse(body || "[]"); for (const it of search) items.set(String(it.legacyItemId), it); return send(res, 200, { ok: true, n: search.length }); }

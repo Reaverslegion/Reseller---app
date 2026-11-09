@@ -1,0 +1,5 @@
+{
+  "_about": "Capacitor upgrade trials (test pipeline only, never the live build). Exact versions per trial: the core packages and the latest plugin release of the same major, read from the official ionic-team/capacitor and capacitor-plugins release tags on 9 Nov 2026.",
+  "7.6.10": { "@capacitor/core": "7.6.10", "@capacitor/cli": "7.6.10", "@capacitor/android": "7.6.10", "@capacitor/app": "7.1.2", "@capacitor/push-notifications": "7.0.7", "@capacitor/app-launcher": "7.0.4" },
+  "8.6.0": { "@capacitor/core": "8.6.0", "@capacitor/cli": "8.6.0", "@capacitor/android": "8.6.0", "@capacitor/app": "8.1.2", "@capacitor/push-notifications": "8.1.3", "@capacitor/app-launcher": "8.0.1" }
+}

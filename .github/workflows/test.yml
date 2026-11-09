@@ -5,7 +5,9 @@
 #  - FULL, on every request to merge into main (whatever changed, back end included) and by default when run by hand
 #    (Actions > Test changes > Run workflow): everything, including the emulator and the other Android versions.
 #    Run FULL by hand before any test app is built for the owner's phone.
-#  The Capacitor 8 trial only runs when ticked on a manual run.
+#  - TRIAL (manual only): the fast checks plus a Capacitor upgrade trial (no main emulator suites). A trial
+#    (Capacitor 7.6.10, 8.6.0 or both; exact versions in tests/ci/cap-trials.json) only runs when chosen on a
+#    manual run at the "trial" or "full" level: its own build, security check and Android 11 / Android 15 checks.
 # It never deploys anything, never touches the live Scan service or live database, and uses no real keys:
 # the Scan service is tested as a private local copy with a throwaway database and a fake eBay.
 # Results: the run's Summary page shows the testing report (PASS / FAIL / NOT TESTED / PARTIALLY TESTED).
@@ -23,14 +25,15 @@ on:
         description: "Emulator part to run: all, journeys, integrity (Stage 3), stage4, or none (skip the main emulator suites)"
         default: all
       level:
-        description: "full = everything incl. the emulator (default); quick = the fast checks only"
+        description: "full = everything incl. the emulator (default); quick = the fast checks only; trial = fast checks + the Capacitor trial below"
         default: full
         type: choice
-        options: [full, quick]
-      cap8:
-        description: "Also run the Capacitor 8 trial (an upgrade experiment)"
-        default: false
-        type: boolean
+        options: [full, quick, trial]
+      cap_trial:
+        description: "Capacitor upgrade trial (an experiment, never the live build)"
+        default: none
+        type: choice
+        options: [none, 7.6.10, 8.6.0, both]
 permissions:
   contents: read
 concurrency:
@@ -66,6 +69,9 @@ jobs:
         with:
           node-version: 22
       - run: node tests/ci/supply-chain.mjs
+        env:
+          # on a Capacitor trial run, also check the trial versions' packages for known vulnerabilities
+          CAP_TRIALS: ${{ (github.event_name == 'workflow_dispatch' && inputs.cap_trial != 'none' && inputs.level != 'quick') && (inputs.cap_trial == 'both' && '7.6.10 8.6.0' || inputs.cap_trial) || '' }}
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -172,13 +178,17 @@ jobs:
           retention-days: 7
 
   build-cap8:
-    # TRIAL ONLY: builds the emulator test app with Capacitor 8 to see what the upgrade would change (never the live build)
-    name: Capacitor 8 trial build
-    # manual only: tick "Also run the Capacitor 8 trial" on a full manual run
-    if: github.event_name == 'workflow_dispatch' && inputs.cap8 && inputs.level != 'quick'
+    # TRIAL ONLY: builds the emulator test app with a newer Capacitor to see what the upgrade would change (never the live build)
+    name: Capacitor ${{ matrix.v }} trial build
+    # manual only: choose a Capacitor trial on a manual run at the "trial" or "full" level
+    if: (github.event_name == 'workflow_dispatch' && inputs.cap_trial != 'none' && inputs.level != 'quick')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        v: ${{ fromJSON(inputs.cap_trial == 'both' && '["7.6.10","8.6.0"]' || format('["{0}"]', inputs.cap_trial)) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -188,10 +198,10 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-      - name: Build with Capacitor 8 (trial)
+      - name: Build with Capacitor ${{ matrix.v }} (trial)
         env:
           RUN_NO: ${{ github.run_number }}
-          CAP_TRIAL: "8"
+          CAP_TRIAL: ${{ matrix.v }}
           PRE_BUILD_HOOK: bash tests/android/prepare-test-app.sh android
         run: |
           pip install -q pyyaml
@@ -203,32 +213,32 @@ jobs:
         if: always()
         run: |
           mkdir -p results
-          if [ -s FlipScout.apk ]; then S=PASS; D="built with Capacitor 8 ($(grep -h -oE 'targetSdkVersion = [0-9]+' android/variables.gradle 2>/dev/null))"; else S=FAIL; D="$(grep -iE 'error|failed' build.out 2>/dev/null | head -3 | tr '"' ' ' | tr '\n' ' ' | cut -c1-250)"; fi
-          echo "[{\"area\":\"Capacitor 8 trial\",\"name\":\"the app builds with Capacitor 8 using the live build steps\",\"status\":\"$S\",\"detail\":\"$D\"}]" > results/cap8-build.json
+          if [ -s FlipScout.apk ]; then S=PASS; D="built with Capacitor ${{ matrix.v }} ($(grep -h -oE 'targetSdkVersion = [0-9]+' android/variables.gradle 2>/dev/null))"; else S=FAIL; D="$(grep -iE 'error|failed' build.out 2>/dev/null | head -3 | tr '"' ' ' | tr '\n' ' ' | cut -c1-250)"; fi
+          echo "[{\"area\":\"Capacitor ${{ matrix.v }} trial\",\"name\":\"the app builds with Capacitor ${{ matrix.v }} using the live build steps\",\"status\":\"$S\",\"detail\":\"$D\"}]" > results/cap-trial-build.json
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: results-cap8-build
+          name: results-cap-trial-build-${{ matrix.v }}
           path: results/
           retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
-          name: flipscout-cap8-trial-apk
+          name: flipscout-cap-trial-${{ matrix.v }}-apk
           path: FlipScout.apk
           retention-days: 7
 
   compat:
     name: Other Android versions
     needs: [build-e2e, build-cap8]
-    if: always() && needs.build-e2e.result == 'success'
-    # (build-e2e only runs at the FULL level, so this only runs then too)
+    # FULL: when the emulator test app built; TRIAL: when the trial builds ran (a trial app that didn't build shows NOT TESTED)
+    if: always() && (needs.build-e2e.result == 'success' || needs.build-cap8.result == 'success' || needs.build-cap8.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        # Android 11 and Android 15 always; the Capacitor 8 trial row only when that trial was ticked on a manual run
-        include: ${{ fromJSON(format('[{0}{1}]', '{"label":"Android 11","api":30,"apk":"flipscout-emulator-test-apk"},{"label":"Android 15","api":35,"apk":"flipscout-emulator-test-apk"}', (github.event_name == 'workflow_dispatch' && inputs.cap8 && inputs.level != 'quick') && ',{"label":"Android 15 + Capacitor 8 trial","api":35,"apk":"flipscout-cap8-trial-apk"}' || '')) }}
+        # FULL: Android 11 and Android 15 with the normal test app; TRIAL: Android 11 and Android 15 with each chosen trial app
+        include: ${{ fromJSON(format('[{0}{1}{2}]', (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.level == 'full')) && '{"label":"Android 11","api":30,"apk":"flipscout-emulator-test-apk"},{"label":"Android 15","api":35,"apk":"flipscout-emulator-test-apk"}' || '', ((github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.level == 'full')) && (github.event_name == 'workflow_dispatch' && inputs.cap_trial != 'none' && inputs.level != 'quick')) && ',' || '', (github.event_name == 'workflow_dispatch' && inputs.cap_trial != 'none' && inputs.level != 'quick') && (inputs.cap_trial == 'both' && '{"label":"Android 11 + Capacitor 7.6.10 trial","api":30,"apk":"flipscout-cap-trial-7.6.10-apk"},{"label":"Android 15 + Capacitor 7.6.10 trial","api":35,"apk":"flipscout-cap-trial-7.6.10-apk"},{"label":"Android 11 + Capacitor 8.6.0 trial","api":30,"apk":"flipscout-cap-trial-8.6.0-apk"},{"label":"Android 15 + Capacitor 8.6.0 trial","api":35,"apk":"flipscout-cap-trial-8.6.0-apk"}' || inputs.cap_trial == '7.6.10' && '{"label":"Android 11 + Capacitor 7.6.10 trial","api":30,"apk":"flipscout-cap-trial-7.6.10-apk"},{"label":"Android 15 + Capacitor 7.6.10 trial","api":35,"apk":"flipscout-cap-trial-7.6.10-apk"}' || '{"label":"Android 11 + Capacitor 8.6.0 trial","api":30,"apk":"flipscout-cap-trial-8.6.0-apk"},{"label":"Android 15 + Capacitor 8.6.0 trial","api":35,"apk":"flipscout-cap-trial-8.6.0-apk"}') || '')) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -321,7 +331,7 @@ jobs:
 
   build-e2e:
     name: Build emulator test app
-    if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.level != 'quick'))
+    if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.level == 'full'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -351,7 +361,7 @@ jobs:
   emulator:
     name: Real app on Android emulator
     needs: [build-e2e, build]
-    if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.level != 'quick'))
+    if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.level == 'full'))
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -437,8 +447,8 @@ jobs:
           node-version: 22
       - run: node tests/ci/report.mjs results
         env:
-          TEST_LEVEL: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.level != 'quick')) && 'full' || 'quick' }}
-          JOB_RESULTS: '{"Unit tests":"${{ needs.unit.result }}","Dependencies":"${{ needs.supply.result }}","Build":"${{ needs.build.result }}","Test Scan service":"${{ needs.service.result }}","Android emulator":"${{ needs.emulator.result }}","Capacitor 8 trial":"${{ needs.build-cap8.result }}","Other Android versions":"${{ needs.compat.result }}","Phone test build":"${{ needs.build-phone.result }}","Emulator test app build":"${{ needs.build-e2e.result }}"}'
+          TEST_LEVEL: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.level == 'full')) && 'full' || 'quick' }}
+          JOB_RESULTS: '{"Unit tests":"${{ needs.unit.result }}","Dependencies":"${{ needs.supply.result }}","Build":"${{ needs.build.result }}","Test Scan service":"${{ needs.service.result }}","Android emulator":"${{ needs.emulator.result }}","Capacitor trial":"${{ needs.build-cap8.result }}","Other Android versions":"${{ needs.compat.result }}","Phone test build":"${{ needs.build-phone.result }}","Emulator test app build":"${{ needs.build-e2e.result }}"}'
       - if: always()
         uses: actions/upload-artifact@v4
         with:

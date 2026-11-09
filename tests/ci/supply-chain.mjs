@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import { execSync } from "node:child_process";
 const rows = [], AREA = "Dependencies";
-const add = (name, status, detail = "") => { rows.push({ area: AREA, name, status, detail: String(detail).slice(0, 400) }); console.log(status.padEnd(17), name, detail ? "— " + String(detail).slice(0, 300) : ""); };
+const add = (name, status, detail = "", area = AREA) => { rows.push({ area, name, status, detail: String(detail).slice(0, 400) }); console.log(status.padEnd(17), name, detail ? "— " + String(detail).slice(0, 300) : ""); };
 const run = (c, o = {}) => execSync(c, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 << 20, ...o });
 const tmp = fs.mkdtempSync("/tmp/sc-");
 
@@ -27,8 +27,15 @@ try {
 const wf = (f) => fs.readFileSync(`.github/workflows/${f}`, "utf8");
 const pkgs = (wf("build.yml").match(/npm install ([^\n]+)/) || [, ""])[1].trim().split(/\s+/).filter((p) => /^@?[a-z]/.test(p));
 const sets = [["phone build (build.yml)", pkgs], ["Scan service deploy (deploy-worker.yml)", [(wf("deploy-worker.yml").match(/npm i -g (wrangler@[^\s]+)/) || [, "wrangler@3"])[1]]]];
-for (const [label, list] of sets) {
-  if (!list.length) { add(`${label}: packages found`, "FAIL", "couldn't read the install line"); continue; }
+// Capacitor upgrade trials (manual runs only): the same phone build packages with that trial's exact versions
+const TRIALS = JSON.parse(fs.readFileSync(new URL("./cap-trials.json", import.meta.url), "utf8"));
+for (const v of (process.env.CAP_TRIALS || "").split(/\s+/).filter(Boolean)) {
+  const ar = `Dependencies (Capacitor ${v} trial)`, p = TRIALS[v];
+  if (!p) { add(`Capacitor ${v} trial: versions listed`, "FAIL", "not in tests/ci/cap-trials.json", ar); continue; }
+  sets.push([`phone build with Capacitor ${v} (trial)`, pkgs.map((x) => { const n = x.replace(/@[^@/]+$/, ""); return p[n] ? `${n}@${p[n]}` : x; }), ar]);
+}
+for (const [label, list, area = AREA] of sets) {
+  if (!list.length) { add(`${label}: packages found`, "FAIL", "couldn't read the install line", area); continue; }
   const d = fs.mkdtempSync(`${tmp}/np-`);
   try {
     run(`npm init -y`, { cwd: d }); run(`npm install --ignore-scripts --no-fund --no-audit ${list.join(" ")}`, { cwd: d, timeout: 600000 });
@@ -36,7 +43,7 @@ for (const [label, list] of sets) {
     const v = (audit.metadata && audit.metadata.vulnerabilities) || {}, total = Object.values(v).reduce((a, b) => a + b, 0);
     const names = Object.entries(audit.vulnerabilities || {}).map(([n, x]) => `${n} (${x.severity})`);
     add(`${label}: known vulnerabilities in ${list.length} packages and their ${(audit.metadata && audit.metadata.dependencies && audit.metadata.dependencies.total) || "?"} sub-packages`,
-      v.critical || v.high ? "FAIL" : total ? "PARTIALLY TESTED" : "PASS", total ? `${v.critical || 0} critical, ${v.high || 0} high, ${v.moderate || 0} moderate, ${v.low || 0} low: ${names.slice(0, 8).join(", ")}` : "npm audit found none");
+      v.critical || v.high ? "FAIL" : total ? "PARTIALLY TESTED" : "PASS", total ? `${v.critical || 0} critical, ${v.high || 0} high, ${v.moderate || 0} moderate, ${v.low || 0} low: ${names.slice(0, 8).join(", ")}` : "npm audit found none", area);
     // each problem in full in the log: which advisory, which versions, and whether a fix exists
     for (const [nm, x] of Object.entries(audit.vulnerabilities || {})) console.log(`   ${nm} (${x.severity}, ${x.isDirect ? "installed directly" : "inside " + (x.effects || []).join(", ")}): ` +
       (x.via || []).map((v) => (typeof v === "string" ? "via " + v : `${v.title} [${v.url}] affects ${v.range}`)).join(" | ") + ` · fix: ${x.fixAvailable === true ? "update available" : x.fixAvailable ? `${x.fixAvailable.name}@${x.fixAvailable.version}${x.fixAvailable.isSemVerMajor ? " (major upgrade)" : ""}` : "none"}`);
@@ -45,8 +52,8 @@ for (const [label, list] of sets) {
     console.log(`   resolved today: ${resolved.join(" ")}`);
     const floating = list.filter((p) => !/@\d+\.\d+\.\d+$/.test(p));
     add(`${label}: every package pinned to an exact version`, floating.length ? "PARTIALLY TESTED" : "PASS",
-      floating.length ? `${floating.length} follow the newest release automatically (${floating.join(", ")}); today they resolve to ${resolved.join(", ")}` : "");
-  } catch (e) { add(`${label}: npm audit`, "NOT TESTED", String(e.stderr || e.message).slice(0, 300)); }
+      floating.length ? `${floating.length} follow the newest release automatically (${floating.join(", ")}); today they resolve to ${resolved.join(", ")}` : "", area);
+  } catch (e) { add(`${label}: npm audit`, "NOT TESTED", String(e.stderr || e.message).slice(0, 300), area); }
 }
 
 // 3. GitHub Actions: who wrote each step, and is it pinned to a fixed commit

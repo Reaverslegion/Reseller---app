@@ -22,7 +22,7 @@ const QUICK = process.env.TEST_LEVEL === "quick", QUICK_ONLY_SKIPS = ["Android e
 // any job that didn't succeed is a FAIL in the report, even if it recorded some passing rows before it broke (a crash part-way
 // must never look like a pass). "skipped" only counts as NOT TESTED when it was skipped on purpose (e.g. a trial switched off).
 const FOLDER = { "Unit tests": "results-unit", "Dependencies": "results-supply", "Build": "results-build", "Test Scan service": "results-service",
-  "Android emulator": "results-android", "Capacitor 8 trial": "results-cap8-build", "Other Android versions": "results-compat", "Phone test build": "results-phone-build", "Emulator test app build": "-" };
+  "Android emulator": "results-android", "Capacitor trial": "results-cap-trial-build", "Other Android versions": "results-compat", "Phone test build": "results-phone-build", "Emulator test app build": "-" };
 for (const [a, res] of Object.entries(jobs)) if (res !== "success") {
   const f = FOLDER[a] || "", recorded = rows.some((r) => f && String(r._from || "").startsWith(f) && r.status === "FAIL");
   if (res === "failure" && recorded) continue; // its own FAIL rows already say what failed (no double counting)

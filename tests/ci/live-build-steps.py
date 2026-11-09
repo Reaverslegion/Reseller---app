@@ -39,11 +39,19 @@ for s in steps:
             print("PHONE TEST: app named 'FlipScout TEST', package com.reaverslegion.flipscout.test", flush=True)
         if os.environ.get("PHONE_TEST") and s.get("name") == "Notifications" and os.path.exists("google-services.json"):
             os.remove("google-services.json"); print("PHONE TEST: Firebase file left out (alerts off in the test app)", flush=True)
-        # TRIAL ONLY (never the live build): CAP_TRIAL=8 builds with Capacitor 8 to see what an upgrade would change
+        # TRIAL ONLY (never the live build): CAP_TRIAL=<version> builds with that Capacitor version to see what an
+        # upgrade would change. Exact versions of every Capacitor package come from tests/ci/cap-trials.json.
         if os.environ.get("CAP_TRIAL") and s.get("name") == "Prepare app":
             v = os.environ["CAP_TRIAL"]
-            script, k = re.subn(r"@capacitor/([a-z-]+)@[0-9.]+", lambda m: f"@capacitor/{m.group(1)}@{v}", script)
-            print(f"TRIAL: {k} Capacitor packages switched to version {v}", flush=True)
+            pins = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "cap-trials.json"))).get(v)
+            if not pins: sys.exit(f"TRIAL: Capacitor {v} is not listed in tests/ci/cap-trials.json")
+            def pin(m):
+                name = "@capacitor/" + m.group(1)
+                if name not in pins: sys.exit(f"TRIAL: no {v} version listed for {name}")
+                return f"{name}@{pins[name]}"
+            script, k = re.subn(r"@capacitor/([a-z-]+)@[0-9.]+", pin, script)
+            if k != len(pins): sys.exit(f"TRIAL: expected {len(pins)} Capacitor packages in build.yml, found {k}")
+            print(f"TRIAL: {k} Capacitor packages switched to Capacitor {v} versions: {' '.join(n + '@' + x for n, x in pins.items())}", flush=True)
         if "${{" in script:
             sys.exit(f"Step {s['name']} uses a GitHub value this script doesn't fill in")
         print(f"::group::{s['name']}", flush=True)

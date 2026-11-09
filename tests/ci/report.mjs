@@ -18,6 +18,7 @@ const AREAS = ["Unit tests", "Build", "Test Scan service", "Android emulator", "
   "Dependencies", "Phone app build", "Security", "Monitoring", "Accessibility", "Performance", "Device conditions", "Reliability", "Backup and restore", "Release build", "Compatibility: Android 11", "Compatibility: Android 15"];
 // a job that failed before it could record any results is a FAIL, never "not tested"
 let jobs = {}; try { jobs = JSON.parse(process.env.JOB_RESULTS || "{}"); } catch (e) {}
+const QUICK = process.env.TEST_LEVEL === "quick", QUICK_ONLY_SKIPS = ["Android emulator", "Other Android versions", "Emulator test app build"];
 // any job that didn't succeed is a FAIL in the report, even if it recorded some passing rows before it broke (a crash part-way
 // must never look like a pass). "skipped" only counts as NOT TESTED when it was skipped on purpose (e.g. a trial switched off).
 const FOLDER = { "Unit tests": "results-unit", "Dependencies": "results-supply", "Build": "results-build", "Test Scan service": "results-service",
@@ -25,14 +26,19 @@ const FOLDER = { "Unit tests": "results-unit", "Dependencies": "results-supply",
 for (const [a, res] of Object.entries(jobs)) if (res !== "success") {
   const f = FOLDER[a] || "", recorded = rows.some((r) => f && String(r._from || "").startsWith(f) && r.status === "FAIL");
   if (res === "failure" && recorded) continue; // its own FAIL rows already say what failed (no double counting)
-  const onPurpose = res === "skipped" && /trial/i.test(a);
-  rows.push({ area: a, name: res === "skipped" ? "the job didn't run" : "the job didn't finish successfully", status: onPurpose ? "NOT TESTED" : "FAIL", detail: "job result: " + res + (res === "skipped" && !onPurpose ? " (a job it depends on failed)" : "") }); }
+  // QUICK level (uploads to a test branch): the emulator jobs are skipped by design. They are NOT TESTED, never PASS,
+  // and only these jobs, only when skipped: a failure or a skip of anything else is still a FAIL.
+  const quickSkip = QUICK && res === "skipped" && QUICK_ONLY_SKIPS.includes(a);
+  const onPurpose = res === "skipped" && (/trial/i.test(a) || quickSkip);
+  rows.push({ area: a, name: res === "skipped" ? "the job didn't run" : "the job didn't finish successfully", status: onPurpose ? "NOT TESTED" : "FAIL",
+    detail: quickSkip ? "quick check on upload: the full suite runs on every request to merge into main, and when run by hand (Actions > Test changes > Run workflow)" : "job result: " + res + (res === "skipped" && !onPurpose ? " (a job it depends on failed)" : "") }); }
 for (const a of AREAS) if (!rows.some((r) => r.area === a)) rows.push({ area: a, name: "(not set up yet, or its job didn't run)", status: "NOT TESTED" });
 
 for (const r of rows) if (/trial/i.test(r.area) && r.status === "FAIL") { r.status = "PARTIALLY TESTED"; r.detail = "TRIAL ONLY (not your app yet): " + (r.detail || ""); }
 const icon = { PASS: "✅ PASS", FAIL: "❌ FAIL", "NOT TESTED": "⬜ NOT TESTED", "PARTIALLY TESTED": "🟨 PARTIALLY TESTED" };
 const count = (s) => rows.filter((r) => r.status === s).length;
 let md = `# FlipScout testing report\n\n`;
+if (QUICK) md += `> **Quick check only.** The emulator suites did not run on this upload (shown as NOT TESTED). The full suite runs on every request to merge into main, and when run by hand.\n\n`;
 md += `Branch **${process.env.GITHUB_REF_NAME || "?"}**, version ${String(process.env.GITHUB_SHA || "").slice(0, 7)}, run ${process.env.GITHUB_RUN_NUMBER || "?"}\n\n`;
 md += `**${count("PASS")} passed · ${count("FAIL")} failed · ${count("PARTIALLY TESTED")} partly tested · ${count("NOT TESTED")} not tested**\n\n`;
 md += `| Area | Check | Result | Details |\n|---|---|---|---|\n`;

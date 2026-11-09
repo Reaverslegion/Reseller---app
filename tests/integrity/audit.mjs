@@ -6,6 +6,7 @@ import fs from "node:fs";
 import * as O from "./oracle.mjs";
 import * as DS from "./datasets.mjs";
 import * as F from "./scan-flow.mjs";
+import { compareCards, describeDiffs } from "./card-compare.mjs";
 
 const AREA = "Deals: app vs database", DAY = 864e5;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -283,9 +284,10 @@ export async function runAudit(drv, R, opt = {}) {
       check("Hide › the deal is still in the database (hiding only affects this phone)", (await live()).some((d) => d.id === hid.id), ""); snap = st2; });
     await step("close and reopen the app", async () => { await relaunch(); const st = await read();
       check("Reopen › the hidden deal stays hidden", !matchCards(st.cards, MIX).shownIds.has(hid.id), "");
-      // the first line of a card ("listed 5 min ago", "2h 3m left") changes with time, so it's left out
-      const k = (c) => c.aria + "|" + c.text.split("\n").slice(1).join("\n"), a = snap.cards.map(k), b = st.cards.map(k), diff = a.filter((x, i) => b[i] !== x).length;
-      check("Reopen › exactly the same deals, in the same order, with the same values", a.length === b.length && !diff, `${a.length} before, ${b.length} after, ${diff} cards differ`); });
+      // only the time labels ("5 min ago", "2h 3m left"…) are ignored: they change every minute (tests/integrity/card-compare.mjs)
+      const cmp = compareCards(snap.cards, st.cards);
+      if (!cmp.same) console.log("REOPEN DIFFS (full text):", JSON.stringify(cmp.diffs.slice(0, 5)));
+      check("Reopen › exactly the same deals, in the same order, with the same values", cmp.same, `${snap.cards.length} before, ${st.cards.length} after, ${cmp.diffs.length} cards differ${cmp.diffs.length ? ": " + describeDiffs(cmp) : ""}`); });
     const upd = MIX[5], del = MIX[6], exp = MIX[7], ren = MIX[8], add = DS.deal(819999999999, 3, { title: "Added after first load #819999999999" });
     await step("database changed: 1 new price, 1 deleted, 1 expired, 1 renamed, 1 added; app reopened", async () => {
       const nu = { ...upd, price: Math.round((upd.price - 10) * 100) / 100 }; nu.cost = Math.round((nu.price + nu.ship + O.buyerFee(nu.price)) * 100) / 100; nu.profit = Math.round((nu.med - 5.99 - nu.cost) * 100) / 100;

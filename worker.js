@@ -55,7 +55,7 @@ async function getToken(env) {
       if (t && t.exp > Date.now()) { TOKEN = t.t; TOKEN_EXP = t.exp; return TOKEN; }
     } catch (e) {}
   }
-  const res = await fetch("https://api.ebay.com/identity/v1/oauth2/token", {
+  const res = await xfetch(env, "https://api.ebay.com/identity/v1/oauth2/token", {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -64,7 +64,7 @@ async function getToken(env) {
     body: "grant_type=client_credentials&scope=" + encodeURIComponent("https://api.ebay.com/oauth/api_scope"),
   });
   if (!res.ok) throw new Error("eBay login failed (" + res.status + ")");
-  const d = await res.json();
+  const d = await timedBody(env, res.json());
   TOKEN = d.access_token;
   TOKEN_EXP = Date.now() + (d.expires_in - 300) * 1000;
   if (env.DB) { try { await kvSet(env, "token", { t: TOKEN, exp: TOKEN_EXP }); } catch (e) {} }
@@ -72,17 +72,18 @@ async function getToken(env) {
 }
 async function ebay(env, path) {
   const token = await getToken(env);
-  CALLS++;
-  const r = await fetch("https://api.ebay.com" + path, {
+  // counted only if it really goes to eBay (a call the scan's time limits refused never leaves the Scan service)
+  let r; try { r = await xfetch(env, "https://api.ebay.com" + path, {
     headers: {
       Authorization: "Bearer " + token,
       "X-EBAY-C-MARKETPLACE-ID": "EBAY_GB",
       "X-EBAY-C-ENDUSERCTX": "contextualLocation=country=GB",
     },
-  });
+  }); } catch (e) { if (!e.scanBudget && !e.scanStop) CALLS++; throw e; }
+  CALLS++;
   if (r.status === 404) return { notFound: true };
   if (!r.ok) throw new Error("eBay request failed (" + r.status + ")");
-  return r.json();
+  return timedBody(env, r.json());
 }
 
 /* ---------------- database ---------------- */
@@ -765,7 +766,7 @@ const GI_PER_SCAN = 25, GI_DAILY = 4000; // Trading API calls: well under eBay's
 const ebayConnectUrl = (env) => "https://auth.ebay.com/oauth2/authorize?client_id=" + encodeURIComponent(env.EBAY_ID) + "&response_type=code&redirect_uri=" +
   encodeURIComponent(RUNAME) + "&scope=" + encodeURIComponent(USER_SCOPE);
 async function ebayUserTokenCall(env, body) {
-  const res = await fetch("https://api.ebay.com/identity/v1/oauth2/token", { method: "POST", body,
+  const res = await xfetch(env, "https://api.ebay.com/identity/v1/oauth2/token", { method: "POST", body,
     headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: "Basic " + btoa(env.EBAY_ID + ":" + env.EBAY_SECRET) } });
   const d = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error("eBay sign-in refused (" + res.status + "): " + String(d.error_description || d.error || "").slice(0, 120));
@@ -793,9 +794,9 @@ async function ebayUserToken(env) {
 const xmlTag = (x, t) => { const m = x.match(new RegExp("<" + t + ">([^<]*)</" + t + ">")); return m ? m[1] : null; };
 async function getItemTrading(env, tok, id) {
   const body = `<?xml version="1.0" encoding="utf-8"?><GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents"><ItemID>${String(id).replace(/\D/g, "")}</ItemID><DetailLevel>ReturnAll</DetailLevel></GetItemRequest>`;
-  const res = await fetch("https://api.ebay.com/ws/api.dll", { method: "POST", body, headers: { "X-EBAY-API-IAF-TOKEN": tok, "Content-Type": "text/xml",
+  const res = await xfetch(env, "https://api.ebay.com/ws/api.dll", { method: "POST", body, headers: { "X-EBAY-API-IAF-TOKEN": tok, "Content-Type": "text/xml",
     "X-EBAY-API-SITEID": "3", "X-EBAY-API-COMPATIBILITY-LEVEL": "1423", "X-EBAY-API-CALL-NAME": "GetItem" } });
-  const x = await res.text();
+  const x = await timedBody(env, res.text());
   if (/<ErrorCode>(?:21917053|931|932|21916984)<\/ErrorCode>/.test(x)) throw new Error("eBay token no longer accepted"); // expired or revoked
   if (!/<Ack>(?:Success|Warning)<\/Ack>/.test(x)) return { missing: true, err: xmlTag(x, "ErrorCode") };
   const st = xmlTag(x, "StartTime");
@@ -1162,6 +1163,58 @@ function toListing(it, c, type) {
     ...(() => { const g = groupOf(it, c.id, c.name, bucket), w = groupOf(it, c.id, c.name, "used"); return { pkey: g ? g.key : null, matchLabel: g ? g.label : "", matchQ: g ? g.match : 0, workKey: w ? w.key : null, workQ: w ? w.match : 0 }; })(),
   };
 }
+// ONE SCAN AT A TIME (9 Nov 2026): manual + manual, manual + background and background + background used to be able to
+// run together (each read "when was the last scan?" before the other wrote it), doubling eBay calls. A scan now has to
+// claim a lease first, in ONE database statement (the row is only written if no unexpired lease is there), so only one
+// request can win. The lease is given back when the scan ends; if a scan is cut off, it runs out on its own after
+// SCAN_LEASE (longer than Cloudflare lets a scheduled job run), so it can never block scans for ever.
+const SCAN_LEASE = 15 * 60000;
+async function scanClaim(env, now) {
+  const until = String(now + SCAN_LEASE + Math.random()); // unique, so only the holder can give it back
+  const r = await env.DB.prepare("INSERT INTO kv(k,v) VALUES('scanLock',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v WHERE CAST(kv.v AS REAL) < ?").bind(until, now).run();
+  return r && r.meta && r.meta.changes === 1 ? until : null;
+}
+async function scanRelease(env, until) { try { await env.DB.prepare("UPDATE kv SET v='0' WHERE k='scanLock' AND v=?").bind(until).run(); } catch (e) {} }
+
+// TIME LIMITS (9 Nov 2026), so a scan always ends well inside its 15-minute lease, even if eBay stops answering:
+//  - every outside network call gives up after NET_TIMEOUT (eBay, eBay sign-in, Google alerts)
+//  - inside a scan, no new network call starts after SCAN_SOFT (the scan saves what it has and says it's incomplete)
+//  - after SCAN_HARD, no database query or network call runs at all inside that scan
+// Worst case: SCAN_HARD + one call already running (Cloudflare stops a database query after 30 s; ours after 20 s)
+// + a little processing = about 11 minutes, leaving room for clock differences before the lease runs out.
+// kv "scanLimits" can make these shorter (used by the tests), never longer.
+const NET_TIMEOUT = 20000, SCAN_SOFT = 8 * 60000, SCAN_HARD = 10 * 60000;
+function scanLimits(v) {
+  const pick = (x, d) => (Number.isFinite(+x) && +x > 0 ? Math.min(+x, d) : d), o = v || {};
+  const hard = pick(o.hard, SCAN_HARD);
+  return { soft: Math.min(pick(o.soft, SCAN_SOFT), hard), hard, net: pick(o.net, NET_TIMEOUT) };
+}
+const scanErr = (msg, flag) => Object.assign(new Error(msg), { [flag]: true });
+// the env a scan runs with: the same bindings, but its database refuses every query once the hard stop has passed
+function scanScope(env, t0, lim) {
+  const sc = { soft: t0 + lim.soft, hard: t0 + lim.hard, net: lim.net, budget: false }, raw = env.DB;
+  const chk = () => { if (Date.now() > sc.hard) throw scanErr("stopped at the scan's safety limit", "scanStop"); };
+  const wrap = (st) => ({ __st: st, bind: (...a) => wrap(st.bind(...a)), run: async (...a) => { chk(); return st.run(...a); },
+    all: async (...a) => { chk(); return st.all(...a); }, first: async (...a) => { chk(); return st.first(...a); }, raw: async (...a) => { chk(); return st.raw(...a); } });
+  return { ...env, __scan: sc, DB: { prepare: (q) => wrap(raw.prepare(q)), batch: async (list) => { chk(); return raw.batch(list.map((x) => (x && x.__st) || x)); } } };
+}
+// reading an answer is covered by the same timeout (Cloudflare cancels a stalled body read when the signal fires);
+// this only gives that timeout the same clear wording as one before the headers arrive. Every other error is unchanged.
+async function timedBody(env, p) {
+  try { return await p; }
+  catch (e) { if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw new Error(`no answer within ${Math.round((((env && env.__scan) || {}).net || NET_TIMEOUT) / 1000)} seconds`); throw e; }
+}
+// every outside network call goes through here
+async function xfetch(env, url, opts = {}) {
+  const sc = env && env.__scan;
+  if (sc) { const t = Date.now();
+    if (t > sc.hard) throw scanErr("stopped at the scan's safety limit", "scanStop");
+    if (t > sc.soft) { sc.budget = true; throw scanErr("not started: the scan's time budget was used up", "scanBudget"); } }
+  const ms = (sc && sc.net) || NET_TIMEOUT;
+  try { return await fetch(url, { ...opts, signal: AbortSignal.timeout(ms) }); }
+  catch (e) { if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw new Error(`no answer within ${Math.round(ms / 1000)} seconds`); throw e; }
+}
+
 async function sweep(env, manual) {
   await schema(env);
   const cfg0 = cleanConfig(await kvGet(env, "config", null));
@@ -1177,8 +1230,14 @@ async function sweep(env, manual) {
   if (!cfg.cats.length) return { error: "Add some categories first." };
   // stay under eBay's 5,000 calls a day: near the limit, scans space themselves out so calls last until midnight (UTC)
   if (!manual) { const why = paceSkip(await quota(env), now, cfg.cats.length, cfg.interval, now - last); if (why) return { skipped: why }; }
+  const lease = await scanClaim(env, now);
+  if (!lease) return manual ? { busy: true, error: "A scan is already running. Try again in a minute." } : { skipped: "another scan is running" };
+  // from here on the scan runs inside its time limits (see scanScope); the lease is always given back with the real env
+  const rawEnv = env, report = { checked: 0, newDeals: 0, hidden: 0, errors: [] };
+  env = scanScope(rawEnv, now, scanLimits(await kvGet(rawEnv, "scanLimits", null)));
+  try {
   await kvSet(env, "lastRun", now);
-  const D = env.DB, r = cfg.rules, report = { checked: 0, newDeals: 0, hidden: 0, errors: [] };
+  const D = env.DB, r = cfg.rules;
 
   // 0. matching rules changed (spec-based groups): start learning afresh once
   if ((await kvGet(env, "keyver", 1)) < 3) {
@@ -1299,6 +1358,7 @@ async function sweep(env, manual) {
   if (cfg.region === "uk") base.push("itemLocationCountry:GB");
   const seen = [];
   for (const c of cats) {
+    if (Date.now() > env.__scan.soft) { env.__scan.budget = true; break; } // time budget used: the rest waits for the next scan
     const calls = [];
     // fewer categories ticked = each one searched deeper: 1–2 categories get up to 400 newest Buy It Nows and 200 ending auctions
     const deep = cfg.cats.length <= 2 ? 2 : cfg.cats.length <= 4 ? 1 : 0;
@@ -1322,7 +1382,7 @@ async function sweep(env, manual) {
   if ((await quota(env)) + CALLS < EBAY_DAILY * STOCK_UNTIL) {
     try { await stockStep(env, cfg, seen, report); } catch (e) { report.errors.push("stock check: " + e.message); }
   }
-  if (!seen.length) { await saveQuota(env); await kvSet(env, "lastReport", { at: now, ...report }); return report; }
+  if (!seen.length) { scanNote(env, report); await saveQuota(env); await kvSet(env, "lastReport", { at: now, ...report }); return report; }
 
   // 3. remember everything we saw (this builds the sold history over time)
   const firstSeen = {}, have = {};
@@ -1724,10 +1784,27 @@ async function sweep(env, manual) {
       await kvSet(env, "tracked", { at: now, m: report.tracked });
     }
   } catch (e) {}
+  scanNote(env, report);
   await kvSet(env, "lastReport", { at: now, ...report, cats: cats.map((c) => c.name) });
   // remember the rules this scan used: a change triggers the 3-day second look on the next scan
   await kvSet(env, "rulesSig", JSON.stringify([r, cfg.cats.map((c) => c.id)]));
   return report;
+  } catch (e) {
+    // the hard stop: nothing more can run, so report what happened (with the real env) and let the next scan carry on
+    if (!e || !e.scanStop) throw e;
+    report.incomplete = "safety limit";
+    report.errors = report.errors.filter((x) => !/time budget was used up|safety limit/.test(x));
+    report.errors.unshift("Scan stopped early (safety limit reached): the rest is checked next time. Deals already found are kept.");
+    try { await kvSet(rawEnv, "lastReport", { at: now, ...report }); } catch (x) {}
+    return report;
+  } finally { await scanRelease(rawEnv, lease); }
+}
+// a scan that used up its time budget says so (once), so the app shows it and the next scan carries on
+function scanNote(env, report) {
+  if (!env.__scan || !env.__scan.budget || report.incomplete) return;
+  report.incomplete = "time budget";
+  report.errors = report.errors.filter((x) => !/time budget was used up/.test(x));
+  report.errors.unshift("Scan stopped early: its time budget was used up, so not everything was checked. The rest is checked next time. Deals already found are kept.");
 }
 
 /* ---------------- FlipScout push alerts (Firebase Cloud Messaging v1) ---------------- */
@@ -1744,13 +1821,13 @@ async function fcmAccess(env) {
   const der = Uint8Array.from(atob(pem), (ch) => ch.charCodeAt(0));
   const key = await crypto.subtle.importKey("pkcs8", der, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
   const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(head + "." + body));
-  const r = await fetch("https://oauth2.googleapis.com/token", {
+  const r = await xfetch(env, "https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: "grant_type=" + encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer") + "&assertion=" + head + "." + body + "." + b64url(sig),
   });
   if (!r.ok) throw new Error("alert sign-in failed (" + r.status + ")");
-  const d = await r.json();
+  const d = await timedBody(env, r.json());
   const out = { t: d.access_token, project: sa.project_id, exp: Date.now() + (d.expires_in - 300) * 1000 };
   await kvSet(env, "fcmtok", out);
   return out;
@@ -1799,7 +1876,7 @@ async function push(env, title, body, data) {
   const dead = [];
   for (const dv of devices) {
     try {
-      const r = await fetch(`https://fcm.googleapis.com/v1/projects/${tok.project}/messages:send`, {
+      const r = await xfetch(env, `https://fcm.googleapis.com/v1/projects/${tok.project}/messages:send`, {
         method: "POST",
         headers: { Authorization: "Bearer " + tok.t, "Content-Type": "application/json" },
         body: JSON.stringify({ message: {
@@ -2062,7 +2139,9 @@ export default {
           const last = await kvGet(env, "lastManual", 0);
           if (Date.now() - last < 45000) return json({ error: "Just scanned. Try again in a minute." }, 429);
           await kvSet(env, "lastManual", Date.now());
-          return json(await sweep(env, true));
+          const res = await sweep(env, true);
+          if (res && res.busy) { await kvSet(env, "lastManual", last); return json({ error: res.error }, 429); }
+          return json(res);
         }
         if (P("deals")) {
           // every live deal goes to the app (was capped at the best-scoring 200, which silently hid hundreds: 3 Nov).
@@ -2276,7 +2355,7 @@ export default {
     if (P("tree")) {
       try {
         const token = await getToken(env);
-        const r = await fetch("https://api.ebay.com/commerce/taxonomy/v1/category_tree/3", {
+        const r = await xfetch(env, "https://api.ebay.com/commerce/taxonomy/v1/category_tree/3", {
           headers: { Authorization: "Bearer " + token, "Accept-Encoding": "gzip" },
           cf: { cacheTtl: 86400, cacheEverything: true },
         });

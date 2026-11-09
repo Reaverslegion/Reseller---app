@@ -38,6 +38,30 @@ Branch: `testing`. This entry documents the repository safety review and collabo
 - What remains: owner's Cloudflare check; ChatGPT's independent inspection of the result.
 - Suggested next action: (needs approval) lock `build.yml` on `main` to main/testing, as `testing` already does.
 
+## 2026-11-09 — Claude — testing improvements and scan-safety fixes merged into `testing`
+- Owner-approved merges into `testing` only. Evidence: GitHub PR, merge and Actions records; local test runs.
+- PR #2 merged at `4e51986`: GitHub Actions QUICK/FULL levels.
+  - QUICK on every upload to a test branch.
+  - FULL on every PR into `main` and on manual runs.
+  - Capacitor 8 trial is manual only; Markdown-only uploads are skipped.
+  - The report shows skipped emulator suites as NOT TESTED, never PASS.
+- PR #3 merged at `8d3e323`:
+  - deal-card reopen comparison ignores only time labels;
+  - atomic scan lock: one scan at a time, released after every scan, expires after 15 min;
+  - 20 s network timeouts, an 8-min scan budget and a 10-min hard stop;
+  - incomplete scans are reported, keep existing deals and release the lock;
+  - stalled-response tests (no answer, and headers then a stalled body).
+- Merged code is identical to the tested commits. Both merges used `[skip ci]`; no workflows ran.
+- Last QUICK check ([run 42544602887](https://github.com/Reaverslegion/Reseller---app/actions/runs/42544602887)): 111 passed, 2 failed (known), 14 not tested (emulator, by design).
+- Outstanding issues:
+  - dependency security warnings (phone build);
+  - paused D9 phone-test build check;
+  - intermittent emulator "journeys" failures.
+
+  The corrected reopen test still needs confirming in a future FULL run.
+- Production has **not** received these fixes. `main` is unchanged at `465d26b`, and the last live deploy was 7 Nov. Do not change `main` or the live deployment without separate owner approval.
+- Next priorities: release-readiness testing; investigate the security warnings; backup and disaster recovery; research suitable open-source additions.
+
 ## Handover template
 ### YYYY-MM-DD — AI / task
 - Branch and starting commit:

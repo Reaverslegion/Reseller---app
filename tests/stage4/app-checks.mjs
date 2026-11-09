@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import * as F from "../integrity/scan-flow.mjs";
 import * as DS from "../integrity/datasets.mjs";
+import { DIAG, diagEvent, diagSnap } from "../android/diag.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const DAY = 864e5;
@@ -310,7 +311,9 @@ export async function runStage4(drv, R, dev = {}) {
       const dark = await drv.eval(`(()=>{const c=getComputedStyle(document.body).backgroundColor.match(/\\d+/g).map(Number);return c[0]+c[1]+c[2]<200})()`); await drv.shot("phone dark mode");
       D.add("the app follows the phone's dark mode", ok(dark)); sh("cmd uimode night no"); });
     for (const scale of [1.3, 2.0]) await step(`largest text: phone font size ×${scale}`, async () => {
-      sh(`settings put system font_scale ${scale}`); await reopen(); await drv.shot(`font scale ${scale}`);
+      if (DIAG) diagSnap(`font ${scale} before change`);
+      sh(`settings put system font_scale ${scale}`); diagEvent(`font size set to ${scale}`);
+      await reopen(); diagEvent(`font ${scale}: app reopened`); await drv.shot(`font scale ${scale}`);
       const r = await drv.eval(A11Y), fs_ = await drv.eval(`parseFloat(getComputedStyle(document.querySelector(".dcard")||document.body).fontSize)`);
       await drv.menu(); await sleep(800); const r2 = await drv.eval(A11Y); await drv.shot(`font scale ${scale} menu`); await drv.dealsTab();
       D.add(`text gets bigger with the phone's font size ×${scale}, and nothing runs off the screen`, ok(fs_ > 16 * (scale - 0.15) && !r.overflow && !r2.overflow), `card text ${fs_}px${r.overflow ? `, deals overflow ${r.overflow}` : ""}${r2.overflow ? `, menu overflow ${r2.overflow}` : ""}`);

@@ -6,6 +6,7 @@
 //  - Screenshots are real phone screenshots (adb screencap). Crashes are read from the phone's system log.
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
+import { DIAG, diagEvent, diagSnap } from "./diag.mjs";
 
 export const PKG = "com.reaverslegion.flipscout";
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -39,8 +40,8 @@ export class App {
   // the last few phone-system lines about the app, its web view, memory or freezes (to explain a dropped link)
   recentSystemLog() { try { return fs.readFileSync(this.logFile, "utf8").split("\n").slice(-4000).filter((l) => /flipscout|webview|sandboxed/i.test(l) && /Killing|died|lowmemory|lmkd|crash|ANR|FATAL|signal/i.test(l)).slice(-2).join(" | ").slice(0, 250); } catch (e) { return ""; } }
   logSize() { try { return fs.statSync(this.logFile).size; } catch (e) { return 0; } }
-  async launch() { sh(`monkey -p ${this.pkg} -c android.intent.category.LAUNCHER 1`); for (let i = 0; i < 40 && !this.pid(); i++) await sleep(500); this.appPid = this.pid(); if (!this.appPid) throw new Error("the app did not start"); await this.connect(); }
-  async stop() { sh(`am force-stop ${this.pkg}`); if (this.main) this.main.close(); this.main = null; await sleep(800); }
+  async launch() { diagEvent("launch"); sh(`monkey -p ${this.pkg} -c android.intent.category.LAUNCHER 1`); for (let i = 0; i < 40 && !this.pid(); i++) await sleep(500); this.appPid = this.pid(); if (!this.appPid) throw new Error("the app did not start"); await this.connect(); }
+  async stop() { diagEvent("force-stop"); sh(`am force-stop ${this.pkg}`); if (this.main) this.main.close(); this.main = null; await sleep(800); }
   async home() { sh("input keyevent 3"); await sleep(1500); }
   async resume() { sh(`monkey -p ${this.pkg} -c android.intent.category.LAUNCHER 1`); await sleep(2500); }
   // the emulator itself can be slow on GitHub's small machines: turn off "isn't responding" pop-ups, and close any that appear
@@ -48,8 +49,8 @@ export class App {
   async unblock() { for (let i = 0; i < 3; i++) { let f = ""; try { f = sh("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"); } catch (e) { return; }
       if (!/Not Responding|isn't responding|Application Error/i.test(f)) return; this.unblocked = (this.unblocked || 0) + 1; sh("input keyevent 4"); await sleep(2000); } }
   alive() { const p = this.pid(); return !!p && p === this.appPid; }
-  async tapXY(x, y) { sh(`input tap ${Math.round(x)} ${Math.round(y)}`); }
-  async key(code) { sh(`input keyevent ${code}`); await sleep(400); }
+  async tapXY(x, y) { diagEvent("tap", [Math.round(x), Math.round(y)]); sh(`input tap ${Math.round(x)} ${Math.round(y)}`); }
+  async key(code) { diagEvent("key", code); sh(`input keyevent ${code}`); await sleep(400); }
   async back() { await this.key(4); await sleep(500); }
   async type(text) { const t = String(text).replace(/'/g, "");
     // Android's "input text" can drop letters when a web view gets a long string at once, so type a few at a time
@@ -246,7 +247,8 @@ export class Results {
           note = "retried once after the link to the app dropped" + (app.recentSystemLog() ? ": " + app.recentSystemLog() : "");
           app.appPid = app.pid() || app.appPid; await app.connect(); await f(); }
         passed++; this.rows.push({ area, name: `${name} › ${what}`, status: note ? "PARTIALLY TESTED" : "PASS", detail: note }); }
-      catch (e) { failed = what; const lim = /^EMULATOR LIMIT/.test(String(e.message)), s = await app.shot(`${lim ? "LIMIT" : "FAIL"} ${name} ${what}`);
+      catch (e) { failed = what; if (DIAG) { diagEvent("STEP FAILED", { journey: name, step: what, error: String(e.message || e).slice(0, 200) }); diagSnap(`FAIL ${name} ${what}`); }
+        const lim = /^EMULATOR LIMIT/.test(String(e.message)), s = await app.shot(`${lim ? "LIMIT" : "FAIL"} ${name} ${what}`);
         this.rows.push({ area, name: `${name} › ${what}`, status: lim ? "PARTIALLY TESTED" : "FAIL", detail: String(e.message || e).slice(0, 300), shot: s }); }
     };
     try { await fn(step); } catch (e) { this.rows.push({ area, name: `${name} › (journey stopped)`, status: "FAIL", detail: String(e.message || e).slice(0, 300) }); failed = failed || "stopped"; }

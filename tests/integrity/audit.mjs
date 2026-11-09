@@ -7,6 +7,7 @@ import * as O from "./oracle.mjs";
 import * as DS from "./datasets.mjs";
 import * as F from "./scan-flow.mjs";
 import { compareCards, describeDiffs } from "./card-compare.mjs";
+import { DIAG, diagEvent, diagSnap, APP_STATE, BACK_COUNTERS } from "../android/diag.mjs";
 
 const AREA = "Deals: app vs database", DAY = 864e5;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -177,8 +178,18 @@ export async function runAudit(drv, R, opt = {}) {
       const gone = bid >= maxBid;
       await step(`bid £${bid}${ship !== 6.5 ? `, postage £${ship}` : ""}: deal opened in the app (live check), then back`, async () => {
         await fetch("http://127.0.0.1:8788/__fake/items", { method: "POST", body: JSON.stringify([F.listing({ id: genAuction, title: start.title, price: bid, ship, type: "AUC", bids, endsIn: 3 })]) });
-        await drv.tap({ sel: ".dcard", text: "auction #" + genAuction }); await sleep(6000); await drv.back(); await sleep(1500);
+        const dg = async (label) => { if (!DIAG) return; try { diagEvent(`auction bid £${bid}: ${label}`, await drv.eval(APP_STATE)); } catch (e) { diagEvent(`auction bid £${bid}: ${label} (screen unreadable)`, String(e.message || e).slice(0, 120)); } };
+        if (DIAG) { try { await drv.eval(BACK_COUNTERS); } catch (e) {} await dg("before tapping the card"); }
+        await drv.tap({ sel: ".dcard", text: "auction #" + genAuction }); await sleep(6000);
+        // only a quick screen read before Back; Android's slower snapshots wait until after the test's own read,
+        // so the Back press and the list check keep their normal timing
+        if (DIAG) await dg("on the deal page, just before Back");
+        await drv.back(); await sleep(1500);
         const d = (await live()).find((x) => x.id === genAuction), st = await read(), c = d && st.cards.find((x) => x.aria === d.title);
+        if (DIAG) { await dg("just after the test read the list (about 1.5 s after Back)"); diagSnap(`auction ${bid} after Back`); }
+        // diagnostics only (the test has already read the screen): does the app leave the deal page late, or never?
+        if (DIAG) { let left = null; for (let w = 0; w < 20; w++) { try { if ((await drv.eval(`typeof tab!=="undefined"?tab:null`)) !== "deal") { left = (w + 1) * 500; break; } } catch (e) {} await sleep(500); }
+          diagEvent(`auction bid £${bid}: left the deal page ${left === null ? "NOT within 10 s more" : `${left} ms later`}`); await dg("end of diagnostics wait"); }
         if (gone) { check(`Bid £${bid} (past the max bid) › deal removed`, !d, d ? "still listed" : ""); return; }
         if (!d) { check(`Bid £${bid} › deal still listed`, false, "removed"); return; }
         if (ship !== 6.5) { check(`Bid £${bid}, postage £${ship} › max bid lowered by the extra postage`, Math.abs(d.maxBid - (start.maxBid - (ship - 6.5))) < 0.011, `max bid £${d.maxBid}, was £${start.maxBid}`); maxBid = d.maxBid; }

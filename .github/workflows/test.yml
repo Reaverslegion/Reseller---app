@@ -27,6 +27,10 @@ on:
         default: full
         type: choice
         options: [full, quick]
+      diag:
+        description: "Test-only diagnostics (screen and Back-event state, Android ANR traces); manual runs only"
+        default: false
+        type: boolean
       cap8:
         description: "Also run the Capacitor 8 trial (an upgrade experiment)"
         default: false
@@ -394,7 +398,7 @@ jobs:
           disk-size: 4096M
           ram-size: 3072M
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -no-metrics
-          script: APK=apk/FlipScout.apk RELEASE_APK=apk-release/FlipScout.apk AXE_JS=/tmp/axe/node_modules/axe-core/axe.min.js PART=${{ inputs.part || 'all' }} bash tests/android/run-all.sh
+          script: APK=apk/FlipScout.apk RELEASE_APK=apk-release/FlipScout.apk AXE_JS=/tmp/axe/node_modules/axe-core/axe.min.js PART=${{ inputs.part || 'all' }} DIAG=${{ inputs.diag && '1' || '0' }} bash tests/android/run-all.sh
       - name: Small copies of the screenshots (readable from the log)
         if: always()
         run: |
@@ -419,6 +423,7 @@ jobs:
             screenshots/
             logcat.txt
             logcat-integrity.txt
+            diag/
           retention-days: 14
 
   report:

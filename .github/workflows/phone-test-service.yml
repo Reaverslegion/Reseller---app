@@ -46,7 +46,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
       - name: Build the stand-in (live build steps + test-only inspection)
         env:
           RUN_NO: ${{ github.run_number }}
@@ -75,7 +75,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
       - uses: actions/download-artifact@v4
         with:
           name: standin-real-app

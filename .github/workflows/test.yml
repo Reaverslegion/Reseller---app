@@ -85,7 +85,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
       - name: Build with the same steps as the live build
         env:
           RUN_NO: ${{ github.run_number }}
@@ -290,7 +290,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
       - name: Build "FlipScout TEST" with the live build steps
         env:
           RUN_NO: ${{ github.run_number }}
@@ -332,7 +332,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
       - name: Build with the live build steps plus the test-only changes
         env:
           RUN_NO: ${{ github.run_number }}

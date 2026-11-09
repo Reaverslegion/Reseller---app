@@ -147,6 +147,9 @@ jobs:
       - name: One scan at a time (simultaneous manual/background scans, long scans, a lock left behind; 20 rounds)
         if: always()
         run: node tests/stage4/scan-lock.mjs 20
+      - name: Scan time limits (stalled eBay, used-up budget, hard stop, lock release, retry, no overlap)
+        if: always()
+        run: node tests/stage4/scan-time.mjs
       - name: Monitoring and restart tests (failed background job, false alarms, restart keeps data)
         if: always()
         env:

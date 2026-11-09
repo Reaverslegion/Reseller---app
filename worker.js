@@ -1162,6 +1162,19 @@ function toListing(it, c, type) {
     ...(() => { const g = groupOf(it, c.id, c.name, bucket), w = groupOf(it, c.id, c.name, "used"); return { pkey: g ? g.key : null, matchLabel: g ? g.label : "", matchQ: g ? g.match : 0, workKey: w ? w.key : null, workQ: w ? w.match : 0 }; })(),
   };
 }
+// ONE SCAN AT A TIME (9 Nov 2026): manual + manual, manual + background and background + background used to be able to
+// run together (each read "when was the last scan?" before the other wrote it), doubling eBay calls. A scan now has to
+// claim a lease first, in ONE database statement (the row is only written if no unexpired lease is there), so only one
+// request can win. The lease is given back when the scan ends; if a scan is cut off, it runs out on its own after
+// SCAN_LEASE (longer than Cloudflare lets a scheduled job run), so it can never block scans for ever.
+const SCAN_LEASE = 15 * 60000;
+async function scanClaim(env, now) {
+  const until = String(now + SCAN_LEASE + Math.random()); // unique, so only the holder can give it back
+  const r = await env.DB.prepare("INSERT INTO kv(k,v) VALUES('scanLock',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v WHERE CAST(kv.v AS REAL) < ?").bind(until, now).run();
+  return r && r.meta && r.meta.changes === 1 ? until : null;
+}
+async function scanRelease(env, until) { try { await env.DB.prepare("UPDATE kv SET v='0' WHERE k='scanLock' AND v=?").bind(until).run(); } catch (e) {} }
+
 async function sweep(env, manual) {
   await schema(env);
   const cfg0 = cleanConfig(await kvGet(env, "config", null));
@@ -1177,6 +1190,9 @@ async function sweep(env, manual) {
   if (!cfg.cats.length) return { error: "Add some categories first." };
   // stay under eBay's 5,000 calls a day: near the limit, scans space themselves out so calls last until midnight (UTC)
   if (!manual) { const why = paceSkip(await quota(env), now, cfg.cats.length, cfg.interval, now - last); if (why) return { skipped: why }; }
+  const lease = await scanClaim(env, now);
+  if (!lease) return manual ? { busy: true, error: "A scan is already running. Try again in a minute." } : { skipped: "another scan is running" };
+  try {
   await kvSet(env, "lastRun", now);
   const D = env.DB, r = cfg.rules, report = { checked: 0, newDeals: 0, hidden: 0, errors: [] };
 
@@ -1728,6 +1744,7 @@ async function sweep(env, manual) {
   // remember the rules this scan used: a change triggers the 3-day second look on the next scan
   await kvSet(env, "rulesSig", JSON.stringify([r, cfg.cats.map((c) => c.id)]));
   return report;
+  } finally { await scanRelease(env, lease); }
 }
 
 /* ---------------- FlipScout push alerts (Firebase Cloud Messaging v1) ---------------- */
@@ -2062,7 +2079,9 @@ export default {
           const last = await kvGet(env, "lastManual", 0);
           if (Date.now() - last < 45000) return json({ error: "Just scanned. Try again in a minute." }, 429);
           await kvSet(env, "lastManual", Date.now());
-          return json(await sweep(env, true));
+          const res = await sweep(env, true);
+          if (res && res.busy) { await kvSet(env, "lastManual", last); return json({ error: res.error }, 429); }
+          return json(res);
         }
         if (P("deals")) {
           // every live deal goes to the app (was capped at the best-scoring 200, which silently hid hundreds: 3 Nov).

@@ -144,6 +144,9 @@ jobs:
       - name: Back-end gap tests (other currencies, simultaneous scans, eBay throttling/errors/garbage keep deals)
         if: always()
         run: node tests/stage4/backend-gaps.mjs
+      - name: One scan at a time (simultaneous manual/background scans, long scans, a lock left behind; 20 rounds)
+        if: always()
+        run: node tests/stage4/scan-lock.mjs 20
       - name: Monitoring and restart tests (failed background job, false alarms, restart keeps data)
         if: always()
         env:

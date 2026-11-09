@@ -29,7 +29,7 @@ const TREE = { rootCategoryNode: { childCategoryTreeNodes: [
 
 http.createServer((req, res) => {
   let body = "";
-  req.on("data", (d) => (body += d)).on("end", () => {
+  req.on("data", (d) => (body += d)).on("end", async () => {
     const u = new URL(req.url, "http://x");
     log({ port: PORT, method: req.method, path: u.pathname, query: u.search });
     if (u.pathname === "/__fake/items" && req.method === "POST") { for (const it of JSON.parse(body || "[]")) items.set(String(it.legacyItemId), it); return send(res, 200, { ok: true, n: items.size }); }
@@ -40,6 +40,7 @@ http.createServer((req, res) => {
       if (mode === "429") { res.writeHead(429, { "content-type": "application/json", "retry-after": "60" }); return res.end(JSON.stringify({ errors: [{ errorId: 2001, message: "Too many requests (fake eBay)" }] })); }
       if (mode === "500") return send(res, 500, { errors: [{ errorId: 10001, message: "System error (fake eBay)" }] });
       if (mode === "garbage") { res.writeHead(200, { "content-type": "application/json" }); return res.end("{\"itemSummaries\": [{\"title\": "); }
+      if (mode === "slow") await new Promise((r) => setTimeout(r, 500)); // answers normally, half a second late (long scans)
     }
     if (u.pathname.includes("/oauth2/token") || u.pathname.includes("/identity/v1/oauth2")) return send(res, 200, { access_token: "fake-token", expires_in: 7200, token_type: "Bearer" });
     if (u.pathname === "/__fake/search" && req.method === "POST") { search = JSON.parse(body || "[]"); for (const it of search) items.set(String(it.legacyItemId), it); return send(res, 200, { ok: true, n: search.length }); }

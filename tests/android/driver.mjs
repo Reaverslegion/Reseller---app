@@ -47,7 +47,10 @@ export class App {
   // the emulator itself can be slow on GitHub's small machines: turn off "isn't responding" pop-ups, and close any that appear
   prepPhone() { for (const c of ["settings put global hide_error_dialogs 1", "settings put global window_animation_scale 0", "settings put global transition_animation_scale 0", "settings put global animator_duration_scale 0", "svc power stayon true", "input keyevent 82"]) { try { sh(c); } catch (e) {} } }
   async unblock() { for (let i = 0; i < 3; i++) { let f = ""; try { f = sh("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"); } catch (e) { return; }
-      if (!/Not Responding|isn't responding|Application Error/i.test(f)) return; this.unblocked = (this.unblocked || 0) + 1; sh("input keyevent 4"); await sleep(2000); } }
+      if (!/Not Responding|isn't responding|Application Error/i.test(f)) return; this.unblocked = (this.unblocked || 0) + 1;
+      // TEST-ONLY diagnostics (DIAG=1 only): record Android's state while the "isn't responding" box is still showing
+      if (DIAG) { diagEvent("ANR BOX FOUND, closing it with Back", { during: this.phase || null, focus: f.trim().slice(0, 300) }); diagSnap(`ANR box ${this.phase || ""}`); }
+      sh("input keyevent 4"); await sleep(2000); } }
   alive() { const p = this.pid(); return !!p && p === this.appPid; }
   async tapXY(x, y) { diagEvent("tap", [Math.round(x), Math.round(y)]); sh(`input tap ${Math.round(x)} ${Math.round(y)}`); }
   async key(code) { diagEvent("key", code); sh(`input keyevent ${code}`); await sleep(400); }

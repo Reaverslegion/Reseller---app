@@ -8,7 +8,8 @@ name: Phone test service (separate, test only)
 # be started from main, which must not be touched.
 on:
   push:
-    branches: [testing]
+    # claude/capacitor-8-upgrade (approved 10 Nov 2026): builds the Capacitor 8 TEST app for the phone test; no emulator check there
+    branches: [testing, claude/capacitor-8-upgrade]
     paths: [".github/phone-test/request.txt"]
 permissions:
   contents: read
@@ -64,7 +65,9 @@ jobs:
   phone-test:
     name: Test service + TEST app + emulator isolation checks
     needs: [decide, standin]
-    if: github.ref == 'refs/heads/testing' && needs.decide.outputs.action == 'set-up'
+    # testing: after the stand-in build, as before. Capacitor 8 branch: no stand-in or emulator (Android keeps a different package
+    # name fully separate); the finished APK itself is checked instead, below
+    if: always() && needs.decide.result == 'success' && needs.decide.outputs.action == 'set-up' && ((github.ref == 'refs/heads/testing' && needs.standin.result == 'success') || github.ref == 'refs/heads/claude/capacitor-8-upgrade')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -76,7 +79,8 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-      - uses: actions/download-artifact@v4
+      - if: github.ref == 'refs/heads/testing'
+        uses: actions/download-artifact@v4
         with:
           name: standin-real-app
           path: standin
@@ -166,17 +170,48 @@ jobs:
             {area:"Phone test setup",name:"TEST app is clearly named and versioned",status:l==="FlipScout TEST"&&/-TEST$/.test(v)?"PASS":"FAIL",detail:`${l}, version ${v}`},
             {area:"Phone test setup",name:"TEST app built from the testing commit, checksum recorded",status:/^[0-9a-f]{64}$/.test(sha)?"PASS":"FAIL",detail:`commit ${process.env.GITHUB_SHA.slice(0,7)}, SHA-256 ${sha.slice(0,16)}…`}];
             require("fs").writeFileSync("results/phone-build.json",JSON.stringify(rows,null,1))' "$P" "$V" "$L" "$SUM"
+      - name: Final check of the finished TEST app (package, signing, Capacitor version, test service lock)
+        run: |
+          set -e; A=FlipScout-TEST.apk; fail() { echo "REFUSED: $1"; exit 1; }
+          AAPT=$(ls $ANDROID_HOME/build-tools/*/aapt2 | sort -V | tail -1); SIGN=$(ls $ANDROID_HOME/build-tools/*/apksigner | sort -V | tail -1); B=$($AAPT dump badging $A)
+          P=$(echo "$B" | grep -o "package: name='[^']*'" | cut -d"'" -f2); L=$(echo "$B" | grep -o "application-label:'[^']*'" | cut -d"'" -f2)
+          MIN=$(echo "$B" | grep -o "sdkVersion:'[0-9]*'" | grep -o "[0-9]*"); TGT=$(echo "$B" | grep -o "targetSdkVersion:'[0-9]*'" | grep -o "[0-9]*")
+          [ "$P" = com.reaverslegion.flipscout.test ] || fail "package is '$P'"; [ "$L" = "FlipScout TEST" ] || fail "label is '$L'"
+          C=$($SIGN verify --print-certs $A); echo "$C" | grep -q "CN=FlipScout TEST ONLY" || fail "not signed with the throwaway TEST key"
+          CERT=$(echo "$C" | grep -m1 "SHA-256 digest" | awk '{print $NF}'); case "$CERT" in 88fd600bdba545aa*) fail "signed with the real app's key";; esac
+          unzip -p $A assets/public/index.html > page.html; unzip -p $A assets/capacitor.config.json > cfg.json || true
+          N=$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' page.html | grep -vx 'https://something\.workers\.dev' | sort -u | tr '\n' ' '); echo "service addresses inside the app (besides the 'something.workers.dev' example text): $N"
+          [ "$(echo $N)" = "$TEST_SVC_URL" ] || fail "the app contains an address other than the test service"
+          ! grep -q "flipscout-search" page.html cfg.json || fail "live service name inside the app"
+          grep -q "\"appId\": *\"com.reaverslegion.flipscout.test\"" cfg.json || fail "app id in the app's config is not the TEST one"
+          [ "$MIN" = 24 ] && [ "$TGT" = 36 ] || fail "Android levels $MIN/$TGT are not Capacitor 8's 24/36"
+          CAP=$(node -p 'require("./node_modules/@capacitor/core/package.json").version'); [ "$CAP" = 8.6.0 ] || fail "Capacitor core $CAP, expected 8.6.0"
+          D=$(curl -s "$TEST_SVC_URL/?deals=1" -H "X-FlipScout-Key: $TEST_SVC_KEY" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log((JSON.parse(s).deals||[]).length))')
+          [ "$D" = 1500 ] || fail "the test service answers the app's key with $D deals, not 1500"
+          rm -f page.html cfg.json
+          printf 'FINAL CHECK PASSED\n package %s · name %s · Android %s-%s · Capacitor %s\n signed by CN=FlipScout TEST ONLY, certificate SHA-256 %s… (not the real key)\n only service inside: the test service (flipscout-phonetest), which answers its key with %s invented deals\n' "$P" "$L" "$MIN" "$TGT" "$CAP" "${CERT:0:16}" "$D" | tee results/final-check.txt
+      # saved straight after the checks, so an emulator problem can't lose it
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FlipScout-TEST-for-phone
+          path: |
+            FlipScout-TEST.apk
+            FlipScout-TEST-checksum.txt
+          retention-days: 14
       - name: Free disk space for the emulator (removes unused pre-installed tools on GitHub's machine only)
+        if: github.ref == 'refs/heads/testing'
         run: |
           df -h / | tail -1
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift /usr/local/lib/android/sdk/ndk ~/.gradle/caches android/app/build android/build 2>/dev/null || true
           df -h / | tail -1
       - name: Let the emulator use hardware speed-up
+        if: github.ref == 'refs/heads/testing'
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: On the emulator - TEST app next to a stand-in of your real app
+        if: github.ref == 'refs/heads/testing'
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
           api-level: 33
@@ -212,13 +247,6 @@ jobs:
         with:
           name: results-phone-test
           path: results/
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        with:
-          name: FlipScout-TEST-for-phone
-          path: |
-            FlipScout-TEST.apk
-            FlipScout-TEST-checksum.txt
           retention-days: 14
 
   remove:

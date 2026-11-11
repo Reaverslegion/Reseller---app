@@ -279,6 +279,17 @@ function load(){
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast("Couldn't save on this phone.")}cloudSoon()}
 /* ---------- automatic cloud backup (to your Scan service) ---------- */
 const CAKEY="flipscout_cloud_at";let cbT=null,cloudErr="",cloudLast="";
+// "Back up now" feedback: busy while saving, success only after the Scan service confirms, a clear failure with retry, a
+// 20-second limit so a stalled connection can't leave it waiting for ever, and a status line that TalkBack reads out
+let BKUP={busy:false,msg:"",ok:null};const BK_MS=20000;
+async function backupNow(){
+  if(BKUP.busy)return;
+  if(!connected()){BKUP={busy:false,ok:false,msg:"Backup failed: not connected to your Scan service."};bkShow();return}
+  BKUP={busy:true,ok:null,msg:"Backing up…"};bkShow();
+  let ok=false;try{ok=await cloudPush(true)}catch(e){ok=false}
+  BKUP={busy:false,ok,msg:ok?"Backed up at "+new Date().toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})+".":"Backup failed: "+(cloudErr||"unknown problem")+". Tap Try again."};bkShow()}
+function bkShow(){const b=$("bk_now"),s=$("bk_st");if(b){b.disabled=BKUP.busy;b.setAttribute("aria-busy",BKUP.busy?"true":"false");b.textContent=BKUP.busy?"Backing up…":BKUP.ok===false?"Try again":"Back up now"}
+  if(s)s.textContent=BKUP.msg}
 const connected=()=>!!(S.set.url&&S.set.key);
 // every call to your Scan service: the key goes in a hidden header, not in the web address (addresses end up in logs)
 const kfetch=(url,key,qs,o)=>{o=o||{};return fetch(`${url}?${qs}`,{...o,headers:{...(o.headers||{}),"X-FlipScout-Key":String(key||"")}})};
@@ -294,10 +305,13 @@ async function cloudPush(manual){
   if(!manual&&!localStorage.getItem(CAKEY)){try{const r0=await kfetch(S.set.url,S.set.key,"backup=1"),c=await r0.json();
     const ci=c&&c.data&&Array.isArray(c.data.items)?c.data.items.length:0,cb=c&&c.data&&Array.isArray(c.data.base)?c.data.base.length:0;
     if(ci+cb>S.items.length+S.base.length){cloudErr="your cloud backup has more saved items than this phone; Restore from cloud, or tap Back up now to replace it";if(tab==="settings")render();return false}}catch(e){}}
-  try{const r=await kfetch(S.set.url,S.set.key,"backup=1",{method:"POST",headers:{"Content-Type":"text/plain"},body});const d=await r.json().catch(()=>({}));
+  // only "Back up now" has a time limit (automatic backups behave exactly as before)
+  const ac=manual&&typeof AbortController!=="undefined"?new AbortController():null,tm=ac?setTimeout(()=>ac.abort(),BK_MS):null;
+  try{const r=await kfetch(S.set.url,S.set.key,"backup=1",{method:"POST",headers:{"Content-Type":"text/plain"},body,...(ac?{signal:ac.signal}:{})});const d=await r.json().catch(e=>{if(e&&e.name==="AbortError")throw e;return{}});
     if(!r.ok||d.error)throw new Error(d.error||"error "+r.status);
     cloudLast=body;localStorage.setItem(CAKEY,String(Date.now()));cloudErr="";if(manual)toast("Backed up.");if(tab==="settings"&&!(document.activeElement&&/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)))render();return true}
-  catch(e){cloudErr=e.message==="Failed to fetch"?"no connection":e.message;if(manual)toast("Backup failed: "+cloudErr);return false}
+  catch(e){cloudErr=e&&e.name==="AbortError"?"no answer from your Scan service within 20 seconds (it may not have saved)":e.message==="Failed to fetch"?"no connection":e.message;if(manual)toast("Backup failed: "+cloudErr);return false}
+  finally{if(tm)clearTimeout(tm)}
 }
 async function cloudCheck(silentIfNone){
   if(!connected())return;
@@ -840,7 +854,8 @@ function vSettings(){
   <div class="card"><b>Appearance</b><div class="seg" style="margin-top:10px">${[["auto","Follow system"],["light","Light"],["dark","Dark"]].map(t=>`<button class="${(s.theme||"auto")===t[0]?"on":""}" onclick="S.set.theme='${t[0]}';save();render()">${t[1]}</button>`).join("")}</div><div class="hint">Follow system uses your phone's light or dark setting. Your choice is saved on this phone.</div></div>
   <div class="card"><b>Backup</b>
    ${connected()?`<div class="li ${cloudErr?"warn":"ok"}">${cloudErr?"⚠":"✓"} <span>Automatic cloud backup is on. ${cloudErr?`Last try failed (${esc(cloudErr)}).`:cloudAt()?`Last saved ${new Date(cloudAt()).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}.`:"Saves a few seconds after each change."}</span></div>
-   <div class="btns"><button onclick="cloudPush(true)">Back up now</button><button class="s" onclick="cloudCheck()">Restore from cloud</button></div>`
+   <div class="btns"><button id="bk_now" onclick="backupNow()"${BKUP.busy?" disabled":""} aria-busy="${BKUP.busy}">${BKUP.busy?"Backing up…":BKUP.ok===false?"Try again":"Back up now"}</button><button class="s" onclick="cloudCheck()">Restore from cloud</button></div>
+   <div id="bk_st" class="mu" role="status" aria-live="polite" style="margin-top:8px">${esc(BKUP.msg)}</div>`
    :`<div class="mu">Connect your Scan service (below) and your data backs up automatically.</div>`}
    ${S.set.admin?`<details><summary>Manual backup (copy and paste)</summary><div class="btns" style="margin-top:-6px"><button class="s" onclick="backup()">Copy backup text</button><button class="s" onclick="restoreSheet()">Paste backup</button></div></details>`:""}</div>
   ${connCard()}

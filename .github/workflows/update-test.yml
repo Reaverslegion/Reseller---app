@@ -5,7 +5,8 @@ name: Update test (emulator only, no live access)
 # Started by changing .github/update-test/request.txt on the testing branch: "old=<build run id> new=<build run id>".
 on:
   push:
-    branches: [testing]
+    # claude/capacitor-8-upgrade (approved 11 Nov 2026): Capacitor 8 update + push registration + Capacitor 6 rollback rehearsal
+    branches: [testing, claude/capacitor-8-upgrade]
     paths: [".github/update-test/request.txt"]
 permissions:
   contents: read
@@ -13,7 +14,7 @@ permissions:
 jobs:
   update:
     name: Update over the previous version + current Scan service + backup/restore
-    if: github.ref == 'refs/heads/testing'
+    if: github.ref == 'refs/heads/testing' || github.ref == 'refs/heads/claude/capacitor-8-upgrade'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -30,11 +31,19 @@ jobs:
           set -e; R=.github/update-test/request.txt
           OLD=$(grep -o 'old=[0-9]*' $R | cut -d= -f2); NEW=$(grep -o 'new=[0-9]*' $R | cut -d= -f2)
           test "$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$OLD --jq .head_branch)" = main
-          test "$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$NEW --jq .head_branch)" = testing
+          B=${GITHUB_REF#refs/heads/}; test "$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$NEW --jq .head_branch)" = "$B"
           echo "previous: build #$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$OLD --jq .run_number) (main, $(gh api repos/$GITHUB_REPOSITORY/actions/runs/$OLD --jq .head_sha | cut -c1-7))"
           echo "new: build #$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$NEW --jq .run_number) (testing, $(gh api repos/$GITHUB_REPOSITORY/actions/runs/$NEW --jq .head_sha | cut -c1-7))"
-          gh run download $OLD -n flipscout-apk -D old; gh run download $NEW -n flipscout-apk-TESTING-branch -D new
-          WRAP=$(grep -o 'wrap=[0-9]*' $R | cut -d= -f2); test "$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$WRAP --jq .head_branch)" = testing
+          if [ "$B" = testing ]; then gh run download $OLD -n flipscout-apk -D old; gh run download $NEW -n flipscout-apk-TESTING-branch -D new
+          else
+            # Capacitor 8 branch: the update and the rollback rehearsal come from ONE hand-started build of this branch (emulator-only files)
+            test "$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$NEW --jq .event)" = workflow_dispatch
+            gh run download $OLD -n flipscout-apk -D old; gh run download $NEW -n flipscout-apk-cap8-update-test-EMULATOR-ONLY -D new
+            gh run download $NEW -n flipscout-apk-cap6-rollback-test-EMULATOR-ONLY -D rollback
+            f=$(find rollback -name "*.apk" | head -1); test -n "$f"; [ "$f" = rollback/FlipScout.apk ] || mv "$f" rollback/FlipScout.apk
+            echo "ROLLBACK_APK=rollback/FlipScout.apk" >> $GITHUB_ENV
+          fi
+          WRAP=$(grep -o 'wrap=[0-9]*' $R | cut -d= -f2); test "$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$WRAP --jq .head_branch)" = "$B"
           gh run download $WRAP -n flipscout-emulator-test-apk -D wrap; f=$(find wrap -name "*.apk" | head -1); [ "$f" = wrap/FlipScout.apk ] || mv "$f" wrap/FlipScout.apk
           echo "test wrapper of the same app code: test run $WRAP ($(gh api repos/$GITHUB_REPOSITORY/actions/runs/$WRAP --jq .head_sha | cut -c1-7))"
           for d in old new; do ls -la $d; f=$(find $d -name "*.apk" | head -1); test -n "$f"; [ "$f" = "$d/FlipScout.apk" ] || mv "$f" $d/FlipScout.apk; done
@@ -42,7 +51,8 @@ jobs:
       - name: Same app ID and same signing certificate (read from the two files)
         run: |
           set -e; BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
-          for f in old new; do
+          for f in old new $([ -n "${ROLLBACK_APK:-}" ] && echo rollback); do
+            echo "$f: $($BT/aapt2 dump badging $f/FlipScout.apk | grep -E "^(minSdkVersion|sdkVersion|targetSdkVersion)" | tr '\n' ' ')"
             B=$($BT/aapt2 dump badging $f/FlipScout.apk | head -1)
             C=$($BT/apksigner verify --print-certs $f/FlipScout.apk | grep -m1 "SHA-256 digest" | awk '{print $NF}')
             echo "$f: $B | certificate SHA-256 $C | file SHA-256 $(sha256sum $f/FlipScout.apk | cut -d' ' -f1)"
@@ -55,6 +65,13 @@ jobs:
             {area:"Update test",name:"signed with the same certificate as the previous build (your existing key)",status:oc&&oc===nc?"PASS":"FAIL",detail:`certificate SHA-256 starts ${nc.slice(0,16)}…`},
             {area:"Update test",name:"higher version number, so Android treats it as an update",status:+nv>+ov?"PASS":"FAIL",detail:`${ov} → ${nv}`}];
             require("fs").writeFileSync("results/update-identity.json",JSON.stringify(rows,null,1));console.log(rows.map(r=>r.status+" "+r.name+" — "+r.detail).join("\n"));process.exit(rows.some(r=>r.status==="FAIL")?1:0)' "$old_P" "$new_P" "$old_C" "$new_C" "$old_V" "$new_V"
+          if [ -n "${ROLLBACK_APK:-}" ]; then
+            node -e 'const [np,rp,nc,rc,nv,rv]=process.argv.slice(1);const rows=[
+              {area:"Rollback rehearsal",name:"rollback build has the same app ID as your app",status:rp===np&&rp==="com.reaverslegion.flipscout"?"PASS":"FAIL",detail:`${np} → ${rp}`},
+              {area:"Rollback rehearsal",name:"rollback build is signed with the same certificate (your existing key)",status:rc&&rc===nc?"PASS":"FAIL",detail:rc===nc?"identical":"DIFFERENT"},
+              {area:"Rollback rehearsal",name:"rollback build has a higher version number than the Capacitor 8 build",status:+rv>+nv?"PASS":"FAIL",detail:`${nv} → ${rv}`}];
+              require("fs").writeFileSync("results/rollback-identity.json",JSON.stringify(rows,null,1));console.log(rows.map(r=>r.status+" "+r.name+" — "+r.detail).join("\n"));process.exit(rows.some(r=>r.status==="FAIL")?1:0)' "$new_P" "$(cat rollback.pkg)" "$new_C" "$(cat rollback.cert)" "$new_V" "$(cat rollback.ver)"
+          fi
       - name: Private local copy of your CURRENT live Scan service code (main's worker.js; fake eBay; no real keys; nothing deployed)
         run: |
           git show origin/main:worker.js > worker.js
@@ -82,7 +99,7 @@ jobs:
           ram-size: 3072M
           emulator-boot-timeout: 900
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -no-metrics
-          script: OLD_APK=old/FlipScout.apk NEW_APK=new/FlipScout.apk WRAP_APK=wrap/FlipScout.apk node tests/android/update.mjs
+          script: OLD_APK=old/FlipScout.apk NEW_APK=new/FlipScout.apk WRAP_APK=wrap/FlipScout.apk ROLLBACK_APK=${{ env.ROLLBACK_APK }} node tests/android/update.mjs
       - name: Results
         if: always()
         run: |

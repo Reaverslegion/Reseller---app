@@ -87,6 +87,58 @@ await R.journey(A, "Update to the testing build, installed over the top", async 
   });
 });
 
+// CAPACITOR 8 BRANCH ONLY (ROLLBACK_APK set): push alert registration on the real signed Capacitor 8 build (no alert is sent:
+// nothing here has your live alert key), then the Capacitor 6 rollback rehearsal installed over it, with every stored entry compared.
+const ROLLBACK = process.env.ROLLBACK_APK || "";
+let pushToken = "";
+if (ROLLBACK) {
+  await R.journey("Push alerts (Capacitor 8)", "Alert registration on the signed Capacitor 8 build (nothing is sent)", async (step) => {
+    await step("turn alerts on and register with Google's alert service", async () => {
+      safe(() => sh(`pm grant ${PKG} android.permission.POST_NOTIFICATIONS`));
+      const st = await app.eval(`(async()=>{try{const P=PN();if(!P)return "NO PLUGIN";await enableAlerts();return "called"}catch(e){return "ERR "+e.message}})()`);
+      R.add("Push alerts (Capacitor 8)", "the push plugin is present and alerts can be switched on (permission granted, register called)", st === "called" ? "PASS" : "FAIL", st);
+      let r = null; for (let i = 0; i < 40 && !r; i++) { await sleep(1500); r = JSON.parse(await app.eval(`JSON.stringify({t:PUSH.token||"",e:PUSH.err||""})`)); if (!r.t && !/couldn't register for alerts/i.test(r.e)) r = null; }
+      if (r && r.t) { pushToken = r.t;
+        R.add("Push alerts (Capacitor 8)", "this phone got its alert address from Google (Firebase) through Capacitor 8's push plugin", r.t.length > 20 ? "PASS" : "FAIL", `address received (${r.t.length} characters; not shown)`);
+        R.add("Push alerts (Capacitor 8)", "the app then tries to give that address to its Scan service", /Couldn't register this phone|alert key/i.test(r.e) || !r.e ? "PASS" : "FAIL",
+          "real builds only connect over https, so this private http copy can't receive it here; the same call is checked with the test wrapper below. App message: " + (r.e || "none"));
+      } else if (r) R.add("Push alerts (Capacitor 8)", "this phone got its alert address from Google (Firebase) through Capacitor 8's push plugin",
+          /SERVICE_NOT_AVAILABLE|MISSING_INSTANCEID|AUTHENTICATION_FAILED|PHONE_REGISTRATION|TIMEOUT|play services/i.test(r.e) ? "NOT TESTED" : "FAIL", "EMULATOR OR PLUGIN — Google's alert service refused on this emulator: " + r.e);
+      else R.add("Push alerts (Capacitor 8)", "this phone got its alert address from Google (Firebase) through Capacitor 8's push plugin", "NOT TESTED", "no answer from Google's alert service within 60 s on this emulator (no error from the app)");
+      const ch = safe(() => sh("dumpsys notification"));
+      const mine = ch.split(/\n(?=\s*AppSettings: )/).filter((b) => b.includes(PKG)).join("\n");
+      R.add("Push alerts (Capacitor 8)", "the 'Deals and price alerts' channel exists (deals arrive with sound and on the lock screen)", /mId='deals'/.test(mine || ch) ? "PASS" : "FAIL", /mId='deals'/.test(mine || ch) ? "channel 'deals' registered" : "channel not found");
+      await app.shot("cap8 - alerts on");
+    });
+  });
+  let mid = null, midInfo = null;
+  await R.journey("Rollback rehearsal", "Go back from Capacitor 8 to a Capacitor 6 build of the same app, installed over the top", async (step) => {
+    await step("Android accepts the Capacitor 6 rollback build as an update", async () => {
+      await open(); await sleep(2000); mid = await app.eval(DUMP); await leave(); midInfo = info();
+      const inst = safe(() => adb("install", "-r", ROLLBACK));
+      R.add("Rollback rehearsal", "Android accepted the Capacitor 6 rollback build as an UPDATE (nothing uninstalled)", /Success/.test(inst) ? "PASS" : "FAIL", inst.trim().split("\n").pop());
+      const a = info();
+      R.add("Rollback rehearsal", "same signing certificate, original install time kept, version number went up", a.sig === midInfo.sig && a.first === midInfo.first && +a.code > +midInfo.code ? "PASS" : "FAIL",
+        `${midInfo.name} (${midInfo.code}) → ${a.name} (${a.code}); first installed ${a.first}`);
+    });
+    await step("all information survived going back", async () => {
+      await open(); await sleep(3000); const back = await app.eval(DUMP);
+      const b = JSON.parse(mid), c = JSON.parse(back), lost = Object.keys(b).filter((k) => !(k in c)), changed = Object.keys(b).filter((k) => k in c && b[k] !== c[k]);
+      const x = norm(b.resell_helper_v1), y = norm(c.resell_helper_v1);
+      R.add("Rollback rehearsal", "no stored entry was lost", lost.length ? "FAIL" : "PASS", lost.length ? "LOST: " + lost.join(", ") : `all ${Object.keys(b).length} entries present`);
+      R.add("Rollback rehearsal", "every item identical (names, prices, status, sale figures)", JSON.stringify(x.items) === JSON.stringify(y.items) && y.items.length === 3 ? "PASS" : "FAIL", `${y.items.length} items`);
+      for (const [k, n] of [["rules", "money rules"], ["set", "settings incl. Scan service address and key"], ["hunt", "categories and alert settings"], ["gate", "checklist"], ["base", "tracked items"]])
+        R.add("Rollback rehearsal", `${n} identical`, x[k] === y[k] ? "PASS" : "FAIL", x[k] === y[k] ? "identical" : "CHANGED");
+      R.add("Rollback rehearsal", "the unsaved add-item draft survived", b.flipscout_draft === c.flipscout_draft && (c.flipscout_draft || "").includes(DRAFT) ? "PASS" : "FAIL");
+      R.add("Rollback rehearsal", "nothing else stored changed", changed.length ? "FAIL" : "PASS", changed.length ? "changed: " + changed.join(", ") : "none changed");
+      await app.eval(`tab="stock";render();1`); await sleep(1500); const st = await app.eval(`document.getElementById("app").innerText`); await app.shot("rollback - stock");
+      R.add("Rollback rehearsal", "your items show on screen after going back", st.includes(M1.slice(0, 20)) ? "PASS" : "FAIL", st.replace(/\s+/g, " ").slice(0, 160));
+      await leave(); await open(); const again = await app.eval(DUMP);
+      R.add("Rollback rehearsal", "still all there after closing and reopening", again === back ? "PASS" : "FAIL", again === back ? "identical" : "changed after reopening");
+    });
+  });
+}
+
 // The real APK only connects over https (as your phone does to the live service), but the private local copy of the Scan
 // service here is plain http. So the service and backup checks below use the TEST WRAPPER of the same testing-branch app code
 // (identical app code; its Android wrapper also allows http to this machine), loaded with exactly the data the update produced.
@@ -122,6 +174,13 @@ await R.journey(A, "Updated app with your CURRENT Scan service (local copy of th
     else NEEDS("admin tools › Problems list (and crash reports sent from the app)", `the current Scan service doesn't have it: ${c.problems}`);
     await app.eval(`S.set.admin=true;go("admin");1`); await sleep(3000); const pr = await app.eval(`document.getElementById("app").innerText`); await app.shot("updated - admin problems"); await app.eval(`onBack();1`);
     add("the app copes when the Problems list isn't available (shows a message, no crash)", app.alive(), pr.replace(/\s+/g, " ").slice(0, 160));
+    if (ROLLBACK && pushToken) {
+      const d = await app.eval(`api("device=1",{token:${JSON.stringify(pushToken)},name:"Android"}).then(r=>JSON.stringify(r)).catch(e=>"ERR "+e.message)`);
+      R.add("Push alerts (Capacitor 8)", "the phone's alert address is accepted by the Scan service (private local copy)", /"ok":true|"ready"/.test(d) ? "PASS" : "FAIL", String(d).replace(pushToken, "[address]").slice(0, 160));
+      const t = await svc("test=1");
+      R.add("Push alerts (Capacitor 8)", "no alert can be sent from this test (the private copy has no alert key)", t.status === 400 ? "PASS" : "FAIL", `test alert request refused: ${JSON.stringify(t.j || {}).slice(0, 100)}`);
+      R.add("Push alerts (Capacitor 8)", "an alert actually arriving on a phone", "NOT TESTED", "needs your live service's alert key; checked on your phone after release with Settings › Alerts › Send test alert");
+    }
     const cfg = await svc("config=1"); add("settings changes still reach the current Scan service", JSON.stringify(cfg.j || {}).includes("27386"), JSON.stringify((cfg.j || {}).config || {}).slice(0, 120));
   });
 });

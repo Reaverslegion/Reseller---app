@@ -5,6 +5,8 @@ on:
     branches: [main]
 jobs:
   build:
+    # signing lock (11 Nov 2026): this old branch never makes signed builds; only main does
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

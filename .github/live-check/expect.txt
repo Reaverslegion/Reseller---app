@@ -1,2 +1,4 @@
 commit=1620653
+wrangler=4.157.0
+active=ec61ce36
 since=2026-11-11T11:22:00Z

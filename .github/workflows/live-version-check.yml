@@ -24,7 +24,7 @@ jobs:
           C=$(grep -o '^commit=[0-9a-f]*' .github/live-check/expect.txt | cut -d= -f2); echo "expected commit: $C"
           mkdir -p offline && git show $C:worker.js > offline/worker.js && cd offline
           printf 'name = "flipscout-search"\nmain = "worker.js"\ncompatibility_date = "2024-09-23"\nkeep_vars = true\n\n[[kv_namespaces]]\nbinding = "BACKUP"\nid = "00000000000000000000000000000000"\n\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "flipscout-db"\ndatabase_id = "00000000-0000-0000-0000-000000000000"\n\n[triggers]\ncrons = ["* * * * *"]\n' > wrangler.toml
-          env -u CLOUDFLARE_API_TOKEN npx -y wrangler@3.114.17 deploy --dry-run --outdir dist > dry.txt 2>&1 || { cat dry.txt; exit 1; }
+          W=$(grep -o "^wrangler=[0-9.]*" ../.github/live-check/expect.txt | cut -d= -f2); W=${W:-3.114.17}; echo "offline build with wrangler $W (the version the deploy used)"; env -u CLOUDFLARE_API_TOKEN npx -y wrangler@$W deploy --dry-run --outdir dist > dry.txt 2>&1 || { cat dry.txt; exit 1; }
           ls -la dist; sha256sum worker.js dist/*.js
       - name: Read from Cloudflare (GET only) and compare
         env:

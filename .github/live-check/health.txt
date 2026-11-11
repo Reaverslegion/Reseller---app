@@ -1,2 +1,2 @@
 deploy=2026-11-11T11:22:00Z
-# 5-minute check after Release B
+# 60-minute check after Release B

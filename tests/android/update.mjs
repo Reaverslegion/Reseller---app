@@ -90,6 +90,11 @@ await R.journey(A, "Update to the testing build, installed over the top", async 
 // CAPACITOR 8 BRANCH ONLY (ROLLBACK_APK set): push alert registration on the real signed Capacitor 8 build (no alert is sent:
 // nothing here has your live alert key), then the Capacitor 6 rollback rehearsal installed over it, with every stored entry compared.
 const ROLLBACK = process.env.ROLLBACK_APK || "";
+// app-internal markers that change on every start by design (not your data): the crash-report bookmark (time of the
+// last Android "app closed" record already checked) and the "app is open" flag. Only these two are ignored; any other
+// difference fails and is NAMED (names only: values such as the Scan key are never printed).
+const INTERNAL = new Set(["flipscout_exit_seen", "flipscout_running"]);
+const diffKeys = (a, b) => [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((k) => !INTERNAL.has(k) && a[k] !== b[k]);
 let pushToken = "";
 if (ROLLBACK) {
   await R.journey("Push alerts (Capacitor 8)", "Alert registration on the signed Capacitor 8 build (nothing is sent)", async (step) => {
@@ -130,11 +135,15 @@ if (ROLLBACK) {
       for (const [k, n] of [["rules", "money rules"], ["set", "settings incl. Scan service address and key"], ["hunt", "categories and alert settings"], ["gate", "checklist"], ["base", "tracked items"]])
         R.add("Rollback rehearsal", `${n} identical`, x[k] === y[k] ? "PASS" : "FAIL", x[k] === y[k] ? "identical" : "CHANGED");
       R.add("Rollback rehearsal", "the unsaved add-item draft survived", b.flipscout_draft === c.flipscout_draft && (c.flipscout_draft || "").includes(DRAFT) ? "PASS" : "FAIL");
-      R.add("Rollback rehearsal", "nothing else stored changed", changed.length ? "FAIL" : "PASS", changed.length ? "changed: " + changed.join(", ") : "none changed");
+      const other = changed.filter((k) => !INTERNAL.has(k)), ign = changed.filter((k) => INTERNAL.has(k));
+      R.add("Rollback rehearsal", "nothing else stored changed (apart from the app's own start-up markers)", other.length ? "FAIL" : "PASS",
+        (other.length ? "CHANGED: " + other.join(", ") : "none changed") + (ign.length ? ` · start-up markers updated as designed: ${ign.join(", ")}` : ""));
       await app.eval(`tab="stock";render();1`); await sleep(1500); const st = await app.eval(`document.getElementById("app").innerText`); await app.shot("rollback - stock");
       R.add("Rollback rehearsal", "your items show on screen after going back", st.includes(M1.slice(0, 20)) ? "PASS" : "FAIL", st.replace(/\s+/g, " ").slice(0, 160));
       await leave(); await open(); const again = await app.eval(DUMP);
-      R.add("Rollback rehearsal", "still all there after closing and reopening", again === back ? "PASS" : "FAIL", again === back ? "identical" : "changed after reopening");
+      const ra = JSON.parse(again), rb = JSON.parse(back), d2 = diffKeys(rb, ra), gone = Object.keys(rb).filter((k) => !(k in ra));
+      R.add("Rollback rehearsal", "still all there after closing and reopening (every stored entry compared)", d2.length ? "FAIL" : "PASS",
+        d2.length ? `CHANGED: ${d2.join(", ")}${gone.length ? " · LOST: " + gone.join(", ") : ""}` : `identical (${Object.keys(ra).length} entries; only the start-up markers may change)`);
     });
   });
 }

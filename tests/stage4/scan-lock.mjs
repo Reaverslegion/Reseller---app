@@ -23,6 +23,10 @@ const reset = (extra = {}) => F.seedSql([["DELETE FROM deals"], ["DELETE FROM li
 
 try {
   await mode("normal");
+  // an eBay pause left by an EARLIER test (backend-gaps.mjs sends a fake 429 with Retry-After) would make the first scans here
+  // send nothing; wait for it to end, plus the Scan service's 30-second memory of it, so this test starts from a normal state
+  { const g = await kv("ebayGate"), until = Math.max(0, ...Object.values(g || {}).map((x) => +(x && x.until) || 0));
+    if (until > Date.now()) { console.log(`(waiting ${Math.ceil((until - Date.now()) / 1000) + 31} s for an eBay pause left by an earlier test to end)`); await sleep(until - Date.now() + 31000); } }
   await F.seedSql([["DELETE FROM deals"], ["DELETE FROM listings"]], { config: F.CONFIG, keyver: 3, fix1: true, rate: { h: 0, n: {} } });
   await F.call("fill=1", { cat: "27386", catName: "Graphics Cards", cond: "used", rows: F.soldRows(7) });
   const L = []; let id = 770000000000;

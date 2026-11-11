@@ -169,7 +169,9 @@ await t("automatic scans stop at 90% of eBay's day and say so; your phone's sear
   const d = await W.ebay(env, "/buy/browse/v1/item_summary/search?q=rtx"); assert.ok(d.itemSummaries, "phone search allowed (reserve)");
 });
 
-await t("five scans starting at the same moment near the 90% line: every call counted; the total stays inside the day (the 10% reserve absorbs the overlap)", async () => {
+// Release B (11 Nov 2026): the scan lease now lets only ONE of several scans starting together run (the others are skipped as
+// "another scan is running"), so they no longer overlap; counting and the daily limit are still checked
+await t("five scans starting at the same moment near the 90% line: only one runs (scan lease), every call counted, the total stays inside the day", async () => {
   const db = newDb(), env = mkEnv(db), copies = [load(), load(), load(), load(), load()]; await copies[0].schema(env); await copies[0].kvSet(env, "config", CFG);
   for (const c of copies) await c.schema(env); // each copy already running, as in production
   await copies[0].kvSet(env, "quota", { d: copies[0].ebayDay(), n: 4480 }); await copies[0].kvSet(env, "keyver", 3);
@@ -177,7 +179,7 @@ await t("five scans starting at the same moment near the 90% line: every call co
   const ran = rs.filter((r) => !r.skipped).length, q = (await copies[0].kvGet(env, "quota")).n; console.log("   results:", JSON.stringify(rs.map((r) => r.skipped || "scanned")));
   assert.equal(q, 4480 + browseCalls(), `every call counted (${browseCalls()} calls by ${ran} overlapping scans)`);
   assert.ok(q <= 5000, `stays inside eBay's 5,000 (${q})`);
-  console.log(`   (${ran} scans overlapped and made ${browseCalls()} eBay calls: 4480 → ${q})`); assert.ok(ran >= 2, "scans really overlapped"); await copies[0].kvSet(env, "lastRun", 0);
+  console.log(`   (${ran} scan ran and made ${browseCalls()} eBay calls: 4480 → ${q})`); assert.equal(ran, 1, "only one scan runs at a time"); assert.ok(rs.filter((r) => r.skipped).every((r) => /another scan is running|not due/.test(r.skipped)), "the others were skipped because a scan was running"); await copies[0].kvSet(env, "lastRun", 0);
   const after = await copies[0].sweep(env, false); assert.equal(after.skipped, "eBay daily limit reached", "the next scan stops at the 90% line");
 });
 
@@ -238,6 +240,27 @@ await t("phone search while paused: a clear message, nothing sent; when allowed,
 
 await t("existing behaviour kept: the deployed database speed fix is still in place", async () => {
   assert.ok(SRC.includes("AND type='BIN' AND +status='live'`).bind(...chunk, now - 7 * DAY, now - 2 * DAY)"));
+});
+
+
+// ---- Release B (11 Nov 2026): rate-limit protection combined with the scan lease and time limits ----
+const lockOf = async (W, env) => +((await env.DB.prepare("SELECT v FROM kv WHERE k='scanLock'").first()) || { v: 0 }).v;
+await t("Release B: eBay paused → the scan stops before taking the scan lease, so the next scan isn't blocked", async () => {
+  const W = load(), env = mkEnv(newDb()); await W.schema(env); await W.kvSet(env, "config", CFG);
+  NEXT.browse = too({ "retry-after": "120" }); await assert.rejects(W.ebay(env, "/buy/browse/v1/item_summary/search?q=a"), W.EbayPaused);
+  const r = await W.sweep({ ...env, AUTO: true }, false); assert.equal(r.skipped, "eBay paused");
+  assert.ok((await lockOf(W, env)) < Date.now(), "no scan lease left behind");
+});
+await t("Release B: eBay refuses part-way (429) → the scan ends, its lease is given back and every call that reached eBay is counted", async () => {
+  const W = load(), env = mkEnv(newDb()); await W.schema(env); await W.kvSet(env, "config", { ...CFG, cats: [...CFG.cats, { id: "177", name: "PC Laptops" }] });
+  let k = 0; NEXT.browse = (u) => (/item_summary\/search/.test(u) && ++k === 2 ? reply(429, { errors: [{ errorId: 2001 }] }, { "retry-after": "300" }) : reply(200, { itemSummaries: [] }));
+  const r = await W.sweep({ ...env, AUTO: true }, false); assert.ok(!r.skipped, JSON.stringify(r));
+  assert.ok((await lockOf(W, env)) < Date.now(), "lease given back after the refusal");
+  await W.saveQuota(env); assert.equal((await W.kvGet(env, "quota")).n, browseCalls(), "every call that reached eBay counted");
+});
+await t("Release B: every outside network call has a time limit (only the time-limited helper calls fetch directly)", async () => {
+  const direct = SRC.split("\n").filter((l) => /\bfetch\(/.test(l) && !/xfetch\(|async fetch\(request/.test(l));
+  assert.equal(direct.length, 1, "only one direct fetch: " + direct.join(" | ")); assert.match(direct[0], /AbortSignal\.timeout/);
 });
 
 console.log(`\n${n} checks passed`);

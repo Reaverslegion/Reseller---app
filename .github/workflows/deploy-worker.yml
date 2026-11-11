@@ -4,14 +4,17 @@ on:
   push:
     branches: [main]
     paths: [worker.js, .github/workflows/deploy-worker.yml]
+# Release B: the GitHub token here can only read the code (the deploy never changes the repository)
+permissions:
+  contents: read
 jobs:
   deploy:
     # safety lock: the live deployment only runs from main, never from another branch
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - name: Run all tests (nothing is uploaded if any fail)
@@ -22,7 +25,9 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           FCM_SA_B64: ${{ secrets.FCM_SA_B64 }}
         run: |
-          npm i -g wrangler@3
+          # Release B: Cloudflare's tool pinned to 4.157.0 (version 3 has known high-severity problems in its parts); the same version
+          # and the same commands (kv namespace list/create, d1 list --json, deploy, secret put) already deploy the test Scan service
+          npm i -g wrangler@4.157.0
           pick() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const i=s.search(/^\[/m);const a=i<0?[]:JSON.parse(s.slice(i));const n=a.find(x=>(x.title||x.name||"").endsWith(process.argv[1]));console.log(n?(n.id||n.uuid):"")})' "$1"; }
           KV=$(wrangler kv namespace list | pick flipscout-backup)
           if [ -z "$KV" ]; then wrangler kv namespace create flipscout-backup; KV=$(wrangler kv namespace list | pick flipscout-backup); fi

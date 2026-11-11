@@ -77,9 +77,10 @@ function pauseMsg(api, g) {
 async function officialLimits(env, ctx, name) {
   try {
     const token = await getToken(env);
-    const r = await fetch(`https://api.ebay.com/developer/analytics/v1_beta/rate_limit/?api_context=${ctx}&api_name=${name}`, { headers: { Authorization: "Bearer " + token } });
+    // with the same time limit as every other outside call (Release B: no network call can hang the Scan service)
+    const r = await xfetch(env, `https://api.ebay.com/developer/analytics/v1_beta/rate_limit/?api_context=${ctx}&api_name=${name}`, { headers: { Authorization: "Bearer " + token } });
     if (!r.ok) return null;
-    const d = await r.json(); let best = null, all = [];
+    const d = await timedBody(env, r.json()); let best = null, all = [];
     // only this API's figures (Browse, Taxonomy or Trading), even if eBay sends others too
     for (const rl of d.rateLimits || []) {
       if (String(rl.apiName || "").toLowerCase() !== name || (rl.apiContext && String(rl.apiContext).toLowerCase() !== ctx)) continue;
@@ -156,7 +157,7 @@ async function getToken(env) {
       if (t && t.exp > Date.now()) { TOKEN = t.t; TOKEN_EXP = t.exp; return TOKEN; }
     } catch (e) {}
   }
-  const res = await fetch("https://api.ebay.com/identity/v1/oauth2/token", {
+  const res = await xfetch(env, "https://api.ebay.com/identity/v1/oauth2/token", {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -165,30 +166,33 @@ async function getToken(env) {
     body: "grant_type=client_credentials&scope=" + encodeURIComponent("https://api.ebay.com/oauth/api_scope"),
   });
   if (!res.ok) throw new Error("eBay login failed (" + res.status + ")");
-  const d = await res.json();
+  const d = await timedBody(env, res.json());
   TOKEN = d.access_token;
   TOKEN_EXP = Date.now() + (d.expires_in - 300) * 1000;
   if (env.DB) { try { await kvSet(env, "token", { t: TOKEN, exp: TOKEN_EXP }); } catch (e) {} }
   return TOKEN;
 }
+// one eBay call counted; automatic work keeps the shared count current (saved every AUTO_SAVE_EVERY calls)
+async function countCall(env) { CALLS++; if (env.AUTO && env.DB && ++AUTO_N % AUTO_SAVE_EVERY === 0) { await saveQuota(env).catch(() => {}); USED_AT = 0; } }
+
 async function ebay(env, path) {
   const api = apiOf(path), g = env.DB ? await pausedFor(env, api) : null;
   if (g) throw new EbayPaused(pauseMsg(api, g)); // paused: no request is sent to eBay
   if (env.AUTO && env.DB) await autoGuard(env); // automatic work: hard ceiling (your phone's calls are never stopped by it)
   const token = await getToken(env);
-  CALLS++;
-  if (env.AUTO && env.DB && ++AUTO_N % AUTO_SAVE_EVERY === 0) { await saveQuota(env).catch(() => {}); USED_AT = 0; } // keep the shared count current
-  const r = await fetch("https://api.ebay.com" + path, {
+  // counted only if it really goes to eBay (a call the scan's time limits refused never leaves the Scan service)
+  let r; try { r = await xfetch(env, "https://api.ebay.com" + path, {
     headers: {
       Authorization: "Bearer " + token,
       "X-EBAY-C-MARKETPLACE-ID": "EBAY_GB",
       "X-EBAY-C-ENDUSERCTX": "contextualLocation=country=GB",
     },
-  });
+  }); } catch (e) { if (!e.scanBudget && !e.scanStop) await countCall(env); throw e; }
+  await countCall(env);
   if (r.status === 404) return { notFound: true };
   if (r.status === 429 && env.DB) { const p = await onLimited(env, api, r); throw new EbayPaused(pauseMsg(api, p)); }
   if (!r.ok) throw new Error("eBay request failed (" + r.status + ")");
-  return r.json();
+  return timedBody(env, r.json());
 }
 
 /* ---------------- database ---------------- */
@@ -234,6 +238,9 @@ async function schema(env) {
     "ALTER TABLE fillseen ADD COLUMN qty INTEGER", "ALTER TABLE fillseen ADD COLUMN qty_sold INTEGER", "ALTER TABLE fillseen ADD COLUMN gi_at INTEGER"]) {
     try { await D.prepare(sql).run(); } catch (e) { /* column already there */ }
   }
+  // the price book's extra columns (source, sales count, range, sell speed, stock): on a brand-new database they were only
+  // added by the first Fill, so the sales list and stock check failed until then ("no such column: lo")
+  await ensureSrc(env);
   SCHEMA = true;
 }
 async function kvGet(env, k, def) {
@@ -260,6 +267,23 @@ const median = (a) => { const s = [...a].sort((x, y) => x - y), m = s.length >> 
 const pct = (a, p) => { const s = [...a].sort((x, y) => x - y), i = (s.length - 1) * p, l = Math.floor(i), h = Math.ceil(i); return s[l] + (s[h] - s[l]) * (i - l); };
 function sellFee(x, r) { return r.seller === "private" ? 0 : x * r.feePct / 100 + (x > 10 ? r.feeFixed : Math.min(r.feeFixed, 0.3)); }
 // UK buyer protection fee on private sellers' items (estimate: £0.10 + 7% to £20, 4% to £300, 2% to £4,000)
+// work a stored deal's money out again after its price or postage changed (same sums as judging it; see sweep step 5).
+// The selling price it's compared with (med/low) and the postage out stay as judged.
+function reprice(d, r, oldShip) {
+  const r2 = (x) => Math.round(x * 100) / 100, fee = (p) => (d.bpfOn ? bpf(p) : 0), out = d.out != null ? d.out : (r.post + r.pack), sf = (x) => sellFee(x, r);
+  d.extra = r2(fee(d.price)); d.cost = r2(d.price + d.ship + d.extra);
+  d.profit = r2(d.med - sf(d.med) - out - d.cost);
+  if (d.low != null) d.lowProfit = r2(d.low - sf(d.low) - out - d.cost);
+  d.roi = d.cost + r.pack > 0 ? Math.round((d.profit / (d.cost + r.pack)) * 100) : 0;
+  if (d.type === "AUC") {
+    if (d.maxBid != null && oldShip != null && oldShip !== d.ship) d.maxBid = Math.floor((d.maxBid + oldShip - d.ship) * 100) / 100; // more postage, lower max bid
+    d.maxItem = d.maxBid;
+  } else if (d.maxPay != null) d.maxItem = Math.floor((d.maxPay - d.ship - fee(d.maxPay)) * 100) / 100;
+  const it = d.type === "AUC" ? d.maxBid : d.maxItem;
+  if (it != null) d.profitAtMax = r2(d.med - sf(d.med) - out - (it + d.ship + fee(it)));
+  d.repricedAt = Date.now();
+  return d;
+}
 function bpf(p) { return 0.1 + Math.min(p, 20) * 0.07 + Math.max(0, Math.min(p, 300) - 20) * 0.04 + Math.max(0, Math.min(p, 4000) - 300) * 0.02; }
 function maxPay(med, low, r) {
   const out = r.post + r.pack, N = med - sellFee(med, r) - out, k = r.minRoi / 100;
@@ -851,7 +875,7 @@ const GI_PER_SCAN = 25, GI_DAILY = 4000; // Trading API calls: well under eBay's
 const ebayConnectUrl = (env) => "https://auth.ebay.com/oauth2/authorize?client_id=" + encodeURIComponent(env.EBAY_ID) + "&response_type=code&redirect_uri=" +
   encodeURIComponent(RUNAME) + "&scope=" + encodeURIComponent(USER_SCOPE);
 async function ebayUserTokenCall(env, body) {
-  const res = await fetch("https://api.ebay.com/identity/v1/oauth2/token", { method: "POST", body,
+  const res = await xfetch(env, "https://api.ebay.com/identity/v1/oauth2/token", { method: "POST", body,
     headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: "Basic " + btoa(env.EBAY_ID + ":" + env.EBAY_SECRET) } });
   const d = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error("eBay sign-in refused (" + res.status + "): " + String(d.error_description || d.error || "").slice(0, 120));
@@ -879,9 +903,9 @@ async function ebayUserToken(env) {
 const xmlTag = (x, t) => { const m = x.match(new RegExp("<" + t + ">([^<]*)</" + t + ">")); return m ? m[1] : null; };
 async function getItemTrading(env, tok, id) {
   const body = `<?xml version="1.0" encoding="utf-8"?><GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents"><ItemID>${String(id).replace(/\D/g, "")}</ItemID><DetailLevel>ReturnAll</DetailLevel></GetItemRequest>`;
-  const res = await fetch("https://api.ebay.com/ws/api.dll", { method: "POST", body, headers: { "X-EBAY-API-IAF-TOKEN": tok, "Content-Type": "text/xml",
+  const res = await xfetch(env, "https://api.ebay.com/ws/api.dll", { method: "POST", body, headers: { "X-EBAY-API-IAF-TOKEN": tok, "Content-Type": "text/xml",
     "X-EBAY-API-SITEID": "3", "X-EBAY-API-COMPATIBILITY-LEVEL": "1423", "X-EBAY-API-CALL-NAME": "GetItem" } });
-  const x = await res.text();
+  const x = await timedBody(env, res.text());
   // over eBay's limit (HTTP 429, or Trading error 518 "call usage limit"): pause sold-details lookups; the item is NOT marked missing
   if ((res.status === 429 || /<ErrorCode>518<\/ErrorCode>/.test(x)) && env.DB) { const p = await onLimited(env, "trading", res, x); throw new EbayPaused(pauseMsg("trading", p)); }
   if (/<ErrorCode>(?:21917053|931|932|21916984)<\/ErrorCode>/.test(x)) throw new Error("eBay token no longer accepted"); // expired or revoked
@@ -1047,6 +1071,8 @@ async function closing(env) {
 // until a sample of its titles has been checked and the category is added here with the date.
 // a Buy It Now under this share of the usual sold price is tagged "Very cheap" (see the deal scoring)
 const VERY_CHEAP = 0.6, HIDE_BELOW = 0.4;
+// most deals sent to the app and re-judged each scan (the app is told the true total, and says if any are left out)
+const DEALS_MAX = 3000;
 // a price needs at least this many sales behind it before anything can be a deal
 const MIN_SALES = 8;
 const VERIFIED_CATS = {
@@ -1063,13 +1089,19 @@ const VERIFIED_CATS = {
   "80053": "2026-10-26", // Monitors
   "15709": "2026-10-26", // Trainers
 };
-const DEFAULT_RULES = { cheap: true, maxSpend: 0, minProfit: 20, minRoi: 0, seller: "business", feePct: 12.8, feeFixed: 0.4, post: 5, pack: 1, bpf: true, alertScore: 70, minScore: 40 };
+const DEFAULT_RULES = { cheap: true, maxSpend: 0, minProfit: 20, minRoi: 0, seller: "business", feePct: 12.8, feeFixed: 0.4, post: 5, pack: 1, bpf: true, alertScore: 70, minScore: 40, riskPct: 0 };
 function cleanConfig(c) {
   c = c || {};
   return {
     // off: kept in your list but not searched, so eBay calls go to the categories you've ticked
     cats: Array.isArray(c.cats) ? c.cats.filter((x) => x && /^\d+$/.test(String(x.id))).slice(0, 15).map((x) => ({ id: String(x.id), name: String(x.name || "").slice(0, 80), off: !!x.off })) : [],
-    rules: (() => { const r = { ...DEFAULT_RULES, ...(c.rules || {}) }; r.maxSpend = Math.max(0, Math.min(100000, +r.maxSpend || 0)); return r; })(),
+    // every setting that feeds the money sums is checked here too (old app versions, restores, anyone with the key):
+    // numbers in range, never text or negative; anything unusable falls back to the default
+    rules: (() => { const r = { ...DEFAULT_RULES, ...(c.rules || {}) }, D0 = DEFAULT_RULES;
+      const num = (k, lo, hi) => { const v = +r[k]; r[k] = Number.isFinite(v) && v >= lo && v <= hi ? v : D0[k]; };
+      r.maxSpend = Math.max(0, Math.min(100000, +r.maxSpend || 0));
+      num("minProfit", 0, 10000); num("minRoi", 0, 1000); num("feePct", 0, 50); num("feeFixed", 0, 10); num("post", 0, 200); num("pack", 0, 100); num("alertScore", 0, 100); num("minScore", 0, 100); num("riskPct", 0, 30); // riskPct: optional risk allowance, shown only, never a fee
+      r.seller = r.seller === "private" ? "private" : "business"; r.bpf = r.bpf !== false; r.cheap = r.cheap !== false; return r; })(),
     types: { bin: true, auction: true, misspelt: true, spares: false, ...(c.types || {}) },
     region: c.region === "any" ? "any" : "uk",
     alerts: c.alerts !== false,
@@ -1190,21 +1222,52 @@ async function stockStep(env, cfg, seen, report) {
   await kvSet(env, "stock", st);
 }
 
+// What eBay says about postage, as one of:
+//   free    eBay gives a fixed £0 postage          fixed   eBay gives a fixed postage price
+//   est     eBay calculates it and gives its estimate   calc    eBay calculates it but gives no figure
+//   unknown postage is offered but no price is given    collect collection only (no postage offered, or only pickup)
+// For calc and unknown, sums use a careful allowance (POST_ALLOW, or the model's usual postage if higher) so profit is
+// never overstated; the app says the postage isn't known. (Before 4 Nov these were all counted as free postage.)
+const POST_ALLOW = 5;
+// Postage OUT (what it costs you to send it on once sold). The price book's postage is what buyers paid, and it is
+// already inside "sells for", so it is counted once. When similar items sold with free postage (0) or postage isn't
+// known, you still pay to send it, so your own postage setting is used, never £0 (7 Nov 2026 profit check: 507 deals
+// assumed £0). Big items cost more to send than a normal parcel, so for these categories at least this is used.
+// £12 / £15 are PROVISIONAL ESTIMATES (owner-approved for testing, 7 Nov 2026), not real shipping quotes.
+// It only ever raises the postage, never lowers it below your setting or what buyers paid.
+const BULKY_POST = [[/monitor|television|\btvs?\b|projector/i, 12], [/desktop|all-in-one|pc tower|server|computer case|printer/i, 15]];
+function bulkyPost(catName) { for (const [re, v] of BULKY_POST) if (re.test(String(catName || ""))) return v; return 0; }
+function postOutFor(bookPost, r, catName) {
+  const sold = bookPost > 0 ? bookPost : null, base = sold != null ? sold : r.post, size = bulkyPost(catName);
+  return size > base ? { post: size, src: "size" } : { post: base, src: sold != null ? "sold" : "setting" };
+}
+function postageOf(it) {
+  const L = (it.shippingOptions || []).filter(Boolean), pickup = (it.pickupOptions || []).length > 0;
+  if (!L.length) return { ship: 0, post: "collect" };
+  const calc = L.some((o) => /CALCULATED/i.test(o.shippingCostType || ""));
+  const priced = L.find((o) => o.shippingCost && Number.isFinite(parseFloat(o.shippingCost.value)));
+  if (priced) { const v = parseFloat(priced.shippingCost.value); return { ship: v, post: calc ? "est" : v === 0 ? "free" : "fixed" }; }
+  if (calc) return { ship: 0, post: "calc" };
+  if (pickup) return { ship: 0, post: "collect" };
+  return { ship: 0, post: "unknown" };
+}
+const postUnknown = (s) => s && (s.post === "calc" || s.post === "unknown");
 // one eBay search result → the listing record FlipScout keeps (used by scans and the full stock check)
 function toListing(it, c, type) {
   const id = it.legacyItemId || String(it.itemId || "").split("|")[1];
   if (!id) return null;
   const auction = type === "AUC";
   const pr = auction && it.currentBidPrice ? it.currentBidPrice : it.price;
+  // eBay UK normally gives every price in pounds; a price in another currency would be read as pounds, so skip it
+  if (pr && pr.currency && pr.currency !== "GBP") return null;
   const price = pr ? parseFloat(pr.value) : 0;
-  const so = (it.shippingOptions || [])[0];
-  const ship = so && so.shippingCost ? parseFloat(so.shippingCost.value) || 0 : 0;
+  const { ship, post } = postageOf(it);
   // collection only: eBay sends no postage option (or only local pickup). Not "free post"
-  const collect = !(it.shippingOptions || []).some((o) => o && o.shippingCost) && ((it.pickupOptions || []).length > 0 || !(it.shippingOptions || []).length);
+  const collect = post === "collect";
   const bucket = condBucket(it.conditionId);
   return {
     id, cat: c.id, catName: c.name, title: it.title || "", cond: it.condition || "", condId: it.conditionId || "", bucket,
-    type, price, ship, bids: +it.bidCount || 0, end: it.itemEndDate ? Date.parse(it.itemEndDate) : null,
+    type, price, ship, post, bids: +it.bidCount || 0, end: it.itemEndDate ? Date.parse(it.itemEndDate) : null,
     created: it.itemCreationDate ? Date.parse(it.itemCreationDate) : null,
     seller: it.seller ? { name: it.seller.username || "", fb: +it.seller.feedbackScore || 0, pct: parseFloat(it.seller.feedbackPercentage) || 0, biz: it.seller.sellerAccountType === "BUSINESS" } : { name: "", fb: 0, pct: 0 },
     loc: (it.itemLocation && it.itemLocation.country) || "", img: it.image ? it.image.imageUrl : "",
@@ -1213,6 +1276,58 @@ function toListing(it, c, type) {
     ...(() => { const g = groupOf(it, c.id, c.name, bucket), w = groupOf(it, c.id, c.name, "used"); return { pkey: g ? g.key : null, matchLabel: g ? g.label : "", matchQ: g ? g.match : 0, workKey: w ? w.key : null, workQ: w ? w.match : 0 }; })(),
   };
 }
+// ONE SCAN AT A TIME (9 Nov 2026): manual + manual, manual + background and background + background used to be able to
+// run together (each read "when was the last scan?" before the other wrote it), doubling eBay calls. A scan now has to
+// claim a lease first, in ONE database statement (the row is only written if no unexpired lease is there), so only one
+// request can win. The lease is given back when the scan ends; if a scan is cut off, it runs out on its own after
+// SCAN_LEASE (longer than Cloudflare lets a scheduled job run), so it can never block scans for ever.
+const SCAN_LEASE = 15 * 60000;
+async function scanClaim(env, now) {
+  const until = String(now + SCAN_LEASE + Math.random()); // unique, so only the holder can give it back
+  const r = await env.DB.prepare("INSERT INTO kv(k,v) VALUES('scanLock',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v WHERE CAST(kv.v AS REAL) < ?").bind(until, now).run();
+  return r && r.meta && r.meta.changes === 1 ? until : null;
+}
+async function scanRelease(env, until) { try { await env.DB.prepare("UPDATE kv SET v='0' WHERE k='scanLock' AND v=?").bind(until).run(); } catch (e) {} }
+
+// TIME LIMITS (9 Nov 2026), so a scan always ends well inside its 15-minute lease, even if eBay stops answering:
+//  - every outside network call gives up after NET_TIMEOUT (eBay, eBay sign-in, Google alerts)
+//  - inside a scan, no new network call starts after SCAN_SOFT (the scan saves what it has and says it's incomplete)
+//  - after SCAN_HARD, no database query or network call runs at all inside that scan
+// Worst case: SCAN_HARD + one call already running (Cloudflare stops a database query after 30 s; ours after 20 s)
+// + a little processing = about 11 minutes, leaving room for clock differences before the lease runs out.
+// kv "scanLimits" can make these shorter (used by the tests), never longer.
+const NET_TIMEOUT = 20000, SCAN_SOFT = 8 * 60000, SCAN_HARD = 10 * 60000;
+function scanLimits(v) {
+  const pick = (x, d) => (Number.isFinite(+x) && +x > 0 ? Math.min(+x, d) : d), o = v || {};
+  const hard = pick(o.hard, SCAN_HARD);
+  return { soft: Math.min(pick(o.soft, SCAN_SOFT), hard), hard, net: pick(o.net, NET_TIMEOUT) };
+}
+const scanErr = (msg, flag) => Object.assign(new Error(msg), { [flag]: true });
+// the env a scan runs with: the same bindings, but its database refuses every query once the hard stop has passed
+function scanScope(env, t0, lim) {
+  const sc = { soft: t0 + lim.soft, hard: t0 + lim.hard, net: lim.net, budget: false }, raw = env.DB;
+  const chk = () => { if (Date.now() > sc.hard) throw scanErr("stopped at the scan's safety limit", "scanStop"); };
+  const wrap = (st) => ({ __st: st, bind: (...a) => wrap(st.bind(...a)), run: async (...a) => { chk(); return st.run(...a); },
+    all: async (...a) => { chk(); return st.all(...a); }, first: async (...a) => { chk(); return st.first(...a); }, raw: async (...a) => { chk(); return st.raw(...a); } });
+  return { ...env, __scan: sc, DB: { prepare: (q) => wrap(raw.prepare(q)), batch: async (list) => { chk(); return raw.batch(list.map((x) => (x && x.__st) || x)); } } };
+}
+// reading an answer is covered by the same timeout (Cloudflare cancels a stalled body read when the signal fires);
+// this only gives that timeout the same clear wording as one before the headers arrive. Every other error is unchanged.
+async function timedBody(env, p) {
+  try { return await p; }
+  catch (e) { if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw new Error(`no answer within ${Math.round((((env && env.__scan) || {}).net || NET_TIMEOUT) / 1000)} seconds`); throw e; }
+}
+// every outside network call goes through here
+async function xfetch(env, url, opts = {}) {
+  const sc = env && env.__scan;
+  if (sc) { const t = Date.now();
+    if (t > sc.hard) throw scanErr("stopped at the scan's safety limit", "scanStop");
+    if (t > sc.soft) { sc.budget = true; throw scanErr("not started: the scan's time budget was used up", "scanBudget"); } }
+  const ms = (sc && sc.net) || NET_TIMEOUT;
+  try { return await fetch(url, { ...opts, signal: AbortSignal.timeout(ms) }); }
+  catch (e) { if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw new Error(`no answer within ${Math.round(ms / 1000)} seconds`); throw e; }
+}
+
 async function sweep(env, manual) {
   await schema(env);
   const cfg0 = cleanConfig(await kvGet(env, "config", null));
@@ -1249,8 +1364,14 @@ async function sweep(env, manual) {
       return { skipped: why };
     }
   }
+  const lease = await scanClaim(env, now);
+  if (!lease) return manual ? { busy: true, error: "A scan is already running. Try again in a minute." } : { skipped: "another scan is running" };
+  // from here on the scan runs inside its time limits (see scanScope); the lease is always given back with the real env
+  const rawEnv = env, report = { checked: 0, newDeals: 0, hidden: 0, errors: [] };
+  env = scanScope(rawEnv, now, scanLimits(await kvGet(rawEnv, "scanLimits", null)));
+  try {
   await kvSet(env, "lastRun", now);
-  const D = env.DB, r = cfg.rules, report = { checked: 0, newDeals: 0, hidden: 0, errors: [] };
+  const D = env.DB, r = cfg.rules;
 
   // 0. matching rules changed (spec-based groups): start learning afresh once
   if ((await kvGet(env, "keyver", 1)) < 3) {
@@ -1372,6 +1493,7 @@ async function sweep(env, manual) {
   const seen = [];
   let halted = false;
   for (const c of cats) {
+    if (Date.now() > env.__scan.soft) { env.__scan.budget = true; break; } // time budget used: the rest waits for the next scan
     const calls = [];
     // fewer categories ticked = each one searched deeper: 1–2 categories get up to 400 newest Buy It Nows and 200 ending auctions
     const deep = cfg.cats.length <= 2 ? 2 : cfg.cats.length <= 4 ? 1 : 0;
@@ -1396,7 +1518,7 @@ async function sweep(env, manual) {
   if ((await quota(env)) + CALLS < EBAY_DAILY * STOCK_UNTIL) {
     try { await stockStep(env, cfg, seen, report); } catch (e) { report.errors.push("stock check: " + e.message); }
   }
-  if (!seen.length) { await saveQuota(env); await kvSet(env, "lastReport", { at: now, ...report }); return report; }
+  if (!seen.length) { scanNote(env, report); await saveQuota(env); await kvSet(env, "lastReport", { at: now, ...report }); return report; }
 
   // 3. remember everything we saw (this builds the sold history over time)
   const firstSeen = {}, have = {};
@@ -1436,7 +1558,7 @@ async function sweep(env, manual) {
     }
     // every deal already on the list is judged again too, so new rules and new prices reach it straight away
     // (an auction listed days ago and ending tonight isn't in the newest or ending-soonest results yet)
-    const dl = await D.prepare("SELECT l.id, l.data, l.status, l.end_at, l.last_seen FROM deals d JOIN listings l ON l.id = d.id WHERE d.expires > ? LIMIT 200").bind(now).all();
+    const dl = await D.prepare("SELECT l.id, l.data, l.status, l.end_at, l.last_seen FROM deals d JOIN listings l ON l.id = d.id WHERE d.expires > ? LIMIT ?").bind(now, DEALS_MAX).all();
     const inRun = new Set(rowsAll.map((x) => x.id));
     for (const x of dl.results || []) if (!inRun.has(x.id) && x.status === "live" && x.data && (!x.end_at || x.end_at > now + 5 * 60000)) { rowsAll.push(x); inRun.add(x.id); }
     for (const row of rowsAll) {
@@ -1510,6 +1632,8 @@ async function sweep(env, manual) {
   const deals = [], spares = [], later = [], whyId = {}; // whyId: why each listing isn't a deal (kept for removed deals)
   let hidden = 0;
   for (const s of cands) {
+    // postage calculated by eBay without a figure, or not stated: count a careful allowance, never £0 (see postageOf)
+    if (postUnknown(s)) { s.ship = POST_ALLOW; s.shipAllow = true; }
     // eBay only charges buyers its protection fee on private sellers' items (business sellers' items have none).
     // If eBay doesn't say which kind of seller it is, the fee is counted, to be safe.
     const pf = !!r.bpf && !(s.seller && s.seller.biz);
@@ -1519,7 +1643,8 @@ async function sweep(env, manual) {
       const m = market(s.workKey, s.id, s.workQ || 0.5);
       if (!m || s.price + s.ship > m.med * 0.6) continue;
       if (SCAM_WORDS.test(s.title)) { hidden++; whyId[s.id] = "scam shield"; continue; }
-      spares.push({ ...s, kind: "spares", tags: [], score: 0, cost: Math.round((s.price + s.ship + extra) * 100) / 100, workMed: Math.round(m.med), n: m.n, src: m.src });
+      const sales = m.src === "asking" ? 0 : m.src === "book" ? (m.bookN || m.n || 0) : m.n;
+      spares.push({ ...s, kind: "spares", tags: sales === 0 ? ["Price not confirmed by sales"] : sales < MIN_SALES ? ["Few sales behind the price"] : [], score: 0, cost: Math.round((s.price + s.ship + extra) * 100) / 100, workMed: Math.round(m.med), n: m.n, src: m.src, sales, bookN: m.bookN || null });
       continue;
     }
     if (RISK_WORDS.test(s.title)) { why.risky++; whyId[s.id] = "risky"; continue; }
@@ -1528,6 +1653,7 @@ async function sweep(env, manual) {
     if (BOX_END.test(s.title)) { hidden++; whyId[s.id] = "scam shield"; continue; }
     const m = market(s.pkey, s.id, s.matchQ || 0.5);
     if (!m) { why.noData++; whyId[s.id] = "noData"; continue; }
+    if (s.shipAllow && m.post > s.ship) s.ship = Math.round(m.post * 100) / 100; // this model usually costs more to post
     // prices from fewer than 8 sales were often wrong (5–9 sales: 37% within 10% in the 29 Oct accuracy test)
     if ((m.src === "book" ? m.bookN || m.n : m.n) < MIN_SALES) { why.noData++; whyId[s.id] = "under " + MIN_SALES + " sales"; continue; }
     if (m.spread > 0.9 && (s.matchQ || 0.5) < 0.8) { why.noData++; whyId[s.id] = "noData"; continue; } // prices all over the place: not confident
@@ -1541,7 +1667,7 @@ async function sweep(env, manual) {
     // a Buy It Now at under a fifth of what it sells for is almost always a box, a photo, a code or a scam
     // under 40% of the usual price is almost always the wrong item, a fault or a scam (30 Oct audit), so it isn't shown
     if (s.type !== "AUC" && cost < m.med * HIDE_BELOW) { hidden++; whyId[s.id] = "far below usual price"; continue; }
-    const ri = m.post != null ? { ...r, post: m.post } : r; // postage out for this product, from the price book
+    const po = postOutFor(m.post, r, s.catName), ri = { ...r, post: po.post }; // postage out for this product (see postOutFor)
     // the most to pay in total, never above your spending limit (so max bids and max offers stay under it too)
     const mp = r.maxSpend > 0 ? Math.min(maxPay(m.med, m.low, ri), r.maxSpend) : maxPay(m.med, m.low, ri);
     if (mp <= 0) { why.fair++; whyId[s.id] = "fair"; continue; }
@@ -1610,7 +1736,9 @@ async function sweep(env, manual) {
     if (veryCheap) { score = Math.min(score, r.alertScore - 1, 69); tags.push("Very cheap"); }
     if (m.src === "book") tags.push(m.fill ? "Price from category check" : "Price from price book");
     if (m.src === "book" && m.bookN && m.bookN < 10) tags.push("Few sales behind the price");
+    if (po.src === "size") tags.push("Large item to post");
     if (SPECIAL.test(s.title)) tags.push("Special version");
+    if (s.shipAllow) tags.push("Postage not known"); else if (s.post === "est") tags.push("Postage estimated");
     if (slow) tags.push("Slow seller");
     if (m.trend === "falling") tags.push("Prices falling");
     if (score < r.minScore) { why.lowScore++; whyId[s.id] = "lowScore"; continue; }
@@ -1623,7 +1751,9 @@ async function sweep(env, manual) {
       profitAtMax: (() => { const it = s.type === "AUC" ? maxBid : Math.floor((mp - s.ship - (pf ? bpf(mp) : 0)) * 100) / 100; return Math.round((m.med - sellFee(m.med, r) - out - (it + s.ship + (pf ? bpf(it) : 0))) * 100) / 100; })(),
       med: Math.round(m.med * 100) / 100, low: Math.round(m.low * 100) / 100,
       n: m.n, src: m.src, fill: !!m.fill, bookN: m.bookN || null, score, parts: { evidence: ev, match, seller: sel, margin: mar, competition: comp, demand: dem }, tags,
-      sellFee: Math.round(sellFee(m.med, r) * 100) / 100, out: Math.round(out * 100) / 100,
+      sellFee: Math.round(sellFee(m.med, r) * 100) / 100, out: Math.round(out * 100) / 100, postSrc: po.src,
+      // comparable sales behind "sells for" (asking-price guesses have none)
+      sales: m.src === "asking" ? 0 : m.src === "book" ? (m.bookN || m.n || 0) : m.n,
       st: m.st != null ? m.st : null, trend: m.trend || null, bookAt: m.at || null, speed, speedKey: m.row && m.row.sn >= SPEED_MIN_SALES ? m.row.pkey : null,
       // evidence shown on the deal page: typical price range and how recent the newest evidence is
       rangeLo: m.lo != null ? Math.round(m.lo) : null, rangeHi: m.hi != null ? Math.round(m.hi) : null, lastAt: m.lastAt || null,
@@ -1642,7 +1772,7 @@ async function sweep(env, manual) {
   } catch (e) {}
   // ending later: cheap high-start auctions with days left. Shown with a Follow button, never alerted
   try {
-    const keep = new Set(cands.map((s) => s.id)), mk = (d) => ({ id: d.id, collect: d.collect, where: d.where, title: d.title, img: d.img, url: d.url, cond: d.cond, cat: d.cat, catName: d.catName, type: "AUC",
+    const keep = new Set(cands.map((s) => s.id)), mk = (d) => ({ id: d.id, collect: d.collect, where: d.where, post: d.post, shipAllow: d.shipAllow, title: d.title, img: d.img, url: d.url, cond: d.cond, cat: d.cat, catName: d.catName, type: "AUC",
       price: d.price, ship: d.ship, bids: d.bids, end: d.end, med: d.med, maxBid: d.maxBid, maxItem: d.maxItem, maxPay: d.maxPay, profitAtMax: d.profitAtMax, sellFee: d.sellFee, out: d.out,
       score: d.score, n: d.n, src: d.src, fill: d.fill, rangeLo: d.rangeLo, rangeHi: d.rangeHi, seen: now });
     const old = (await kvGet(env, "later", [])).filter((x) => !keep.has(x.id) && x.end - now > 12 * 3600e3 && now - x.seen < 3 * DAY);
@@ -1763,10 +1893,14 @@ async function sweep(env, manual) {
       if (d.kind !== "deal" || !VERIFIED_CATS[String(d.cat)]) continue; // never alert on unchecked categories
       const v = await checkLive(env, d.id);
       if (v.fault) continue; // the description mentions a fault: no alert
-      if (!v.live) continue; // sold or ended since we found it: no alert
-      const msg = d.type === "AUC"
-        ? `Bid up to £${d.maxBid.toFixed(2)} (now £${d.price.toFixed(2)}). Score ${d.score}.`
-        : `£${d.cost.toFixed(2)} now, about £${d.profit.toFixed(0)} profit. Score ${d.score}.`;
+      if (!v.live || v.tooDear) continue; // sold, ended or now too dear (and removed): no alert
+      // claim it first: if another scan running at the same moment already took it, don't send it again
+      const claim = await D.prepare("UPDATE deals SET notified=1 WHERE id=? AND notified=0").bind(d.id).run();
+      if (!(claim && claim.meta && claim.meta.changes)) continue;
+      const c = v.deal ? { ...d, ...v.deal } : d; // the figures just re-checked, not the ones from before
+      const msg = c.type === "AUC"
+        ? `Bid up to £${c.maxBid.toFixed(2)} (now £${c.price.toFixed(2)}). Score ${c.score}.`
+        : `£${c.cost.toFixed(2)} now, about £${c.profit.toFixed(0)} profit. Score ${c.score}.`;
       await push(env, d.title.slice(0, 80), msg, { url: d.url, id: d.id, kind: "deal" });
     }
     await D.prepare("UPDATE deals SET notified=1 WHERE notified=0").run();
@@ -1786,10 +1920,27 @@ async function sweep(env, manual) {
       await kvSet(env, "tracked", { at: now, m: report.tracked });
     }
   } catch (e) {}
+  scanNote(env, report);
   await kvSet(env, "lastReport", { at: now, ...report, cats: cats.map((c) => c.name) });
   // remember the rules this scan used: a change triggers the 3-day second look on the next scan
   await kvSet(env, "rulesSig", JSON.stringify([r, cfg.cats.map((c) => c.id)]));
   return report;
+  } catch (e) {
+    // the hard stop: nothing more can run, so report what happened (with the real env) and let the next scan carry on
+    if (!e || !e.scanStop) throw e;
+    report.incomplete = "safety limit";
+    report.errors = report.errors.filter((x) => !/time budget was used up|safety limit/.test(x));
+    report.errors.unshift("Scan stopped early (safety limit reached): the rest is checked next time. Deals already found are kept.");
+    try { await kvSet(rawEnv, "lastReport", { at: now, ...report }); } catch (x) {}
+    return report;
+  } finally { await scanRelease(rawEnv, lease); }
+}
+// a scan that used up its time budget says so (once), so the app shows it and the next scan carries on
+function scanNote(env, report) {
+  if (!env.__scan || !env.__scan.budget || report.incomplete) return;
+  report.incomplete = "time budget";
+  report.errors = report.errors.filter((x) => !/time budget was used up/.test(x));
+  report.errors.unshift("Scan stopped early: its time budget was used up, so not everything was checked. The rest is checked next time. Deals already found are kept.");
 }
 
 /* ---------------- FlipScout push alerts (Firebase Cloud Messaging v1) ---------------- */
@@ -1806,16 +1957,50 @@ async function fcmAccess(env) {
   const der = Uint8Array.from(atob(pem), (ch) => ch.charCodeAt(0));
   const key = await crypto.subtle.importKey("pkcs8", der, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
   const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(head + "." + body));
-  const r = await fetch("https://oauth2.googleapis.com/token", {
+  const r = await xfetch(env, "https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: "grant_type=" + encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer") + "&assertion=" + head + "." + body + "." + b64url(sig),
   });
   if (!r.ok) throw new Error("alert sign-in failed (" + r.status + ")");
-  const d = await r.json();
+  const d = await timedBody(env, r.json());
   const out = { t: d.access_token, project: sa.project_id, exp: Date.now() + (d.expires_in - 300) * 1000 };
   await kvSet(env, "fcmtok", out);
   return out;
+}
+/* ---------------- problem log (Stage 4 monitoring, 4 Nov 2026) ----------------
+   App crashes and errors, failed Scan service requests, database errors and background-job failures go into the
+   "errlog" table of THIS Scan service only (no outside service). Messages are cleaned first: no keys, tokens, e-mail
+   addresses or web-address details, and cut short. The same problem counts up rather than adding rows; the newest
+   ERR_KEEP problems are kept. A problem that keeps happening sends one phone alert per 6 hours (existing alerts). */
+const ERR_KEEP = 300;
+function cleanMsg(s) {
+  return String(s == null ? "" : s)
+    .replace(/((?:^|[?&\s,;:"'({])(?:[\w-]*key|token|code|access_token|refresh_token|sig|password|passwd|pwd|secret|auth)["']?\s*[=:]\s*["']?)[^&\s"',;)}]+/gi, "$1[hidden]")
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=-]+/gi, "$1 [hidden]")
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[email]")
+    .replace(/https?:\/\/[^\s"'<>]+/g, (u) => u.split(/[?#]/)[0])
+    .replace(/[A-Za-z0-9_+\/=-]{24,}/g, "[hidden]")
+    .replace(/\s+/g, " ").trim().slice(0, 300);
+}
+// a request's JSON body; garbled data is the sender's mistake (answered "bad request", 400), not a Scan service failure
+async function bodyJson(request) { const t = await request.text(); try { return JSON.parse(t); } catch (e) { const x = new Error("bad request: the data sent isn't valid JSON"); x.bad = true; throw x; } }
+const endpointOf = (request) => { try { return [...new URL(request.url).searchParams.keys()].find((k) => k !== "key") || "(none)"; } catch (e) { return "?"; } };
+async function logProblem(env, src, kind, msg, extra = {}) {
+  try {
+    if (!env.DB) return;
+    const D = env.DB, now = Date.now(), m = cleanMsg(msg), where = cleanMsg(extra.where || "").slice(0, 80), ver = cleanMsg(extra.ver || "").slice(0, 40);
+    const k = cleanMsg(kind).slice(0, 60), sig = (src + "|" + k + "|" + where + "|" + m.replace(/\d+/g, "#")).slice(0, 400);
+    await D.prepare("CREATE TABLE IF NOT EXISTS errlog (sig TEXT PRIMARY KEY, src TEXT, kind TEXT, msg TEXT, place TEXT, ver TEXT, n INTEGER, first INTEGER, at INTEGER, alerted INTEGER)").run();
+    await D.prepare("INSERT INTO errlog (sig,src,kind,msg,place,ver,n,first,at,alerted) VALUES (?,?,?,?,?,?,1,?,?,0) ON CONFLICT(sig) DO UPDATE SET n=n+1, at=excluded.at, ver=excluded.ver, msg=excluded.msg")
+      .bind(sig, src, k, m, where, ver, now, now).run();
+    const row = await D.prepare("SELECT n, alerted FROM errlog WHERE sig=?").bind(sig).first();
+    if (row && !/^notice/.test(k) && row.n >= (src === "app" ? 5 : 3) && now - (row.alerted || 0) > 6 * 3600e3) {
+      await D.prepare("UPDATE errlog SET alerted=? WHERE sig=?").bind(now, sig).run();
+      try { await push(env, "FlipScout problem", `${k}${where ? " (" + where + ")" : ""}: ${m.slice(0, 120)} · ${row.n} times`, { kind: "problem" }); } catch (e) {}
+    }
+    await D.prepare(`DELETE FROM errlog WHERE sig NOT IN (SELECT sig FROM errlog ORDER BY at DESC LIMIT ${ERR_KEEP})`).run();
+  } catch (e) { /* recording a problem must never cause another one */ }
 }
 async function push(env, title, body, data) {
   if (!env.FCM_SA) return { sent: 0, error: "alerts not set up on the service yet" };
@@ -1827,7 +2012,7 @@ async function push(env, title, body, data) {
   const dead = [];
   for (const dv of devices) {
     try {
-      const r = await fetch(`https://fcm.googleapis.com/v1/projects/${tok.project}/messages:send`, {
+      const r = await xfetch(env, `https://fcm.googleapis.com/v1/projects/${tok.project}/messages:send`, {
         method: "POST",
         headers: { Authorization: "Bearer " + tok.t, "Content-Type": "application/json" },
         body: JSON.stringify({ message: {
@@ -1887,16 +2072,32 @@ async function checkLive(env, id, pre, full) {
   // an auction can also have a Buy It Now price (eBay lists both options until the first bid): it's still an auction,
   // so compare the current bid, not the Buy It Now price (that was deleting good auction deals as "too dear")
   const row = await D.prepare("SELECT data FROM deals WHERE id=?").bind(id).first(), deal0 = row ? JSON.parse(row.data) : null;
-  const auction = (deal0 ? deal0.type === "AUC" : false) || (d.buyingOptions || []).includes("AUCTION");
+  // a deal judged on its Buy It Now price stays a Buy It Now deal (its price must not be swapped for the auction's bid)
+  const auction = deal0 ? deal0.type === "AUC" : (d.buyingOptions || []).includes("AUCTION");
   const pr = auction && d.currentBidPrice ? d.currentBidPrice : auction && !d.currentBidPrice && deal0 ? null : d.price;
-  const so = (d.shippingOptions || [])[0];
-  const out = { live: true, price: pr ? parseFloat(pr.value) : null, ship: so && so.shippingCost ? parseFloat(so.shippingCost.value) || 0 : 0, bids: +d.bidCount || 0, end };
+  const po = postageOf(d);
+  const pv = pr ? parseFloat(pr.value) : NaN; // an unreadable price is treated as "no price", never stored as NaN
+  const out = { live: true, price: Number.isFinite(pv) && !(pr.currency && pr.currency !== "GBP") ? pv : null, ship: po.ship, post: po.post, bids: +d.bidCount || 0, end };
   if (full) out.info = listingInfo(d);
   if (row && out.price != null) {
     const deal = deal0;
-    const tooDear = deal.kind === "deal" && (deal.type === "AUC" ? out.price >= (deal.maxBid || 0) : out.price + out.ship > (deal.maxPay || 0));
+    // postage not known: keep the careful allowance this deal was judged with (never £0)
+    if (postUnknown(out)) out.ship = deal.shipAllow ? deal.ship : POST_ALLOW;
+    const oldShip = deal.ship || 0;
+    // keep the stored listing up to date too, so a later scan can't bring back a removed deal from its old price
+    try { await D.prepare("UPDATE listings SET price=?, ship=? WHERE id=?").bind(out.price, out.ship || 0, id).run(); } catch (e) {}
+    // too dear now? Buy It Now: the whole cost (price + postage + buyer fee) against the most to pay; auction: the bid against
+    // the max bid, lowered first by any extra postage (reprice does the same), so a kept deal never has bid ≥ max bid
+    const fee0 = (p) => (deal.bpfOn ? bpf(p) : 0), maxBidNow = deal.maxBid != null ? Math.floor((deal.maxBid + oldShip - out.ship) * 100) / 100 : 0;
+    const tooDear = deal.kind === "deal" && (deal.type === "AUC" ? out.price >= maxBidNow : out.price + out.ship + fee0(out.price) > (deal.maxPay || 0) + 0.005);
     if (tooDear) { try { await dealOut(env, [id], () => (deal.type === "AUC" ? "bid passed max bid" : "price went up")); } catch (e) {} await D.prepare("DELETE FROM deals WHERE id=?").bind(id).run(); return { ...out, live: true, tooDear: true }; }
-    Object.assign(deal, { price: out.price, ship: out.ship, bids: out.bids, end: out.end || deal.end });
+    const moved = deal.price !== out.price || deal.ship !== out.ship;
+    Object.assign(deal, { price: out.price, ship: out.ship, post: out.post, shipAllow: postUnknown(out) || undefined, bids: out.bids, end: out.end || deal.end });
+    // a new price or postage (e.g. the bid went up): work every money figure out again, so nothing shows an old bid's profit
+    if (moved && deal.kind === "deal") reprice(deal, cleanConfig(await kvGet(env, "config", null)).rules, oldShip);
+    // the app takes these figures as they are (one source of truth for the money on the card)
+    out.deal = { price: deal.price, ship: deal.ship, post: deal.post, shipAllow: deal.shipAllow, bids: deal.bids, cost: deal.cost, extra: deal.extra, profit: deal.profit,
+      lowProfit: deal.lowProfit, roi: deal.roi, maxBid: deal.maxBid, maxItem: deal.maxItem, profitAtMax: deal.profitAtMax };
     // the description says it's faulty: keep it visible (with the words) but never above 49 and never alerted
     const f = descFaults(String(d.conditionDescription || "") + "\n" + plainText(d.description || d.shortDescription));
     if (!pre || d.description != null || d.shortDescription != null || d.conditionDescription != null) deal.descAt = now;
@@ -1952,10 +2153,12 @@ async function verifyDeals(env, n) {
 
 async function checkFollows(env, cfg) {
   const D = env.DB, now = Date.now();
-  const rows = await D.prepare("SELECT id, data, max, alerted FROM follows ORDER BY created DESC LIMIT 10").all();
+  // 10 a run (eBay calls are limited), least recently checked first, so every followed listing gets its turn
+  const rows = await D.prepare("SELECT id, data, max, alerted FROM follows WHERE COALESCE(json_extract(data,'$.status'),'') NOT IN ('ended','sold') ORDER BY COALESCE(json_extract(data,'$.chk'),0) ASC, created DESC LIMIT 10").all();
   for (const row of rows.results || []) {
     const f = JSON.parse(row.data);
     if (f.status === "ended" || f.status === "sold") continue;
+    f.chk = now;
     try {
       const d = await ebay(env, `/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id=${row.id}`);
       if (d.notFound) { f.status = "ended"; }
@@ -1986,7 +2189,7 @@ async function checkFollows(env, cfg) {
           alert === "under" ? `Now £${((f.price || 0) + (f.ship || 0)).toFixed(2)}, under your max of £${row.max.toFixed(2)}.`
             : `Ends within the hour. Current bid £${f.price.toFixed(2)}, your max £${row.max.toFixed(2)}.`, { url: f.url, id: row.id, kind: "follow" });
       }
-    } catch (e) {}
+    } catch (e) { try { await D.prepare("UPDATE follows SET data=? WHERE id=?").bind(JSON.stringify(f), row.id).run(); } catch (x) {} } // still counts as its turn
   }
 }
 
@@ -1996,10 +2199,13 @@ export default {
     if (!env.DB) return;
     ctx.waitUntil((async () => {
       // errors here used to vanish; keep the latest one so it can be looked at ("lastCrash" in the kv table)
-      const crash = (where) => (e) => kvSet(env, "lastCrash", { at: Date.now(), where, msg: String((e && e.message) || e).slice(0, 300) }).catch(() => {});
+      const crash = (where) => (e) => Promise.all([kvSet(env, "lastCrash", { at: Date.now(), where, msg: cleanMsg((e && e.message) || e) }).catch(() => {}),
+        logProblem(env, /D1_ERROR|SQLITE/i.test(String(e && e.message)) ? "database" : "job", "background job failed", (e && e.message) || e, { where })]);
       await refreshRate(env).catch(() => {}); // eBay's own call figures, at most once an hour
       const auto = { ...env, AUTO: true }; // automatic work: subject to the hard ceiling
-      const r = await sweep(auto, false).catch((e) => (crash("scan")(e), {}));
+      const r = await sweep(auto, false).catch(async (e) => { await crash("scan")(e); return {}; });
+      // a scan that ran but couldn't reach eBay for some categories
+      for (const x of ((r && r.errors) || []).slice(0, 3)) await logProblem(env, "job", "scan problem", x, { where: "scan" });
       await weeklyExport(env).catch(crash("weekly price export"));
       if (r && r.skipped && !(await pausedFor(env, "browse"))) {
         const rate = await freshRate(env), used = Math.max(await quota(env), rate ? rate.limit - rate.remaining : 0);
@@ -2012,19 +2218,28 @@ export default {
     })());
   },
 
+  // every request: any failure (an error, or a 5xx answer) is written to the problem log (see logProblem)
   async fetch(request, env, ctx) {
-    try { return await route(request, env, ctx); }
-    finally { if (CALLS && env.DB) ctx.waitUntil(saveQuota(env).catch(() => {})); } // eBay calls made for the phone are counted too
+    let res, threw = false;
+    try { res = await this.handle(request, env, ctx); }
+    catch (e) { threw = true; const m = String((e && e.message) || e); await logProblem(env, /D1_ERROR|SQLITE/i.test(m) ? "database" : "service", "exception", m, { where: endpointOf(request) }); res = json({ error: "internal error" }, 500); }
+    // eBay calls made by searches, live checks and suggestions count towards the daily limit too (even if the request failed)
+    if (CALLS && env.DB) { const w = saveQuota(env).catch(() => {}); if (ctx && ctx.waitUntil) ctx.waitUntil(w); else await w; }
+    if (!threw && res && res.status >= 500) { let m = ""; try { m = (await res.clone().json()).error || ""; } catch (e) {} await logProblem(env, /D1_ERROR|SQLITE/i.test(m) ? "database" : "service", "failed request (" + res.status + ")", m, { where: endpointOf(request) }); }
+    return res;
   },
-};
-async function route(request, env, ctx) {
-  {
+  async handle(request, env, ctx) {
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     const u = new URL(request.url), P = (k) => u.searchParams.get(k);
     // the app sends the key in a header; older app versions put it in the address, which still works
-    if (!env.APP_KEY || !sameKey(request.headers.get("X-FlipScout-Key") || P("key"), env.APP_KEY)) return json({ error: "wrong key" }, 401);
+    // KEY_IN_URL = "off" refuses keys in the web address (only the hidden header works). Until it's switched off, each
+    // use of the old way is noted in the Problems list (no alert), so you can see when no old app version uses it any more.
+    const hk = request.headers.get("X-FlipScout-Key"), uk = env.KEY_IN_URL === "off" ? "" : P("key");
+    if (!env.APP_KEY || !sameKey(hk || uk, env.APP_KEY)) return json({ error: "wrong key" }, 401);
+    if (!hk && uk && env.DB && ctx && ctx.waitUntil) ctx.waitUntil(logProblem(env, "service", "notice: key sent in the web address",
+      "an old FlipScout version (before 25 Oct 2026) sent the key in the web address; when this stops appearing, the old way can be switched off", { where: endpointOf(request) }));
     // hourly limits on the calls that use eBay or write a lot, far above normal use, so a leaked key can't run up your eBay calls
-    const lim = P("q") ? ["search", 300] : P("check") ? ["check", 300] : P("fill") ? ["fill", 120] : P("suggest") ? ["suggest", 300] : P("flag") ? ["flag", 200] : null;
+    const lim = P("q") ? ["search", 300] : P("check") ? ["check", 300] : P("fill") ? ["fill", 120] : P("suggest") ? ["suggest", 300] : P("flag") ? ["flag", 200] : P("report") ? ["report", 120] : null;
     if (lim && env.DB) {
       try {
         await schema(env);
@@ -2037,6 +2252,18 @@ async function route(request, env, ctx) {
     }
 
     // ---- hunting (needs the database) ----
+    // problem reports from the app (cleaned again here) and the problem list for admin tools
+    if (P("report") && request.method === "POST") {
+      let b = {}; try { b = JSON.parse((await request.text()).slice(0, 4000)); } catch (e) { return json({ error: "bad report" }, 400); }
+      await logProblem(env, "app", b.kind || "error", b.msg, { where: b.where, ver: [b.ver, b.ua].filter(Boolean).join(" · ") });
+      return json({ ok: true });
+    }
+    if (P("problems")) {
+      if (!env.DB) return json({ problems: [] });
+      await env.DB.prepare("CREATE TABLE IF NOT EXISTS errlog (sig TEXT PRIMARY KEY, src TEXT, kind TEXT, msg TEXT, place TEXT, ver TEXT, n INTEGER, first INTEGER, at INTEGER, alerted INTEGER)").run();
+      const rows = (await env.DB.prepare("SELECT src, kind, msg, place, ver, n, first, at, alerted FROM errlog ORDER BY at DESC LIMIT 100").all()).results || [];
+      return json({ problems: rows });
+    }
     const huntCall = ["config", "deals", "run", "follows", "follow", "unfollow", "flag", "unflag", "flags", "test", "device", "check", "price", "prices", "unprice", "needs", "lookfor", "fill", "fillstats", "seen", "sales", "ebayconnect", "ebaycode"].some((k) => u.searchParams.has(k));
     if (huntCall) {
       if (!env.DB) return json({ error: "hunting database not set up yet" }, 501);
@@ -2044,7 +2271,7 @@ async function route(request, env, ctx) {
         await schema(env);
         if (P("config")) {
           if (request.method === "POST") {
-            const c = cleanConfig(JSON.parse(await request.text()));
+            const c = cleanConfig(await bodyJson(request));
             await kvSet(env, "config", c);
             return json({ ok: true, config: c });
           }
@@ -2054,14 +2281,22 @@ async function route(request, env, ctx) {
           const last = await kvGet(env, "lastManual", 0);
           if (Date.now() - last < 45000) return json({ error: "Just scanned. Try again in a minute." }, 429);
           await kvSet(env, "lastManual", Date.now());
-          return json(await sweep(env, true));
+          const res = await sweep(env, true);
+          if (res && res.busy) { await kvSet(env, "lastManual", last); return json({ error: res.error }, 429); }
+          return json(res);
         }
         if (P("deals")) {
-          const rows = await env.DB.prepare("SELECT data, created FROM deals WHERE expires>? ORDER BY score DESC LIMIT 200").bind(Date.now()).all();
-          const deals = (rows.results || []).map((r) => ({ ...JSON.parse(r.data), found: r.created }));
+          // every live deal goes to the app (was capped at the best-scoring 200, which silently hid hundreds: 3 Nov).
+          // The total is sent too, so the app can say so if anything is ever left out.
+          const rows = await env.DB.prepare("SELECT data, created FROM deals WHERE expires>? ORDER BY score DESC LIMIT ?").bind(Date.now(), DEALS_MAX).all();
+          // one damaged record must not stop every other deal loading: it's skipped and written to the problem log
+          let broken = 0; const deals = [];
+          for (const r of rows.results || []) { try { deals.push({ ...JSON.parse(r.data), found: r.created }); } catch (e) { broken++; } }
+          if (broken) await logProblem(env, "database", "damaged deal record", `${broken} deal record${broken === 1 ? "" : "s"} couldn't be read and ${broken === 1 ? "was" : "were"} skipped`, { where: "deals" });
+          const dealsTotal = (await env.DB.prepare("SELECT COUNT(*) n FROM deals WHERE expires>?").bind(Date.now()).first() || {}).n || 0;
           const lc = await kvGet(env, "learnCats", { cats: [] });
           const cnt = (await kvGet(env, "learnedCounts", null)) || (await refreshLearned(env));
-          return json({ deals, report: await kvGet(env, "lastReport", null), learned: cnt.byCat, close: await kvGet(env, "close", []), later: await kvGet(env, "later", []), aucLearn: await kvGet(env, "aucLearn", {}), learning: { cats: lc.cats.length, sales: cnt.total }, lastCrash: await kvGet(env, "lastCrash", null), whyDay: await kvGet(env, "whyDay", null), verified: Object.keys(VERIFIED_CATS) });
+          return json({ deals, dealsTotal, report: await kvGet(env, "lastReport", null), learned: cnt.byCat, close: await kvGet(env, "close", []), later: await kvGet(env, "later", []), aucLearn: await kvGet(env, "aucLearn", {}), learning: { cats: lc.cats.length, sales: cnt.total }, lastCrash: await kvGet(env, "lastCrash", null), whyDay: await kvGet(env, "whyDay", null), verified: Object.keys(VERIFIED_CATS) });
         }
         if (P("check")) {
           const id = String(P("check")).replace(/\D/g, "");
@@ -2069,7 +2304,7 @@ async function route(request, env, ctx) {
           return json(await checkLive(env, id, null, true));
         }
         if (P("price") && request.method === "POST") {
-          const b = JSON.parse(await request.text());
+          const b = await bodyJson(request);
           const key = String(b.key || "").slice(0, 200), avg = parseFloat(b.avg);
           if (!key || !(avg > 0 && avg < 100000)) return json({ error: "need the average sold price" }, 400);
           const n = (v, max) => { const x = parseFloat(v); return x >= 0 && x <= max ? x : null; };
@@ -2092,7 +2327,7 @@ async function route(request, env, ctx) {
         if (P("fill") && request.method === "POST") {
           // the user read eBay's sold listings for a whole category on their phone: sort them into models and save each model's typical price
           await ensureSrc(env);
-          const b = JSON.parse(await request.text());
+          const b = await bodyJson(request);
           return json(await fillPrices(env, b));
         }
         if (P("sales")) {
@@ -2130,12 +2365,12 @@ async function route(request, env, ctx) {
             broken: u ? u.broken || null : null, today: use.n || 0, found: c ? c.found || 0 : 0, missing: c ? c.missing || 0 : 0, todo: c ? c.todo || 0 : 0 });
         }
         if (P("ebaycode") && request.method === "POST") {
-          const b = JSON.parse(await request.text());
+          const b = await bodyJson(request);
           return json(await ebayConnect(env, String(b.code || "").slice(0, 2000)));
         }
         if (P("seen") && request.method === "POST") {
           // which of these sold item numbers a fill has already saved (read only)
-          const b = JSON.parse(await request.text()), ids = (Array.isArray(b.ids) ? b.ids : []).map((x) => String(x).replace(/\D/g, "").slice(0, 20)).filter(Boolean).slice(0, 300), known = [];
+          const b = await bodyJson(request), ids = (Array.isArray(b.ids) ? b.ids : []).map((x) => String(x).replace(/\D/g, "").slice(0, 20)).filter(Boolean).slice(0, 300), known = [];
           for (let i = 0; i < ids.length; i += 90) {
             const chunk = ids.slice(i, i + 90), q = await env.DB.prepare(`SELECT id FROM fillseen WHERE id IN (${chunk.map(() => "?").join(",")})`).bind(...chunk).all();
             for (const r of q.results || []) known.push(r.id);
@@ -2149,7 +2384,7 @@ async function route(request, env, ctx) {
         }
         if (P("prices")) {
           await ensureSrc(env);
-          const rows = await env.DB.prepare("SELECT pkey, label, q, avg, st, post, trend, at, src, n, lo, hi, spd, sdays, sn, act, act_at FROM prices ORDER BY at DESC LIMIT 3000").all();
+          const rows = await env.DB.prepare("SELECT pkey, label, q, avg, st, post, trend, at, src, n, lo, hi, spd, sdays, sn, act, act_at FROM prices ORDER BY at DESC LIMIT 20000").all();
           const fc = await kvGet(env, "fillCats", {}), catOf = {}, sell = (await kvGet(env, "sellTime", { m: {} })).m || {};
           for (const c in fc) for (const k in (fc[c].k || {})) if (!catOf[k]) catOf[k] = fc[c].name || "";
           return json({ prices: (rows.results || []).map((r) => ({ ...r, cat: catOf[r.pkey] || "", sell: sell[r.pkey] || null, url: lookupUrl(r.q || ""), fresh: Date.now() - r.at < BOOK_DAYS * DAY, speed: speedOf(r, Date.now()) })) });
@@ -2181,7 +2416,7 @@ async function route(request, env, ctx) {
           return json({ follows: (rows.results || []).map((r) => ({ ...JSON.parse(r.data), id: r.id, max: r.max, created: r.created })) });
         }
         if (P("follow") && request.method === "POST") {
-          const b = JSON.parse(await request.text());
+          const b = await bodyJson(request);
           const id = String(b.id || "").replace(/\D/g, ""), max = parseFloat(b.max);
           if (!id || !(max > 0)) return json({ error: "need a listing and a max price" }, 400);
           const data = { title: String(b.title || "").slice(0, 200), url: "https://www.ebay.co.uk/itm/" + id, type: b.type === "AUC" ? "AUC" : "BIN", price: +b.price || 0, ship: +b.ship || 0, end: +b.end || null, status: "live",
@@ -2191,7 +2426,7 @@ async function route(request, env, ctx) {
         }
         if (P("flag") && request.method === "POST") {
           // one tap on Flag: keep a snapshot of the deal exactly as the Scan service judged it (taken here, not sent by the phone)
-          const b = JSON.parse(await request.text()), id = String(b.id || "").replace(/\D/g, "").slice(0, 20);
+          const b = await bodyJson(request), id = String(b.id || "").replace(/\D/g, "").slice(0, 20);
           if (!id) return json({ error: "need a deal" }, 400);
           const reason = ["model", "price", "faulty", "scam", "other"].includes(b.reason) ? b.reason : null;
           const ex = await env.DB.prepare("SELECT deal_id FROM flags WHERE deal_id=?").bind(id).first();
@@ -2216,7 +2451,7 @@ async function route(request, env, ctx) {
           return json({ ok: true });
         }
         if (P("device") && request.method === "POST") {
-          const b = JSON.parse(await request.text());
+          const b = await bodyJson(request);
           const t = String(b.token || "").slice(0, 400);
           if (t.length < 20) return json({ error: "bad device token" }, 400);
           let devices = (await kvGet(env, "devices", [])).filter((d) => d.t !== t);
@@ -2233,7 +2468,7 @@ async function route(request, env, ctx) {
           return json({ ok: true, delayed: 10 });
         }
       } catch (e) {
-        return json({ error: e.message }, 500);
+        return json({ error: e.message }, e && e.bad ? 400 : 500);
       }
     }
 
@@ -2244,7 +2479,7 @@ async function route(request, env, ctx) {
         if (request.method === "POST") {
           const body = await request.text();
           if (body.length > 5000000) return json({ error: "backup too big" }, 413);
-          JSON.parse(body);
+          try { JSON.parse(body); } catch (e) { return json({ error: "bad request: the backup isn't valid JSON (nothing was changed)" }, 400); }
           const prev = await env.BACKUP.get("backup-v1");
           if (prev) await env.BACKUP.put("backup-prev", prev);
           await env.BACKUP.put("backup-v1", body, { metadata: { at: Date.now() } });
@@ -2254,7 +2489,7 @@ async function route(request, env, ctx) {
         if (!r.value) return json({ none: true });
         return json({ at: (r.metadata && r.metadata.at) || null, data: JSON.parse(r.value) });
       } catch (e) {
-        return json({ error: e.message }, 500);
+        return json({ error: e.message }, e && e.bad ? 400 : 500);
       }
     }
 
@@ -2262,14 +2497,14 @@ async function route(request, env, ctx) {
     if (P("tree")) {
       try {
         const token = await getToken(env);
-        const r = await fetch("https://api.ebay.com/commerce/taxonomy/v1/category_tree/3", {
+        const r = await xfetch(env, "https://api.ebay.com/commerce/taxonomy/v1/category_tree/3", {
           headers: { Authorization: "Bearer " + token, "Accept-Encoding": "gzip" },
           cf: { cacheTtl: 86400, cacheEverything: true },
         });
         if (!r.ok) return json({ error: "category list failed (" + r.status + ")" }, 502);
         return new Response(r.body, { headers: { "Content-Type": "application/json", "Cache-Control": "max-age=86400", ...CORS } });
       } catch (e) {
-        return json({ error: e.message }, 500);
+        return json({ error: e.message }, e && e.bad ? 400 : 500);
       }
     }
     const sug = (P("suggest") || "").trim();
@@ -2283,7 +2518,7 @@ async function route(request, env, ctx) {
         }));
         return json({ cats });
       } catch (e) {
-        return json({ error: e.message }, 500);
+        return json({ error: e.message }, e && e.bad ? 400 : 500);
       }
     }
 
@@ -2313,7 +2548,7 @@ async function route(request, env, ctx) {
     } catch (e) {
       // paused for eBay's limit: an ordinary reply carrying the message, so the app shows it (instead of "service error 500")
       if (e instanceof EbayPaused) return json({ error: e.message, paused: true });
-      return json({ error: e.message }, 500);
+      return json({ error: e.message }, e && e.bad ? 400 : 500);
     }
   }
 }

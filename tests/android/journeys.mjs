@@ -19,6 +19,15 @@ const ok = (cond, msg) => { if (!cond) throw new Error(msg); };
 const dealsCount = async () => +((await app.text()).match(/(\d+) deals?\b/) || [])[1] || 0;
 const menu = () => app.tap({ sel: "#nav button", nth: 2 });
 const dealsTab = () => app.tap({ sel: "#nav button", nth: 0 });
+// Release B (11 Nov 2026): a journey that starts from the deals list gets there itself, with a real tap on the Deals button, so
+// one stuck screen can't make the next journeys fail too. It never hides a failure: the earlier step stays FAIL, and a needed
+// return is written down here as "Test robot" (the deals list must then really appear, or this step fails)
+const fromDealsList = async (step, journey) => step("starts from the deals list", async () => {
+  const where = await app.eval(`typeof tab!=="undefined"?tab:"?"`);
+  if (where !== "deals" || !(await app.eval(`!!document.querySelector(".dcard")`))) {
+    R.add("Test robot", `${journey}: the app was left on '${where}' by an earlier test; returned with the Deals button`, "PARTIALLY TESTED", "a reset between tests, not a result; the earlier failure is reported separately");
+    await dealsTab(); }
+  await app.waitFor(`!!document.querySelector(".dcard")`, 10000, "the deals list"); });
 // put the 14 fake deals back (a scan may have re-judged them) and reopen the app so it shows them
 const freshDeals = async () => { await seedDeals(DEALS); await app.stop(); await app.launch(); await app.waitFor(`!!document.querySelector(".dcard")`, 30000, "deal cards"); };
 
@@ -85,6 +94,7 @@ await J("Deal details", async (step) => {
 });
 
 await U("Sales list on a database that has never been filled", async (step) => {
+  await fromDealsList(step, "Sales list on a database that has never been filled");
   await step("'From 24 sales ›' opens without an error before any Fill has been done", async () => { await app.tap({ text: "From 24 sales" }); await app.waitText("Sales behind this price");
     await app.waitFor(`/Sells for about|Couldn't load/.test(document.getElementById("sheet").innerText)`, 25000, "the sales list or an error"); await app.shot("sales list fresh database");
     const t = await app.eval(`document.getElementById("sheet").innerText`); await app.back();
@@ -92,6 +102,7 @@ await U("Sales list on a database that has never been filled", async (step) => {
 });
 
 await J("Sales list (From N sales ›)", async (step) => {
+  await fromDealsList(step, "Sales list (From N sales ›)");
   await step("'From 24 sales ›' opens the sales behind the price", async () => { await app.tap({ text: "From 24 sales" }); await app.waitText("Sales behind this price");
     await app.waitFor(`/Sells for about/.test(document.getElementById("sheet").innerText)`, 25000, "the sales list loaded"); await app.shot("sales list"); });
   await step("it lists the sales with prices and dates", async () => { const n = await app.eval(`document.querySelectorAll("#sheet a.li").length`); ok(n >= 20, `only ${n} sales listed (24 expected)`); });

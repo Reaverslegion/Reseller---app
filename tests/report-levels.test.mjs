@@ -58,7 +58,15 @@ t("workflow: emulator, emulator-app build and the report level use the same FULL
   for (const id of ["unit", "supply", "build", "service", "build-phone", "report"]) assert.ok(!/\n    if: .*github.event_name/.test(job(id)), id + " still runs on every upload");
   assert.match(job("build-cap8"), /if: github.event_name == 'workflow_dispatch' && inputs.cap8/);
   assert.match(wf, /concurrency:\n  group: test-\$\{\{ github.ref \}\}\n  cancel-in-progress: true/, "superseded runs are still cancelled");
-  assert.match(wf, /paths-ignore: \[".github\/phone-test\/\*\*", "docs\/\*\*", "\*\*.md"\]/);
+  assert.match(wf, /paths-ignore: \[".github\/phone-test\/\*\*", ".github\/update-test\/\*\*", "docs\/\*\*", "\*\*.md"\]/);
+});
+t("workflow: request files for the separate phone and update tests don't start the quick tests; any code change still does", () => {
+  // GitHub skips a push only when EVERY changed file matches paths-ignore ("**" = any folders, "*" = any name part)
+  const pats = JSON.parse(wf.match(/paths-ignore: (\[[^\]]*\])/)[1]).map((g) => new RegExp("^" + g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*\/?/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\u0000/g, ".*") + "$"));
+  const runs = (files) => files.some((f) => !pats.some((re) => re.test(f)));
+  for (const f of [[".github/update-test/request.txt"], [".github/phone-test/request.txt"], ["docs/capacitor-8-upgrade.md"], ["README.md"]]) assert.equal(runs(f), false, f + " should not start the quick tests");
+  for (const f of [["index.html"], ["worker.js"], ["tests/android/update.mjs"], [".github/workflows/build.yml"], [".github/workflows/update-test.yml"], ["android-native/CrashInfoPlugin.java"],
+    [".github/update-test/request.txt", "tests/android/update.mjs"], [".github/update-test/request.txt", "index.html"]]) assert.equal(runs(f), true, f.join(" + ") + " must still start the quick tests");
 });
 t("workflow: Android 11 and 15 always run in the full compatibility matrix; the Capacitor 8 row only when that trial was ticked", () => {
   const m = wf.match(/include: \$\{\{ fromJSON\(format\('\[\{0\}\{1\}\]', '([^']*)', \(([^)]*)\) && '([^']*)' \|\| ''\)\) \}\}/);

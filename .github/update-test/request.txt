@@ -1,1 +1,1 @@
-old=41706701597 new=42964734945 wrap=42560871908 (cap8 release-safety test, 11 Nov)
+old=41706701597 new=42964734945 wrap=42560871908 (cap8 release-safety test, 11 Nov, run 2 with corrected comparisons)

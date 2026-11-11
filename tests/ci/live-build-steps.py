@@ -9,7 +9,7 @@ import json, os, re, secrets, subprocess, sys, yaml
 RUN = os.environ.get("RUN_NO", "0")
 steps = yaml.safe_load(open(".github/workflows/build.yml"))["jobs"]["build"]["steps"]
 want = ["Prepare app", "Icon and splash", "Notifications", "Crash capture", "Release settings", "Version number", "Build APK"]
-skip = {"Run all tests (nothing is uploaded if any fail)", "Signing key"}
+skip = {"Run all tests (nothing is uploaded if any fail)", "Signing key", "Remove the signing key"}
 named = [s.get("name") for s in steps if "run" in s]
 missing = [w for w in want if w not in named]
 unknown = [n for n in named if n not in want and n not in skip]

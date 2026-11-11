@@ -47,7 +47,8 @@ await J("First-time welcome guide", async (step) => {
 });
 
 await J("Connect to the Scan service", async (step) => {
-  await step("Connect now opens the connection box", async () => { await app.tap("Connect now"); await app.waitFor(`!!document.getElementById("s_url")`, 8000, "address box"); });
+  // (only taps if the box isn't open yet: if the link to the app drops after the tap, the robot retries this step)
+  await step("Connect now opens the connection box", async () => { if (!(await app.eval(`!!document.getElementById("s_url")`))) await app.tap("Connect now"); await app.waitFor(`!!document.getElementById("s_url")`, 8000, "address box"); });
   await step("typing the setup code (address#key) saves the connection on the phone", async () => {
     await app.fill({ sel: "#s_url" }, `http://localhost:8787#${KEY}`);
     await app.waitFor(`(()=>{try{const s=JSON.parse(localStorage.getItem("resell_helper_v1")).set;return s.url==="http://localhost:8787"&&s.key.length===48}catch(e){return false}})()`, 8000, "the address and key saved on the phone"); await app.shot("connected"); });

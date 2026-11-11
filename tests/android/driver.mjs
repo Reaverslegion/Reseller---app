@@ -248,7 +248,8 @@ export class Results {
         catch (e) { if (!/connection closed|connect timeout|can't connect/.test(String(e.message))) throw e;
           // the link to the app's screen dropped (seen on slow emulators): note why, reconnect and try the step once more
           note = "retried once after the link to the app dropped" + (app.recentSystemLog() ? ": " + app.recentSystemLog() : "");
-          app.appPid = app.pid() || app.appPid; await app.connect(); await f(); }
+          app.appPid = app.pid() || app.appPid; await app.connect();
+          try { await f(); } catch (e2) { e2.message = `retried after the link to the app dropped (${String(e.message).slice(0, 80)}), then: ${e2.message}`; throw e2; } }
         passed++; this.rows.push({ area, name: `${name} › ${what}`, status: note ? "PARTIALLY TESTED" : "PASS", detail: note }); }
       catch (e) { failed = what; if (DIAG) { diagEvent("STEP FAILED", { journey: name, step: what, error: String(e.message || e).slice(0, 200) }); diagSnap(`FAIL ${name} ${what}`); }
         const lim = /^EMULATOR LIMIT/.test(String(e.message)), s = await app.shot(`${lim ? "LIMIT" : "FAIL"} ${name} ${what}`);

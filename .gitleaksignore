@@ -1,0 +1,12 @@
+# Secret scan (gitleaks) exceptions. Each one has been checked by hand.
+# A made-up wrong key used by the tests to check the Scan service refuses it. Not a real key.
+49eb678d0b93d945aa8b5c083926e5f54f12defa:tests/e2e/service-smoke.mjs:generic-api-key:21
+# The Firebase "API key" for push notifications. Google designs this one to be public: it ships inside every copy of
+# the app. Its protection is restricting it in Google Cloud (see the Stage 4 report), not hiding it.
+0e41a2ed1447c74fcbc449dfbb500364d3b84c08:google-services.json:gcp-api-key:18
+# Made-up keys and tokens used by the monitoring test to check they're removed before anything is recorded.
+a60f07a56274d5ba9e3b696b7bd428c0b30f596e:tests/monitoring.test.mjs:generic-api-key:18
+tests/monitoring.test.mjs:generic-api-key:18
+# The same two exceptions as above, as the scan of the current files names them.
+google-services.json:gcp-api-key:18
+tests/e2e/service-smoke.mjs:generic-api-key:21

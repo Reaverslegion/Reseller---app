@@ -1,0 +1,452 @@
+# TEST PIPELINE: runs on every change to any branch EXCEPT main, and on every request to merge into main.
+# Two levels (owner-approved 8 Nov 2026, to stay inside the free GitHub allowance):
+#  - QUICK, on every upload to a test branch: unit tests, dependency/secret scan, app build, private test Scan service,
+#    phone test build. The emulator suites are reported as NOT TESTED (quick check), never as passed.
+#  - FULL, on every request to merge into main (whatever changed, back end included) and by default when run by hand
+#    (Actions > Test changes > Run workflow): everything, including the emulator and the other Android versions.
+#    Run FULL by hand before any test app is built for the owner's phone.
+#  The Capacitor 8 trial only runs when ticked on a manual run.
+# It never deploys anything, never touches the live Scan service or live database, and uses no real keys:
+# the Scan service is tested as a private local copy with a throwaway database and a fake eBay.
+# Results: the run's Summary page shows the testing report (PASS / FAIL / NOT TESTED / PARTIALLY TESTED).
+name: Test changes (safe, no live access)
+on:
+  push:
+    branches-ignore: [main]
+    # the phone-test request file and documents don't need the full test suite
+    paths-ignore: [".github/phone-test/**", ".github/update-test/**", "docs/**", "**.md"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      part:
+        description: "Emulator part to run: all, journeys, integrity (Stage 3), stage4, or none (skip the main emulator suites)"
+        default: all
+      level:
+        description: "full = everything incl. the emulator (default); quick = the fast checks only"
+        default: full
+        type: choice
+        options: [full, quick]
+      diag:
+        description: "Test-only diagnostics (screen and Back-event state, Android ANR traces); manual runs only"
+        default: false
+        type: boolean
+      cap8:
+        description: "Also run the Capacitor 8 trial (an upgrade experiment)"
+        default: false
+        type: boolean
+permissions:
+  contents: read
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node tests/ci/unit-results.mjs
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-unit
+          path: results/
+          retention-days: 7
+
+  supply:
+    name: Dependencies and secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node tests/ci/supply-chain.mjs
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-supply
+          path: results/
+          retention-days: 7
+
+  build:
+    name: Build test app (live build steps)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Build with the same steps as the live build
+        env:
+          RUN_NO: ${{ github.run_number }}
+        run: |
+          pip install -q pyyaml
+          python3 tests/ci/live-build-steps.py
+          test -s FlipScout.apk
+          ls -la FlipScout.apk
+      - name: Record result
+        if: always()
+        run: |
+          mkdir -p results
+          if [ -s FlipScout.apk ]; then S=PASS; D="test app built ($(du -k FlipScout.apk | cut -f1) KB)"; else S=FAIL; D="the build failed: see the Build job log"; fi
+          echo "[{\"area\":\"Build\",\"name\":\"test app builds with the live build steps\",\"status\":\"$S\",\"detail\":\"$D\"}]" > results/build.json
+      - name: Safety settings inside the built app (debug mode, backups, permissions, signing)
+        if: always()
+        run: test -s FlipScout.apk && node tests/ci/apk-check.mjs FlipScout.apk
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-build
+          path: results/
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flipscout-TEST-apk
+          path: FlipScout.apk
+          retention-days: 7
+
+  service:
+    name: Private test Scan service
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Safety check - no Cloudflare or eBay keys on this machine
+        run: |
+          test -z "${CLOUDFLARE_API_TOKEN}${CLOUDFLARE_ACCOUNT_ID}${EBAY_ID}${EBAY_SECRET}"
+          echo "No real keys present: this job cannot reach the live service or database."
+      - name: Start fake eBay and the private test Scan service
+        run: |
+          KEY=$(openssl rand -hex 24); echo "::add-mask::$KEY"; echo "TEST_APP_KEY=$KEY" >> $GITHUB_ENV
+          TEST_APP_KEY=$KEY bash tests/e2e/start-test-service.sh
+      - name: Check the test service
+        env:
+          TEST_URL: http://127.0.0.1:8787
+        run: node tests/e2e/service-smoke.mjs
+      - name: Security tests (wrong keys, injection attempts, bad and oversized data, rate limits, leaks)
+        if: always()
+        env:
+          TEST_URL: http://127.0.0.1:8787
+        run: node tests/security/service-security.mjs
+      - name: Back-end gap tests (other currencies, simultaneous scans, eBay throttling/errors/garbage keep deals)
+        if: always()
+        run: node tests/stage4/backend-gaps.mjs
+      - name: One scan at a time (simultaneous manual/background scans, long scans, a lock left behind; 20 rounds)
+        if: always()
+        run: node tests/stage4/scan-lock.mjs 20
+      - name: Scan time limits (stalled eBay, used-up budget, hard stop, lock release, retry, no overlap)
+        if: always()
+        run: node tests/stage4/scan-time.mjs
+      - name: Monitoring and restart tests (failed background job, false alarms, restart keeps data)
+        if: always()
+        env:
+          RESTART_CMD: bash tests/e2e/restart-test-service.sh
+        run: node tests/stage4/service-checks.mjs
+      - name: The live deploy's bundling step works (dry run, nothing uploaded)
+        if: always()
+        run: |
+          mkdir -p w4 && cd w4 && cp ../worker.js . && printf 'name = "flipscout-dryrun"\nmain = "worker.js"\ncompatibility_date = "2024-09-23"\n[[kv_namespaces]]\nbinding = "BACKUP"\nid = "00000000000000000000000000000000"\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "x"\ndatabase_id = "00000000-0000-0000-0000-000000000000"\n[triggers]\ncrons = ["* * * * *"]\n' > wrangler.toml
+          if wrangler deploy --dry-run --outdir dist > dry.out 2>&1; then S=PASS; else S=FAIL; fi; tail -5 dry.out
+          mkdir -p ../results && node -e 'const fs=require("fs");const L=fs.readFileSync("dry.out","utf8").trim().split("\n").slice(-2).join(" ").replace(/"/g,"").slice(0,200);fs.writeFileSync("../results/w4-dryrun.json",JSON.stringify([{area:"Test Scan service",name:"the Scan service bundles for deployment with the pinned Wrangler (dry run, nothing uploaded)",status:process.argv[1],detail:L}]))' $S
+      - name: Service log (if anything failed)
+        if: failure()
+        run: tail -60 service.out; tail -20 fake-ebay.out
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-service
+          path: results/
+          retention-days: 7
+
+  build-cap8:
+    # TRIAL ONLY: builds the emulator test app with Capacitor 8 to see what the upgrade would change (never the live build)
+    name: Capacitor 8 trial build
+    # manual only: tick "Also run the Capacitor 8 trial" on a full manual run
+    if: github.event_name == 'workflow_dispatch' && inputs.cap8 && inputs.level != 'quick'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Build with Capacitor 8 (trial)
+        env:
+          RUN_NO: ${{ github.run_number }}
+          CAP_TRIAL: "8"
+          PRE_BUILD_HOOK: bash tests/android/prepare-test-app.sh android
+        run: |
+          pip install -q pyyaml
+          bash tests/android/prepare-test-app.sh before
+          python3 tests/ci/live-build-steps.py 2>&1 | tee build.out
+          test -s FlipScout.apk
+          grep -h -E "minSdkVersion|targetSdkVersion|compileSdkVersion" android/variables.gradle || true
+      - name: Record the trial build result
+        if: always()
+        run: |
+          mkdir -p results
+          if [ -s FlipScout.apk ]; then S=PASS; D="built with Capacitor 8 ($(grep -h -oE 'targetSdkVersion = [0-9]+' android/variables.gradle 2>/dev/null))"; else S=FAIL; D="$(grep -iE 'error|failed' build.out 2>/dev/null | head -3 | tr '"' ' ' | tr '\n' ' ' | cut -c1-250)"; fi
+          echo "[{\"area\":\"Capacitor 8 trial\",\"name\":\"the app builds with Capacitor 8 using the live build steps\",\"status\":\"$S\",\"detail\":\"$D\"}]" > results/cap8-build.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-cap8-build
+          path: results/
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flipscout-cap8-trial-apk
+          path: FlipScout.apk
+          retention-days: 7
+
+  compat:
+    name: Other Android versions
+    needs: [build-e2e, build-cap8]
+    if: always() && needs.build-e2e.result == 'success'
+    # (build-e2e only runs at the FULL level, so this only runs then too)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # Android 11 and Android 15 always; the Capacitor 8 trial row only when that trial was ticked on a manual run
+        include: ${{ fromJSON(format('[{0}{1}]', '{"label":"Android 11","api":30,"apk":"flipscout-emulator-test-apk"},{"label":"Android 15","api":35,"apk":"flipscout-emulator-test-apk"}', (github.event_name == 'workflow_dispatch' && inputs.cap8 && inputs.level != 'quick') && ',{"label":"Android 15 + Capacitor 8 trial","api":35,"apk":"flipscout-cap8-trial-apk"}' || '')) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: ${{ matrix.apk }}
+          path: apk
+      - name: Start fake eBay and the private test Scan service (no real keys)
+        run: |
+          KEY=$(openssl rand -hex 24); echo "::add-mask::$KEY"; echo "TEST_APP_KEY=$KEY" >> $GITHUB_ENV
+          TEST_APP_KEY=$KEY bash tests/e2e/start-test-service.sh
+      - name: Let the emulator use hardware speed-up
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: App on ${{ matrix.label }}
+        if: hashFiles('apk/FlipScout.apk') != ''
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          profile: Nexus 5
+          disable-animations: true
+          disk-size: 4096M
+          ram-size: 3072M
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -no-metrics
+          script: LABEL="${{ matrix.label }}" APK=apk/FlipScout.apk node tests/android/compat.mjs
+      - name: No app to test
+        if: hashFiles('apk/FlipScout.apk') == ''
+        run: |
+          mkdir -p results; echo '[{"area":"Compatibility: ${{ matrix.label }}","name":"app installed","status":"NOT TESTED","detail":"the trial app was not built (see the trial build result)"}]' > results/compat-none.json
+      - name: Small copies of the screenshots (readable from the log)
+        if: always()
+        run: |
+          command -v convert >/dev/null || sudo apt-get install -y -qq imagemagick >/dev/null
+          for f in screenshots/*/*.png; do [ -f "$f" ] || continue; convert "$f" -resize 320x -quality 50 /tmp/t.jpg; echo "SHOT $(echo "${f#screenshots/}" | tr / _) $(base64 -w0 /tmp/t.jpg)"; done
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-compat-${{ strategy.job-index }}
+          path: results/
+          retention-days: 7
+
+  build-phone:
+    # a separate "FlipScout TEST" app for trying on your own phone LATER (installs next to the real app; nothing is installed now)
+    name: Phone test build (separate app)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Build "FlipScout TEST" with the live build steps
+        env:
+          RUN_NO: ${{ github.run_number }}
+          PHONE_TEST: "1"
+        run: |
+          pip install -q pyyaml
+          python3 tests/ci/live-build-steps.py
+          test -s FlipScout.apk && mv FlipScout.apk FlipScout-TEST.apk
+      - name: Check it can't replace the real app
+        if: always()
+        run: |
+          mkdir -p results
+          AAPT=$(ls $ANDROID_HOME/build-tools/*/aapt2 | sort -V | tail -1)
+          P=$($AAPT dump badging FlipScout-TEST.apk | grep -o "package: name='[^']*'" | cut -d"'" -f2); L=$($AAPT dump badging FlipScout-TEST.apk | grep -o "application-label:'[^']*'" | cut -d"'" -f2)
+          if [ "$P" = "com.reaverslegion.flipscout.test" ]; then S=PASS; else S=FAIL; fi
+          echo "[{\"area\":\"Phone test build\",\"name\":\"separate app (own package name), so it installs next to the real app and can't replace it or read its data\",\"status\":\"$S\",\"detail\":\"package $P, name $L\"}]" > results/phone-build.json; cat results/phone-build.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-phone-build
+          path: results/
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FlipScout-TEST-for-phone
+          path: FlipScout-TEST.apk
+          retention-days: 14
+
+  build-e2e:
+    name: Build emulator test app
+    if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.level != 'quick'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Build with the live build steps plus the test-only changes
+        env:
+          RUN_NO: ${{ github.run_number }}
+          PRE_BUILD_HOOK: bash tests/android/prepare-test-app.sh android
+        run: |
+          pip install -q pyyaml
+          bash tests/android/prepare-test-app.sh before
+          python3 tests/ci/live-build-steps.py
+          test -s FlipScout.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flipscout-emulator-test-apk
+          path: FlipScout.apk
+          retention-days: 7
+
+  emulator:
+    name: Real app on Android emulator
+    needs: [build-e2e, build]
+    if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.level != 'quick'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          name: flipscout-emulator-test-apk
+          path: apk
+      - uses: actions/download-artifact@v4
+        with:
+          name: flipscout-TEST-apk
+          path: apk-release
+      - name: Start fake eBay, the bad-network switch and the private test Scan service (no real keys)
+        run: |
+          KEY=$(openssl rand -hex 24); echo "::add-mask::$KEY"; echo "TEST_APP_KEY=$KEY" >> $GITHUB_ENV
+          TEST_APP_KEY=$KEY bash tests/e2e/start-test-service.sh
+      - name: Free disk space for the emulator (removes unused tools from this temporary machine)
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /usr/local/lib/node_modules/@angular /opt/hostedtoolcache/CodeQL /usr/share/swift || true
+          df -h / | tail -1
+      - name: Accessibility checker (axe-core, free and open source)
+        run: npm i --prefix /tmp/axe --no-fund --no-audit axe-core@4.10.2 && test -s /tmp/axe/node_modules/axe-core/axe.min.js
+      - name: Let the emulator use hardware speed-up
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run every journey on the emulator
+        # pinned to the fixed commit "v2" points at today, so a later change by its author can't run here unseen
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 33
+          target: google_apis
+          arch: x86_64
+          profile: Nexus 5
+          disable-animations: true
+          disk-size: 4096M
+          ram-size: 3072M
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -no-metrics
+          script: APK=apk/FlipScout.apk RELEASE_APK=apk-release/FlipScout.apk AXE_JS=/tmp/axe/node_modules/axe-core/axe.min.js PART=${{ inputs.part || 'all' }} DIAG=${{ inputs.diag && '1' || '0' }} bash tests/android/run-all.sh
+      - name: Small copies of the screenshots (readable from the log)
+        if: always()
+        run: |
+          command -v convert >/dev/null || sudo apt-get install -y -qq imagemagick >/dev/null
+          for f in screenshots/*.png screenshots/*/*.png; do [ -f "$f" ] || continue; convert "$f" -resize 320x -quality 50 /tmp/t.jpg; echo "SHOT $(echo "${f#screenshots/}" | tr / _) $(base64 -w0 /tmp/t.jpg)"; done
+      - name: Logs (if anything failed)
+        if: failure()
+        run: |
+          tail -40 service.out || true
+          grep -iE "Killing|has died|lowmemory|lmkd|ANR in|FATAL|Fatal signal|renderer|crash" logcat.txt | grep -iE "flipscout|webview|sandboxed|systemui|lmkd" | tail -80 || true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-android
+          path: results/
+          retention-days: 7
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator-screenshots-and-logs
+          path: |
+            screenshots/
+            logcat.txt
+            logcat-integrity.txt
+            diag/
+          retention-days: 14
+
+  report:
+    name: Testing report
+    needs: [unit, supply, build, service, build-e2e, emulator, build-cap8, compat, build-phone]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: results-*
+          path: results
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node tests/ci/report.mjs results
+        env:
+          TEST_LEVEL: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.level != 'quick')) && 'full' || 'quick' }}
+          JOB_RESULTS: '{"Unit tests":"${{ needs.unit.result }}","Dependencies":"${{ needs.supply.result }}","Build":"${{ needs.build.result }}","Test Scan service":"${{ needs.service.result }}","Android emulator":"${{ needs.emulator.result }}","Capacitor 8 trial":"${{ needs.build-cap8.result }}","Other Android versions":"${{ needs.compat.result }}","Phone test build":"${{ needs.build-phone.result }}","Emulator test app build":"${{ needs.build-e2e.result }}"}'
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: test-report.md
+          retention-days: 30

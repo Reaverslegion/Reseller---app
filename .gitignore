@@ -1,0 +1,10 @@
+.test-service/
+results/
+fake-ebay.log
+fake-ebay.out
+service.out
+test-report.md
+screenshots/
+logcat.txt
+chaos.out
+apk/

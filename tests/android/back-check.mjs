@@ -43,7 +43,9 @@ async function round(label, autofillOn) {
     await step("setup code TYPED into the connection box", async () => { await app.tap("Connect now"); await app.waitFor(`!!document.getElementById("s_url")`, 8000, "address box");
       await app.fill({ sel: "#s_url" }, `http://localhost:8787#${KEY}`);
       await app.waitFor(`(()=>{try{return JSON.parse(localStorage.getItem("resell_helper_v1")).set.key.length===48}catch(e){return false}})()`, 8000, "saved"); });
-    await step("deals list shown", async () => { await app.tap({ sel: "#nav button", nth: 0 }); await app.waitFor(`!!document.querySelector(".dcard")`, 30000, "deal cards"); await app.eval(COUNTER); });
+    // a fresh app hunts nothing yet: like the journeys, add the popular categories (the fake deals are Graphics Cards)
+    await step("deals list shown", async () => { await app.tap({ sel: "#nav button", nth: 0 }); await app.waitText("Pick what to hunt", 15000);
+      await app.tap("Start with popular categories"); await app.waitFor(`!!document.querySelector(".dcard")`, 40000, "deal cards"); await app.eval(COUNTER); });
   });
   for (let i = 0; i < TRIES; i++) {
     try {

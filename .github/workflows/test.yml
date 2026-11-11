@@ -224,7 +224,8 @@ jobs:
   compat:
     name: Other Android versions
     needs: [build-e2e, build-cap8]
-    if: always() && needs.build-e2e.result == 'success'
+    # skipped for the focused Back-button investigation (part=back) to save minutes
+    if: always() && needs.build-e2e.result == 'success' && inputs.part != 'back'
     # (build-e2e only runs at the FULL level, so this only runs then too)
     runs-on: ubuntu-latest
     timeout-minutes: 45

@@ -1,6 +1,10 @@
 # Fliptimize — Reuse Before Build policy and open-source research register
 
-Version 1.0 · prepared 12 Nov 2026 on branch `docs/knowledge-system-v1` · NOT yet reviewed by ChatGPT or approved by the owner.
+Version 1.1 · 12 Nov 2026 · branch `docs/knowledge-system-v1` · v1.0 reviewed by ChatGPT; v1.1 corrections pending final
+review and owner approval.
+
+**The register in §3 is a starting point, not a complete inventory of all previous research.** Research done in ChatGPT
+conversations has not been recovered and is **outstanding**; do not assume every previously considered solution is listed.
 Evidence labels: see [AI_HANDOVER.md](../AI_HANDOVER.md#evidence-labels).
 
 ## 1. Policy — Reuse Before Build (permanent principle, owner, 12 Nov 2026)
@@ -72,4 +76,5 @@ package before relying on them.
 | 4–11 Nov 2026 | Deploy tool upgrade | wrangler 3 → 4 | to confirm | **Adopted** (Release B) | DECISIONS |
 | 12 Nov 2026 | Database backup (Backup V2) | Cloudflare D1 point-in-time restore / export | Cloudflare service | **To research** before building anything | RECOVERY.md |
 
-`UNVERIFIED`: any open-source research done in ChatGPT conversations is not recorded here yet.
+`UNVERIFIED` / outstanding: open-source research done in ChatGPT conversations is not recorded here yet. Add it as dated
+rows when it is supplied; no major new research was done for v1.1.

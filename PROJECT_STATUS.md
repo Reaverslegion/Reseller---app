@@ -1,7 +1,7 @@
 # Fliptimize — project status
 
 **Fliptimize — Android app currently named FlipScout.**
-Last reviewed: 2026-11-12 (Claude, documentation phase v1.0, branch `docs/knowledge-system-v1`; awaiting owner approval and ChatGPT review)
+Last reviewed: 2026-11-12 (Claude, documentation phase v1.1, branch `docs/knowledge-system-v1`; v1.0 reviewed by ChatGPT; v1.1 awaiting final review and owner approval)
 Status: WORKING DRAFT — verify against current GitHub and Cloudflare before relying on it.
 Owner: single nontechnical operator. Explain everything in plain English.
 Evidence labels: see [AI_HANDOVER.md](AI_HANDOVER.md#evidence-labels).
@@ -9,7 +9,9 @@ Evidence labels: see [AI_HANDOVER.md](AI_HANDOVER.md#evidence-labels).
 ## Product
 Android eBay reseller opportunity app, intended to become a commercially viable professional reseller platform
 (owner, 12 Nov 2026). Core capabilities include eBay scanning, sold-price analysis, estimated profit and sell-through,
-deals and alerts. Subscription tiers, fair deal distribution and multi-user business operations are planned, not built.
+deals and alerts. Work has deliberately concentrated on the deal-finding engine, valuation, reliability and infrastructure.
+Subscription tiers, fair deal distribution and multi-user operations are agreed directions or concepts — intentionally not
+designed or built yet.
 Vision, rules and architecture: [docs/VISION.md](docs/VISION.md). Features: [docs/FEATURES_AND_ROADMAP.md](docs/FEATURES_AND_ROADMAP.md).
 
 ## Environments (checked 12 Nov 2026)
@@ -46,8 +48,16 @@ every open defect is fixed.
 5. Single-user design (one shared key, no accounts) — not suitable for paid users as-is.
 6. eBay call limit (about 5,000/day recorded) is shared by the whole service; multi-user scale needs a plan.
 7. `main` has no branch protection (free GitHub plan); secrets are repository-wide.
-8. Unverified security items: signing-key password change (D1b), key-in-address switch-off (D4), Firebase key restriction (D5).
-9. Cosmetic: an update-test label says "build #120" when the previous version is 2.0.132.
+8. Unverified security items: signing-key password change and safekeeping (D1b), key-in-URL configuration (`KEY_IN_URL`
+   switch-off, D4), Firebase key restrictions (D5).
+9. Historical sold-price research code (`soldprices`) is outside GitHub (ZIP only).
+10. Prediction Lab exists only on a separate, ageing branch (`feature/prediction-lab`).
+11. GitHub Actions cost: full emulator runs cost about 50–65 minutes each; cost controls in AI_HANDOVER.md (procedure 8)
+    and SAFETY_RULES.md (rule 13).
+12. Cosmetic: an update-test label says "build #120" when the previous version is 2.0.132.
+
+Test results above report known failures as failures. Acceptance criteria for any release are set per change, documented
+and approved by the owner (DECISIONS.md, 12 Nov v1.1).
 
 ## Current priorities (`PROPOSED`, needs owner approval)
 1. Owner and ChatGPT review of this documentation set; decide on merging it.

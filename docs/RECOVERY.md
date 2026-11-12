@@ -1,6 +1,7 @@
 # Fliptimize — backup, disaster recovery and rollback
 
-Version 1.0 · prepared 12 Nov 2026 on branch `docs/knowledge-system-v1` · NOT yet reviewed by ChatGPT or approved by the owner.
+Version 1.1 · 12 Nov 2026 · branch `docs/knowledge-system-v1` · v1.0 reviewed by ChatGPT; v1.1 corrections pending final
+review and owner approval.
 Evidence labels: see [AI_HANDOVER.md](../AI_HANDOVER.md#evidence-labels). Nothing here authorises a restore, a rollback or a
 change to production. Never write secret values in this file.
 
@@ -34,10 +35,29 @@ change to production. Never write secret values in this file.
 **Signing key:** losing the key or its password means the app can never be updated in place again. Its safekeeping is
 `UNVERIFIED` (see §4).
 
-## 3. Backup V2 — requirements (`PROPOSED`)
+## 3. Backup V2 — design inputs (FUTURE CONCEPT: previously discussed, not approved, not implemented)
 
-The owner's "Backup V2" plan is referenced but its contents are **not in any Claude-accessible record** (probably in
-ChatGPT conversations). Until supplied, these are the proposed minimum requirements, drawn from earlier audits:
+These are **design inputs, not confirmed operational backups**. No backup, export or restore has been run for this
+document.
+
+### 3a. Previously discussed proposal
+`OWNER-REPORTED` (owner instruction 12 Nov 2026, recording earlier discussions):
+- Daily backups kept for approximately **35 days**.
+- Weekly backups kept for approximately **12 weeks**.
+- Monthly backups kept for approximately **12 months**.
+- Preserve important long-term **`fillseen`** history.
+- Protect irreplaceable **listing and sold-price history**.
+- Keep recoverable copies **outside the live database**.
+- Consider **encryption** and suitable **offsite storage**.
+- **Test restoration** into an isolated environment.
+- Define **recovery objectives and costs** before implementation.
+
+**Reuse Before Build:** research Cloudflare's existing backup, export and point-in-time recovery capabilities first
+(e.g. D1's own restore and export features), and only then propose any custom infrastructure (docs/OPEN_SOURCE.md).
+
+### 3b. Additional requirements from earlier audits (`PROPOSED`)
+
+*v1.0 said the Backup V2 contents were missing; corrected in v1.1 with §3a above.*
 
 1. **Full database backup** of D1 on a schedule, kept for a defined period, outside the live database.
    Research first: Cloudflare D1's own point-in-time restore ("Time Travel") and export features may already provide this
@@ -56,4 +76,4 @@ ChatGPT conversations). Until supplied, these are the proposed minimum requireme
 - Confirm the signing key and its password, the Scan service setup code and service passwords are stored in a password
   manager (do **not** send them to any AI).
 - Approve research of D1 backup options and a test restore in a test database (no production change).
-- Supply the Backup V2 notes from ChatGPT, if they exist.
+- Approve, when ready, a separate design phase for Backup V2 (recovery targets and costs first).

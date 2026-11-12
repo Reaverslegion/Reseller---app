@@ -2,7 +2,10 @@
 
 Only record decisions explicitly approved by the owner. Proposals are not approvals.
 
-> **12 Nov 2026 (documentation phase v1.0, branch `docs/knowledge-system-v1`, awaiting owner approval and ChatGPT review):**
+> **12 Nov 2026 (documentation phase v1.1, branch `docs/knowledge-system-v1`; v1.0 reviewed by ChatGPT; v1.1 corrections
+> awaiting final review and owner approval). Status words: see
+> [docs/FEATURES_AND_ROADMAP.md](docs/FEATURES_AND_ROADMAP.md#status-words-implementation--approval-status).**
+> Original v1.0 note:
 > the "Approved" list below is kept exactly as written on 8 Nov. A recovered decision history, superseded decisions and
 > open conflicts were added after it. Recovered entries come from Claude's project records and memory of the owner's
 > statements; the owner's exact words are quoted only where they were recorded. Evidence labels: see
@@ -25,8 +28,8 @@ the repository shows it.
 | Date | Decision | Status | Evidence |
 |---|---|---|---|
 | 21–22 Oct | App named FlipScout; package ID `com.reaverslegion.flipscout` | Name: interim (see 7 and 12 Nov). Package ID: kept | `VERIFIED` package ID in main |
-| 22 Oct | Keep sold-price data as a key feature; get it via phone-side "Check sold prices"/price book; pool prices across users later | Price book built; pooling planned. Licensing unresolved (VISION §6) | `OWNER-REPORTED`; `VERIFIED` fill code |
-| 23 Oct | Build 2.0 in 3 stages (1 bargain alarm, 2 connect eBay + selling, 3 polish/reports); Stage 2 not yet | Stage 1 released; Stage 2 parked | `OWNER-REPORTED` |
+| 22 Oct | Keep sold-price data as a key feature; get it via phone-side "Check sold prices"/price book; pool prices across users later | Price book RELEASED (admin fill); pooling across users is a FUTURE CONCEPT. Licensing unresolved (VISION §6) | `OWNER-REPORTED`; `VERIFIED` fill code |
+| 23 Oct | Build 2.0 in 3 stages (1 bargain alarm, 2 connect eBay + selling, 3 polish/reports); Stage 2 not yet | Stage 1 RELEASED; Stage 2 DEFERRED | `OWNER-REPORTED` |
 | Oct | Deals judged on minimum profit (return % optional), sorted by profit | In force | `OWNER-REPORTED`; `VERIFIED` code |
 | Oct | Alerts are the app's own (Firebase), never a third-party app (ntfy rejected) | In force | `OWNER-REPORTED`; `VERIFIED` FCM code |
 | Oct | Spares/repairs: seller's words and facts only, never suggest fixes | In force (VISION R4) | `OWNER-REPORTED` |
@@ -34,7 +37,7 @@ the repository shows it.
 | Oct | Automatic settings keep a manual version in the admin page for a global adjustment | In force — see conflict C3 | `OWNER-REPORTED` |
 | 24 Oct | Stay on rented cloud (Cloudflare), no own server; launch checklist kept for later | In force | `OWNER-REPORTED` |
 | 25 Oct | Keep Cloudflare Workers Paid ongoing | In force | `OWNER-REPORTED` |
-| 25 Oct | Remove the Prices tab (eBay deals only); hide half-built Sell and Money tabs until deal-finding is proven | In force — see C6, C10 | `OWNER-REPORTED`; `VERIFIED` 3 tabs in main |
+| 25 Oct | Remove the Prices tab (eBay deals only); hide half-built Sell and Money tabs until deal-finding is proven | In force — see C6, C8 | `OWNER-REPORTED`; `VERIFIED` 3 tabs in main |
 | 25 Oct | Manual price fill only (automatic daily fill dropped) | In force | `OWNER-REPORTED` |
 | 25 Oct | No guessed accuracy figures shown to users | In force (VISION R7) | `OWNER-REPORTED` |
 | 29 Oct | "Data first" priority over deal speed | In force (not re-confirmed since) | `OWNER-REPORTED` |
@@ -45,7 +48,11 @@ the repository shows it.
 | 12 Nov | Fliptimize is to become a commercially viable professional reseller platform; use "Fliptimize — Android app currently named FlipScout" until branding is final; never present projected profit as guaranteed | In force | owner instruction 12 Nov |
 | 12 Nov | Professional tools first; Reseller Academy, courses, challenges, achievements, badges, streaks and points **deferred** (kept) | In force | owner instruction 12 Nov |
 | 12 Nov | **Reuse Before Build** is a permanent engineering principle (docs/OPEN_SOURCE.md) | In force | owner instruction 12 Nov |
-| 12 Nov | Light mode "feels washed out and bland": record a future improvement, no redesign now | Planned | owner instruction 12 Nov |
+| 12 Nov | Light mode "feels washed out and bland": record a future improvement, no redesign now | AGREED PRODUCT DIRECTION (later UX feedback; the released theme's approval stands) | owner instruction 12 Nov |
+| 12 Nov | Clarification: work has deliberately concentrated on the deal-finding engine, valuation, reliability and infrastructure; the subscription business and most future features are intentionally not designed yet. Do not invent tier names, prices, guarantees, recipient limits, first-look windows, algorithms, projections or launch dates. Future business design is a separate phase | In force | owner instruction 12 Nov (v1.1) |
+| 12 Nov | Business directions recorded at concept level (docs/FEATURES_AND_ROADMAP.md §4). One-time purchase previously discussed around £4.99 — **not approved**; no subscription price approved | Recorded | owner instruction 12 Nov (v1.1) |
+| 12 Nov | Backup V2 design inputs recorded (35-day daily, 12-week weekly, 12-month monthly retention; protect fillseen, listing and sold-price history; copies outside the live database; encryption/offsite; isolated restore test; recovery objectives and costs first) — not approved, not implemented | Recorded (docs/RECOVERY.md §3) | owner instruction 12 Nov (v1.1) |
+| 12 Nov | Testing and release acceptance: test scope and acceptance criteria must suit the change, be documented and be explicitly approved by the owner; known failures are reported and assessed, never hidden or relabelled as passes; historical failures do not automatically block every future phone build; any policy change beyond this clarification needs separate approval | In force | owner instruction 12 Nov (v1.1) |
 
 ### Engineering, security and releases
 | Date | Decision | Status | Evidence |
@@ -67,7 +74,7 @@ the repository shows it.
 | 11 Nov | Release A (app 2.0.132: Capacitor 8 + Fliptimize redesign) merged to main and built | Done; phone checks passed `OWNER-REPORTED` | `VERIFIED` main 9e7269a, build run 42975706497 |
 | 11 Nov | Release B (Scan service) — owner's words: "I approve deploying Release B to production. Deploy only the reviewed main commit 1620653…" | Deployed 11 Nov 11:22 UTC (version ec61ce36); deploy workflow disabled afterwards | `VERIFIED` main 1620653, workflow disabled; deploy details `DEV-REPORTED` |
 | 11 Nov | Android phase: investigate Back issue, "Back up now" feedback, regression checks — testing branch only | Backup feedback built (2.0.133); Back cause unknown | `VERIFIED` testing |
-| 11 Nov | Pagination / no arbitrary deal limit: plan for later, do not build yet | Planned | `OWNER-REPORTED` |
+| 11 Nov | Pagination / no arbitrary deal limit: plan for later, do not build yet | AGREED PRODUCT DIRECTION (not approved for development) | `OWNER-REPORTED` |
 | 12 Nov | Test-only fix of the update test; 2.0.133 prepared for the phone | Done; 2.0.133 installed and 7/7 phone checks passed | `VERIFIED` testing 577c591, run 43165667086; phone `OWNER-REPORTED` |
 | 12 Nov | No further emulator Back-button investigation for now; keep the defect open | In force | owner instruction 12 Nov |
 | 12 Nov | Build a GitHub-based project knowledge system, documentation only, on a dedicated branch; no merge without approval | In progress (this branch) | owner instruction 12 Nov |
@@ -87,13 +94,14 @@ the repository shows it.
 |---|---|---|---|
 | C1 | Personal use (29 Oct) vs commercial product (7 Nov) | — | **Resolved** 12 Nov: commercial |
 | C2 | Name FlipScout vs brand Fliptimize | Interim wording agreed 12 Nov; final name, logo and launcher name still open | Partly resolved |
-| C3 | "Delete database-building tools (admin) before public release" (Oct) vs "keep a manual version of every automatic setting in the admin page for global adjustments" (Oct) | Separate owner-only admin from customer builds; or remove some tools only | **Open** |
-| C4 | Current price data comes partly from automatic sold-price learning and phone-side page reading, vs eBay licence concerns and the commercial direction | See VISION §6 | **Open — must resolve before launch** |
-| C5 | Owner said a deliberate £1 minimum profit for testing (7 Nov); live settings read on 11 Nov were £50 minimum profit and £200 spending limit | Confirm the intended current values (these are the owner's own settings, not code) | **Open** |
-| C6 | "FlipScout is only for eBay" (25 Oct) vs worldwide toolkit and more marketplaces (12 Nov) | Keep eBay-only for launch; add others later | **Open** (scope) |
+| C3 | Separation of owner-only administration from public customer features: "delete database-building tools (admin) before public release" (Oct) vs "keep a manual version of every automatic setting in the admin page for global adjustments" (Oct) | Separate owner-only admin from customer builds; or remove some tools only | **Open** |
+| C4 | Data licensing: current price data comes partly from automatic sold-price learning and phone-side page reading, vs eBay licence concerns and the commercial direction | See VISION §6 | **Open — must resolve before launch** |
+| C5 | £1 testing minimum profit (7 Nov) vs £50 minimum profit and £200 spending limit read on 11 Nov | — | **Not a conflict** (clarified 12 Nov, v1.1): user-adjustable settings at different times; keep them configurable; values unchanged |
+| C6 | "FlipScout is only for eBay" (25 Oct) vs worldwide toolkit and more marketplaces (12 Nov) | — | **Not a conflict** (clarified 12 Nov, v1.1): eBay is the current engine scope; expansion is a FUTURE CONCEPT, not approved |
 | C7 | Prediction Lab "future plan, not to build yet" vs built on `feature/prediction-lab` (8 Nov) | Keep for later; update to current code; or shelve | **Open** |
-| C8 | Sell and Money tabs hidden "until deal-finding is proven" (25 Oct) vs inventory and financial tracking now an active priority (12 Nov) | Decide when and how to bring them back | **Open** |
-| C9 | Light canvas approved (D7, 7 Nov) vs Light mode "washed out" (12 Nov) | Future visual improvement | Recorded, not a redesign |
+| C8 | Sell and Money tabs hidden "until deal-finding is proven" (25 Oct) vs inventory and financial tracking now part of the product focus (12 Nov) | Decide when and how to bring them back | **Open** (timing decision) |
+| C9 | Light theme approved and released (D7, 7 Nov) vs "washed out" feedback (12 Nov) | — | **Not a conflict** (clarified 12 Nov, v1.1): later UX feedback; improvement kept as future work |
+| C10 | Spares rule R4 ("never suggest fixes") vs the future Repair & Flip concept (optional, user-requested repair research with parts, prices and guides) | Proposed clarification VISION R4a: R4 governs automatic deal discovery; Repair & Flip, if ever approved, is user-requested and evidence/compatibility-checked, never claiming an easy or guaranteed repair | **Awaiting owner confirmation** |
 
 ## Not approved / pending
 - Any merge, commit or deployment to `main`, or production app, Worker, database, Cloudflare, Firebase or account changes.

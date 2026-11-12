@@ -2,55 +2,65 @@
 
 Purpose: shared asynchronous handovers for Claude and ChatGPT. GitHub is the shared record, not a live chat between AIs.
 
-## Current handover — read first (12 Nov 2026)
+## Current handover — read first (12 Nov 2026, v1.1)
 *Fliptimize — Android app currently named FlipScout.* Prepared by Claude on branch `docs/knowledge-system-v1`
-(documentation only). **Not yet approved by the owner or reviewed by ChatGPT.**
+(documentation only). v1.0 was reviewed by ChatGPT; **v1.1 corrections await final review and owner approval.**
+This section replaces nothing below it: older dated entries and Claude's earlier handoffs are history — when they
+disagree with this section or with newer evidence, the newer evidence wins.
 
-- **Production (`main` 1620653):** app 2.0.132 (Release A) + Scan service Release B, deployed 11 Nov. Deploy workflow disabled.
-- **Testing (`d7efb7a`):** app 2.0.133 = "Back up now" feedback. Installed on the owner's phone; 7/7 phone checks passed
-  (owner-reported). **Not merged into main or released.**
+| Question | Answer now |
+|---|---|
+| 1. What is implemented? | `main` 1620653: app 2.0.132 (Release A) + Scan service Release B (deployed 11 Nov). `testing` d7efb7a adds app 2.0.133 ("Back up now" feedback), BUILT, NOT RELEASED. Prediction Lab: separate branch only. Full list: [docs/FEATURES_AND_ROADMAP.md](docs/FEATURES_AND_ROADMAP.md) |
+| 2. What is tested and verified? | See [PROJECT_STATUS.md](PROJECT_STATUS.md). 2.0.133: corrected update test 121/0; full regression 676 pass / 7 known fails; phone checks 7/7 (owner-reported). Known failures are reported, never relabelled as passes |
+| 3. What has the owner approved? | [DECISIONS.md](DECISIONS.md). **No feature is currently APPROVED FOR DEVELOPMENT** |
+| 4. What is only planned or discussed? | AGREED PRODUCT DIRECTION and FUTURE CONCEPT items (business model, inventory/finance, dashboards, insights, Repair & Flip, more marketplaces, Backup V2, pagination, improved light theme). Intentionally not designed yet |
+| 5. What is uncertain? | eBay data licensing; no verified full database restore; signing-key, Firebase-key and key-in-URL settings; cause of the emulator Back-button failure |
+| 6. What is rejected or superseded? | FEATURES_AND_ROADMAP.md §7; DECISIONS.md "Superseded decisions" |
+| 7. What action is authorised right now? | Only documentation corrections on `docs/knowledge-system-v1`. **Not authorised:** merging this branch, releasing 2.0.133, any code, deploy, production, database or paid-service change, building any feature |
+
 - **Open defect:** intermittent emulator Back-button failure — cause unknown; do not mark fixed.
 - **Direction:** commercially viable professional reseller platform; professional tools first; gamification deferred;
-  Reuse Before Build is permanent policy.
-- **Biggest risks:** eBay data licensing for price modelling; no tested full database restore; single-user design.
-- **Waiting on the owner:** approval of this documentation set; whether to release 2.0.133; conflicts C3–C9 in DECISIONS.md;
-  the missing records below.
+  Reuse Before Build is permanent policy. Engine first — business design is a later, separate phase.
+- **Waiting on the owner:** approval of this documentation set; whether to release 2.0.133; open conflicts C3, C4, C7, C8
+  and C10 in DECISIONS.md.
 
 | Need | Read |
 |---|---|
-| Technical state, releases, defects | [PROJECT_STATUS.md](PROJECT_STATUS.md) |
+| Technical state, releases, defects, risks | [PROJECT_STATUS.md](PROJECT_STATUS.md) |
 | Decisions, superseded decisions, open conflicts | [DECISIONS.md](DECISIONS.md) |
 | Rules for both AIs | [SAFETY_RULES.md](SAFETY_RULES.md) |
-| Vision, product rules, architecture, data licensing | [docs/VISION.md](docs/VISION.md) |
-| Feature register and roadmap | [docs/FEATURES_AND_ROADMAP.md](docs/FEATURES_AND_ROADMAP.md) |
-| Backup, disaster recovery, rollback | [docs/RECOVERY.md](docs/RECOVERY.md) |
+| Vision, product rules, business directions, architecture, data licensing | [docs/VISION.md](docs/VISION.md) |
+| Feature register, status words and suggested order | [docs/FEATURES_AND_ROADMAP.md](docs/FEATURES_AND_ROADMAP.md) |
+| Backup, disaster recovery, rollback, Backup V2 inputs | [docs/RECOVERY.md](docs/RECOVERY.md) |
 | Reuse Before Build policy and research register | [docs/OPEN_SOURCE.md](docs/OPEN_SOURCE.md) |
 | History (not authoritative) | `docs/ENGINEERING_LOG.md` (26 Oct), `docs/audit/` (4 Nov), `docs/capacitor-8-upgrade.md`, dated entries below |
 
 ### Evidence labels
-Used in every document. If a claim has no label, treat it as `UNVERIFIED`.
+Evidence labels say **how we know** something. They are separate from the implementation/approval **status words**
+(RELEASED, BUILT NOT RELEASED, APPROVED FOR DEVELOPMENT, AGREED PRODUCT DIRECTION, FUTURE CONCEPT, DEFERRED, REJECTED,
+SUPERSEDED, UNVERIFIED/DISPUTED), defined in [docs/FEATURES_AND_ROADMAP.md](docs/FEATURES_AND_ROADMAP.md#status-words-implementation--approval-status).
+If a claim has no label, treat it as `UNVERIFIED`.
 
 | Label | Meaning |
 |---|---|
 | `VERIFIED` | Checked in the repository or GitHub records (commit, file or run named), on the date stated |
-| `OWNER-REPORTED` | The owner reported it (e.g. physical-phone tests, settings, decisions) |
+| `OWNER-REPORTED` | The owner reported it (e.g. physical-phone tests, settings, decisions, earlier discussions) |
 | `DEV-REPORTED` | Recorded by Claude or ChatGPT earlier; not re-checked when this was written |
-| `APPROVED` | Approved by the owner but not implemented yet |
-| `PROPOSED` | Proposed or being researched; not approved |
-| `DEFERRED` / `REJECTED` | Kept for later / decided against |
-| `SUPERSEDED` | Replaced by a later decision (kept for history) |
+| `PROPOSED` | Suggested by an AI; not approved by the owner |
 | `UNVERIFIED` / `DISPUTED` | Not checked, or the records disagree |
 
-### Missing records (exist outside GitHub; do not invent their contents)
-- **ChatGPT conversations:** business-model details — subscription tiers and prices, one-time purchase, round-robin
-  allocation rules, priority windows, redistribution, limited recipients, worldwide toolkit, potential/secured/realised
-  profit definitions, market insights, Repair & Flip, Backup V2 contents, any open-source research.
-- **PDFs delivered in Claude chats:** Fliptimize consolidation review (46 pages), visual proposals v1 and v2 (only short
-  summaries exist in Claude's project notes).
-- **ZIP:** `soldprices` sold-price research system (code never committed).
-- **Other:** the 24 Oct roadmap document (a Claude document, outside GitHub); "MY APP PROGRESS.txt" (earlier project).
-- **Claude-only project notes:** 39 documents in the Claude Project (22 Oct–12 Nov), visible to Claude only. Their key
-  content is summarised in these GitHub files; the originals stay there as history.
+### Not designed yet (intentional) vs missing records
+- **Intentionally not designed (do not invent):** subscription tier names and prices, guarantees, recipient limits,
+  first-look windows, allocation algorithms, revenue or subscriber projections, launch dates, detailed future features.
+  Concept-level directions are recorded in docs/VISION.md §3 and docs/FEATURES_AND_ROADMAP.md §4.
+- **Missing records (exist outside GitHub):**
+  - Open-source research done in ChatGPT conversations — outstanding.
+  - PDFs delivered in Claude chats: Fliptimize consolidation review (46 pages), visual proposals v1 and v2 (only short
+    summaries exist in Claude's project notes).
+  - ZIP: `soldprices` sold-price research system (code never committed).
+  - The 24 Oct roadmap document (a Claude document, outside GitHub); "MY APP PROGRESS.txt" (earlier project).
+  - Claude-only project notes: 39 documents in the Claude Project (22 Oct–12 Nov), visible to Claude only; key content
+    is summarised in these GitHub files and the originals stay there as history.
 
 ## Operating procedure
 1. At session start read `PROJECT_STATUS.md`, `AI_HANDOVER.md`, `DECISIONS.md` and `SAFETY_RULES.md`, plus the relevant code and recent commits. (Added 12 Nov, pending approval: also the relevant file in `docs/`, and the continuity procedure below.)
@@ -61,6 +71,7 @@ Used in every document. If a claim has no label, treat it as `UNVERIFIED`.
 6. Never include secrets, access tokens, customer personal information or credentials in handovers.
 7. If concurrent work risks conflicts, use separate task branches and agree ownership before edits. Never force-push or overwrite someone else's work.
 8. GitHub Actions minutes (owner-approved 8 Nov 2026): commit locally and upload once per finished task, not after every small step. Uploads to test branches get the quick check; run the FULL test suite by hand (Actions > Test changes > Run workflow, level "full") before any test app is built for the owner's phone. Every request to merge into main runs the full suite automatically, and it must pass.
+   *Clarification (12 Nov 2026, v1.1; wording pending owner approval — not a policy change):* the project's history includes full regression suites, focused tests, known intermittent emulator failures, corrected update tests and owner-approved physical-phone checks. Test scope and release acceptance criteria must be appropriate to the change, documented and explicitly approved by the owner. Known failures are always reported and assessed — never hidden or relabelled as passes — and do not automatically block every future phone build. Any change to this test or release policy beyond clarification needs separate owner approval.
 
 ## 2026-11-08 — ChatGPT — coordination setup
 Branch: `testing`. This entry documents the repository safety review and collaboration arrangement.
@@ -144,12 +155,22 @@ These were not logged here at the time.
   `docs/**` and `**.md`; build, deploy and Pages run only from `main`; phone/update tests only for their request files).
 - Needs: owner approval; ChatGPT independent review; the missing records listed at the top.
 
+## 2026-11-12 — Claude — knowledge system v1.1 (ChatGPT review corrections, documentation only)
+- Branch `docs/knowledge-system-v1`, from `d5d0007`. Owner-approved limited corrections after ChatGPT's independent review.
+- Changes: one consistent status scheme (separate from evidence labels); business model recorded as agreed directions and
+  concepts only (no prices, tiers, limits, algorithms or projections; £4.99 one-time purchase noted as not approved);
+  future features re-labelled (nothing is approved for development); spares rule kept, with a proposed Repair & Flip
+  clarification awaiting the owner (C10); Backup V2 design inputs recorded; false conflicts C5, C6, C9 marked "not a
+  conflict"; testing/release acceptance clarified; risks list completed; open-source register marked as a starting point.
+- No application, workflow or configuration file changed. No workflows triggered (docs-only push to a non-main branch).
+- Needs: final independent review; owner approval before any merge.
+
 ## Context continuity procedure (`PROPOSED` 12 Nov 2026 — needs owner approval)
 **Start of every session (Claude or ChatGPT):**
 1. Read "Current handover" at the top of this file.
 2. Read `PROJECT_STATUS.md` and `SAFETY_RULES.md`; check recent entries in `DECISIONS.md`.
 3. Confirm the branch and exact commit you are looking at; compare with the commits named here.
-4. Look for stale or conflicting records (a "Last reviewed" date older than the latest release or 7 days; anything marked
+4. Treat older handovers as history when newer evidence exists. Look for stale or conflicting records (a "Last reviewed" date older than the latest release or 7 days; anything marked
    `DISPUTED`). Say so before relying on them.
 
 **After each meaningful milestone (a release, a test phase, an owner decision):**

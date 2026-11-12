@@ -2,7 +2,13 @@
 
 **Fliptimize — Android app currently named FlipScout.** Use this wording until branding is finalised.
 
-Version 1.0 · prepared 12 Nov 2026 on branch `docs/knowledge-system-v1` · NOT yet reviewed by ChatGPT or approved by the owner.
+Version 1.1 · 12 Nov 2026 · branch `docs/knowledge-system-v1` · v1.0 reviewed by ChatGPT; v1.1 corrections pending final
+review and owner approval. Status words (RELEASED, AGREED PRODUCT DIRECTION, FUTURE CONCEPT …) are defined in
+[FEATURES_AND_ROADMAP.md](FEATURES_AND_ROADMAP.md#status-words-implementation--approval-status).
+
+**Where the project stands (owner, 12 Nov 2026):** work has deliberately concentrated on the deal-finding engine, valuation
+calculations, reliability and supporting infrastructure. The subscription business and most future features have **not**
+been designed in detail — intentionally. This document records direction, not specifications.
 Evidence labels are explained in [AI_HANDOVER.md](../AI_HANDOVER.md#evidence-labels). Feature status lives in
 [FEATURES_AND_ROADMAP.md](FEATURES_AND_ROADMAP.md); decisions in [DECISIONS.md](../DECISIONS.md).
 
@@ -28,9 +34,11 @@ The earlier "personal-use data collection app only" direction (29 Oct 2026) is `
 ### Professional tools first — no gamification for now
 `OWNER-REPORTED` (owner decision, 12 Nov 2026). The priority is genuine reseller value, not time spent in the app.
 
-- **Active priorities:** reliable deal discovery and valuation; profit and ROI calculations; inventory and financial
-  tracking; potential, secured and realised profit; deal notifications; personalised market insights; subscription value
-  and fair allocation; useful analytics and decision support.
+- **Product focus** (the owner's "active product priorities"; AGREED PRODUCT DIRECTION — none is approved for development
+  by this list): reliable deal discovery and valuation; profit and ROI calculations; inventory and financial tracking;
+  potential, secured and realised profit; deal notifications; personalised market insights; subscription value and fair
+  allocation; useful analytics and decision support. Several of these exist in part today (deal discovery, valuation,
+  profit maths, notifications — RELEASED); the rest are directions only.
 - **Deferred (kept, not deleted):** Reseller Academy, educational courses, interactive challenges, achievements and progress
   badges, streaks and points. Revisit only with evidence that they improve user outcomes, subscriber retention or
   commercial performance. Practical repair and selling guides remain possible future items.
@@ -44,9 +52,10 @@ Each rule keeps its original meaning and source. If a later decision conflicts w
 |---|---|---|
 | R1 | **Nobody should need to add anything up.** Every money figure comes with a clear final total (total you pay, profit). | Owner, Oct 2026 (Claude memory; HANDOFF 24 Oct §1) |
 | R2 | Support both **Private and Business seller** modes; fees and buyer-protection fee follow the mode. | Owner, 7 Nov 2026; finance tests |
-| R3 | Keep the user's own **minimum profit** and **spending limit** settings; deals are judged on minimum profit (return % optional). | Owner, Oct 2026; spending limit "an important option" |
-| R4 | **Spares/repairs:** never suggest fixes or call something an easy fix. Show only the seller's own words and the facts; the user judges the fault and enters their own repair cost. Distinguish faults the seller reported from faults the app inferred (e.g. risk words). | Owner, Oct 2026 (HANDOFF 24 Oct §1) |
+| R3 | Keep the user's own **minimum profit** and **spending limit** settings, adjustable by the user; deals are judged on minimum profit (return % optional). Values used at different times (e.g. £1 for testing; later £50 minimum profit and £200 spending limit) are user settings, not product decisions. | Owner, Oct 2026; spending limit "an important option"; clarified 12 Nov |
+| R4 | **Spares/repairs (original rule, unchanged):** never suggest fixes or call something an easy fix. Show only the seller's own words and the facts; the user judges the fault and enters their own repair cost. In ordinary deal discovery, clearly distinguish the **seller's reported condition** from the **app's risk warnings**. The app must not automatically claim a faulty item is easy to repair, invent a diagnosis, or imply a repair is guaranteed. | Owner, Oct 2026 (HANDOFF 24 Oct §1); restated 12 Nov |
 | R5 | Never invent repair diagnoses or claim part compatibility without evidence. | Owner instruction, 12 Nov 2026 (extends R4) |
+| R4a | **Proposed clarification — awaiting owner confirmation (DECISIONS C10):** R4 governs automatic deal discovery. A possible future Repair & Flip feature (FUTURE CONCEPT, not approved) could offer *optional, user-requested* repair research — parts, prices and guides — only with evidence and compatibility checks, never automatic claims of an easy or guaranteed repair. | Owner instruction, 12 Nov 2026 |
 | R6 | Anything made automatic keeps a **manual version in the admin page**, so the owner can set a global adjustment for all users. | Owner, Oct 2026 — see conflict C3 in DECISIONS.md |
 | R7 | **Never show an accuracy figure that hasn't been measured**; show the evidence instead (e.g. "From N sales"). | Owner, 25 Oct 2026 |
 | R8 | **Never put "eBay" in the product name, icon or domain.** Plain-text mentions are fine, with "Not affiliated with eBay". | HANDOFF 24 Oct §1 |
@@ -57,7 +66,24 @@ Each rule keeps its original meaning and source. If a later decision conflicts w
 
 ## 3. Scope map (topics to document — NOT approval to build)
 
-Status of each item is in FEATURES_AND_ROADMAP.md. Summary:
+Status of each item is in FEATURES_AND_ROADMAP.md. **Current engine scope: eBay (UK).** A worldwide toolkit and other
+marketplaces are FUTURE CONCEPTS — they extend the initial scope rather than contradict it, and are not approved for
+development.
+
+### Business model — agreed directions and concepts (not designs)
+`OWNER-REPORTED` (12 Nov 2026). AGREED PRODUCT DIRECTION: commercial professional reseller platform; free reseller tools;
+multiple paid subscription tiers; tier-based potential-profit opportunity **targets** (not guarantees); fair round-robin
+distribution; matching by available budget and preferred categories; limited recipients per opportunity; redistribution
+of unclaimed opportunities; fairness informed by opportunities already received; potential, secured and realised profit
+tracking. FUTURE CONCEPT: possible priority access for higher tiers; possible one-time purchase (previously discussed around
+£4.99 — **not approved**); possible worldwide standalone toolkit.
+
+**Not decided (deliberately):** tier names or prices, guaranteed returns, recipient limits, first-look windows, allocation
+algorithms, revenue or subscriber projections, launch dates. The allocation system needs later design, simulation and
+evidence that enough genuine opportunities exist to support the proposed subscription value. Business design is a separate
+future phase.
+
+### Topic summary
 
 - **Core:** Android app and Scan service · eBay API integration · historical sold-price data · resale estimates and
   sell-through · profit, fees, postage, ROI and risk controls · inventory, budgeting and financial tracking · Prediction Lab
@@ -74,10 +100,9 @@ Status of each item is in FEATURES_AND_ROADMAP.md. Summary:
   Actions cost controls · Cloudflare infrastructure and monitoring · open-source research · deployment and rollback
   safeguards · commercial launch requirements.
 
-`UNVERIFIED`: most business-model details (round-robin rules, tier names and prices, priority windows, redistribution,
-worldwide toolkit, one-time purchase, Backup V2 contents) are **not in any Claude-accessible record**. They probably exist
-in ChatGPT conversations. They are listed as topics only until those records are supplied (see AI_HANDOVER.md, "Missing
-records").
+*v1.0 said most business-model details were missing records. Corrected in v1.1: the owner confirmed (12 Nov) that these
+were intentionally not designed yet; the concept-level items above are now recorded. Backup V2 design inputs are in
+[RECOVERY.md](RECOVERY.md) §3.*
 
 ## 4. Brand
 
@@ -88,7 +113,7 @@ records").
 | Preferred mark: layered, forward-moving geometric symbol (violet/indigo/orchid), light and dark versions. **Final logo not supplied**; app uses a text-only wordmark | `OWNER-REPORTED` | Owner, Nov 2026 |
 | Geometric fox head — placeholder only, **not approved** | `REJECTED` as final logo | Owner, 7–8 Nov 2026 |
 | Light canvas #F6F6FA, visible card borders, solid violet buttons (released in 2.0.132) | `VERIFIED` (in main) | Fliptimize decisions D7–D8, 7 Nov |
-| Light mode "feels washed out and bland" → future improvement to visual hierarchy, contrast, accessibility and long-session comfort; **not an immediate redesign** | `OWNER-REPORTED`, `PROPOSED` | Owner, 12 Nov 2026 |
+| Light mode "feels washed out and bland" → future improvement to visual hierarchy, contrast, accessibility and long-session comfort; **not an immediate redesign**. Later UX feedback on a theme that was approved and released — not a reversal of that approval | `OWNER-REPORTED`; AGREED PRODUCT DIRECTION | Owner, 12 Nov 2026 |
 | Earlier looks: navy/green (21 Oct), "Graphite & Sage" dark mode (25 Oct) | `SUPERSEDED` by the Fliptimize redesign (Release A) | session notes 24–25 Oct |
 
 ## 5. Architecture (as of main `1620653`, 11 Nov 2026)

@@ -13,3 +13,11 @@ These rules document the owner's preferences; they do not grant new permissions.
 9. **No unrequested prompts.** Discuss and agree work with the owner first. Do not generate instructions to send to Claude until the owner asks for them.
 10. **Asynchronous coordination only.** GitHub files are a shared status record, not a live direct link between AI conversations. Read current files before work; append dated handovers and avoid overwriting concurrent changes.
 11. **Stop on uncertainty.** If the target environment, permission, impact or recovery path is unclear, stop and ask rather than guessing.
+
+## Additional owner rules (recorded 12 Nov 2026 from the owner's instructions of 3–12 Nov; wording pending owner approval)
+12. **Testing honesty.** Never claim a test passed unless it actually ran. Never remove or change a feature just to make a test pass. Never run automated tests against the live database.
+13. **Cost control.** Ask before expensive test runs (full emulator suites), report the GitHub Actions minutes used, use local checks first, and do not automatically re-run failed tests.
+14. **The owner's own app.** Never ask the owner to uninstall, reinstall, reset or clear FlipScout. Builds marked EMULATOR-ONLY are never given to the owner to install.
+15. **Stop and ask** if anything unexpected happens, or if a check fails or cannot be verified.
+16. **No evasive data collection** (spoofing, disguised automation, captcha solving, burner accounts, server-side scraping). See docs/VISION.md rule R9.
+17. **Documentation** never contains secrets, keys, passwords, tokens, personal data or confidential data-provider identities. Each documentation change needs its own approval; no standing approval.

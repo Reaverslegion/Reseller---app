@@ -1,1 +1,1 @@
-old=42975706497 new=43159922572 wrap=43159909815 (live 2.0.132 -> testing #133 with backup feedback, 12 Nov)
+old=42975706497 new=43159922572 wrap=43159909815 (live 2.0.132 -> testing #133, corrected start-up marker check, 12 Nov)

@@ -2,8 +2,8 @@
 
 **Fliptimize — Android app currently named FlipScout.** Use this wording until branding is finalised.
 
-Version 1.1 · 12 Nov 2026 · branch `docs/knowledge-system-v1` · v1.0 reviewed by ChatGPT; v1.1 corrections pending final
-review and owner approval. Status words (RELEASED, AGREED PRODUCT DIRECTION, FUTURE CONCEPT …) are defined in
+Version 1.2 · 12 Nov 2026 · branch `docs/knowledge-system-v1` · v1.0 reviewed by ChatGPT; v1.1–v1.2 corrections pending
+final review and owner approval. Status words (RELEASED, AGREED PRODUCT DIRECTION, FUTURE CONCEPT …) are defined in
 [FEATURES_AND_ROADMAP.md](FEATURES_AND_ROADMAP.md#status-words-implementation--approval-status).
 
 **Where the project stands (owner, 12 Nov 2026):** work has deliberately concentrated on the deal-finding engine, valuation
@@ -11,6 +11,62 @@ calculations, reliability and supporting infrastructure. The subscription busine
 been designed in detail — intentionally. This document records direction, not specifications.
 Evidence labels are explained in [AI_HANDOVER.md](../AI_HANDOVER.md#evidence-labels). Feature status lives in
 [FEATURES_AND_ROADMAP.md](FEATURES_AND_ROADMAP.md); decisions in [DECISIONS.md](../DECISIONS.md).
+
+## 0. Confirmed long-term vision (owner, 12 Nov 2026) — read this first
+
+`OWNER-REPORTED` (owner's confirmed vision, given to ChatGPT and recorded here on 12 Nov 2026, v1.2).
+
+Fliptimize is intended to become a **broad resale opportunity discovery and distribution platform**. Its central principle:
+
+> **Find products available to buy for less than their realistically achievable resale value, regardless of where they are
+> being sold, and identify worthwhile opportunities using historical eBay sold-price and sales-speed evidence.**
+
+- **The existing eBay deal engine is the foundation of this platform** — not a temporary system to be replaced. Nothing in
+  this vision is a request to rebuild it.
+- **Resale evidence:** historical **eBay sold listings** are the intended primary resale valuation evidence. No other
+  valuation source is required or planned.
+- **Coverage:** the sold-price database is intended to grow from the **nine initial test categories** to essentially every
+  eBay product category where sufficiently reliable comparable sales exist (e.g. computer components, prams, watches,
+  tools, electronics, clothing, collectibles). The nine were chosen because they hold popular, relatively fast-selling
+  products suitable for testing; **they were never intended as permanent product or architectural limits.** Broad coverage
+  is a long-term objective — it does **not** exist today.
+- **Buying sources are separate from resale evidence.** Products may in future be found on eBay, Facebook Marketplace,
+  Amazon, online retailers, clearance and discounted retail offers, or other accessible sources, and then valued against the
+  eBay sold-price database (e.g. a new product discounted on Amazon compared with sufficiently comparable eBay sold
+  listings). New and used products can both qualify when the condition and comparisons are appropriate. Every future source
+  needs its own research into feasibility, terms, licensing, reliability and cost; **no API or automated access is assumed
+  to exist or be permitted.**
+- **Shared opportunity pool:** qualifying opportunities from all supported buying sources and categories are intended to
+  feed one shared pool, which the future subscription system distributes fairly (see §3).
+
+### Product eligibility and valuation principles
+1. Recommend a product as a profitable opportunity **only when sufficient trustworthy comparable-sales evidence exists.**
+2. **Multiple relevant historical sales are required; a single sale is not enough.**
+3. Comparisons must identify the **correct product** — model, version, condition and other material differences.
+4. Historical prices must support a **defensible** resale estimate.
+5. **Selling speed** must be supported by appropriate evidence, never invented.
+6. **Preserve the existing conservative valuation and profitability calculations.**
+7. If evidence is insufficient, **do not invent a price, confidence level or projected profit**; insufficient evidence
+   prevents a confident automated deal recommendation.
+8. **Do not exclude entire categories unnecessarily** when identifiable products within them can be reliably valued.
+
+Examples: a specific Noctua computer fan, Bugaboo pram model or Seiko watch reference with enough comparable sales may
+qualify; a unique painting or an unidentified antique ornament normally would not.
+
+**Deliberately not set here:** numerical sample-size thresholds and accuracy targets. Whether to keep unmatched listings for
+future research is a separate technical decision, subject to costs and data rights.
+
+### Current implementation vs agreed direction vs not yet approved
+| Current implementation (`VERIFIED` main 1620653) | Agreed long-term direction | Not yet approved |
+|---|---|---|
+| eBay UK scanning and valuation engine | Expand historical eBay sold-price coverage across all suitable categories | New marketplace integrations |
+| **Nine initial test categories** offered by "Start with popular categories" (Graphics Cards, Video Game Consoles, Mobile & Smart Phones, Tablets & eBook Readers, PC Laptops & Netbooks, CPUs/Processors, Monitors, Memory (RAM), Solid State Drives); users can choose other categories | Discover opportunities from multiple supported buying sources | Mass category expansion |
+| Category safeguard: only hand-verified categories (`VERIFIED_CATS`, 12 entries dated 26 Oct) can score high or send alerts; others are capped and never alerted | Evaluate products against the common eBay resale database | Changes to valuation algorithms or thresholds |
+| Model-matching rules for a limited set of product kinds, with a "similar title" fallback | Build a larger shared pool of qualifying opportunities | New data-acquisition systems |
+| Existing sold-price data (owner's fills, learned auction results) and profitability calculations; existing safeguards and technical limits (e.g. eBay daily call limit) | Eventually distribute opportunities fairly among subscribers | Subscription implementation; architecture changes; production deployments |
+
+**The current category verification safeguards stay in place until an expansion is separately designed, tested and
+approved.**
 
 ## 1. What Fliptimize is for
 
@@ -66,12 +122,15 @@ Each rule keeps its original meaning and source. If a later decision conflicts w
 
 ## 3. Scope map (topics to document — NOT approval to build)
 
-Status of each item is in FEATURES_AND_ROADMAP.md. **Current engine scope: eBay (UK).** A worldwide toolkit and other
-marketplaces are FUTURE CONCEPTS — they extend the initial scope rather than contradict it, and are not approved for
-development.
+Status of each item is in FEATURES_AND_ROADMAP.md. **Current implementation: eBay UK listings, valued with eBay sold
+history, nine initial test categories.** Additional buying sources and broad category coverage are AGREED PRODUCT
+DIRECTION (§0) — not approved for development. A worldwide toolkit and other countries remain FUTURE CONCEPTS.
 
 ### Business model — agreed directions and concepts (not designs)
-`OWNER-REPORTED` (12 Nov 2026). AGREED PRODUCT DIRECTION: commercial professional reseller platform; free reseller tools;
+`OWNER-REPORTED` (12 Nov 2026). Opportunities from all supported buying sources and categories are intended to form **one
+shared opportunity pool**. Some subscribers may choose specialist categories; others may accept suitable opportunities
+across many categories. Matching should eventually consider budget, category preferences, practical suitability and
+opportunities already received. AGREED PRODUCT DIRECTION: commercial professional reseller platform; free reseller tools;
 multiple paid subscription tiers; tier-based potential-profit opportunity **targets** (not guarantees); fair round-robin
 distribution; matching by available budget and preferred categories; limited recipients per opportunity; redistribution
 of unclaimed opportunities; fairness informed by opportunities already received; potential, secured and realised profit
@@ -153,6 +212,7 @@ commercial launch.
 | Learning sold prices from ended auctions (automatic) | Official API data | Possible conflict with §9.5 / §8.1.4.1. Recorded plan (24 Oct): **switch off before going public** |
 | "Fill prices" — phone reads eBay sold pages the user opens (admin tool) | User Agreement; user-initiated, paced | Grey area; realistic risk recorded as account blocks/captchas. Owner accepted for private use |
 | Pooling prices across users (community price book) and offering valuations to paying subscribers | — | Commercial redistribution of eBay-derived values; needs permission or a licensed source |
+| Valuing products found on other buying sources (Amazon, retailers, other marketplaces) against eBay sold history (v1.2 vision) | eBay data under its terms; each buying source under its own terms | Same eBay modelling question; plus each source's own terms and access — researched separately before any integration |
 | Prediction Lab outcomes | Trading GetItem | Same §9.5 question if used to model prices |
 
 **Must be resolved before commercial launch:** written permission from eBay or approved access to official sold data

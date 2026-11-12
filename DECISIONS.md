@@ -2,8 +2,8 @@
 
 Only record decisions explicitly approved by the owner. Proposals are not approvals.
 
-> **12 Nov 2026 (documentation phase v1.1, branch `docs/knowledge-system-v1`; v1.0 reviewed by ChatGPT; v1.1 corrections
-> awaiting final review and owner approval). Status words: see
+> **12 Nov 2026 (documentation phase v1.2, branch `docs/knowledge-system-v1`; v1.0 reviewed by ChatGPT; v1.1–v1.2
+> corrections awaiting final review and owner approval). Status words: see
 > [docs/FEATURES_AND_ROADMAP.md](docs/FEATURES_AND_ROADMAP.md#status-words-implementation--approval-status).**
 > Original v1.0 note:
 > the "Approved" list below is kept exactly as written on 8 Nov. A recovered decision history, superseded decisions and
@@ -52,7 +52,14 @@ the repository shows it.
 | 12 Nov | Clarification: work has deliberately concentrated on the deal-finding engine, valuation, reliability and infrastructure; the subscription business and most future features are intentionally not designed yet. Do not invent tier names, prices, guarantees, recipient limits, first-look windows, algorithms, projections or launch dates. Future business design is a separate phase | In force | owner instruction 12 Nov (v1.1) |
 | 12 Nov | Business directions recorded at concept level (docs/FEATURES_AND_ROADMAP.md §4). One-time purchase previously discussed around £4.99 — **not approved**; no subscription price approved | Recorded | owner instruction 12 Nov (v1.1) |
 | 12 Nov | Backup V2 design inputs recorded (35-day daily, 12-week weekly, 12-month monthly retention; protect fillseen, listing and sold-price history; copies outside the live database; encryption/offsite; isolated restore test; recovery objectives and costs first) — not approved, not implemented | Recorded (docs/RECOVERY.md §3) | owner instruction 12 Nov (v1.1) |
-| 12 Nov | Testing and release acceptance: test scope and acceptance criteria must suit the change, be documented and be explicitly approved by the owner; known failures are reported and assessed, never hidden or relabelled as passes; historical failures do not automatically block every future phone build; any policy change beyond this clarification needs separate approval | In force | owner instruction 12 Nov (v1.1) |
+| 12 Nov | Testing and release acceptance: test scope and acceptance criteria must suit the change, be documented and be explicitly approved by the owner; known failures are reported and assessed, never hidden or relabelled as passes; historical failures do not automatically block every future phone build; any policy change beyond this clarification needs separate approval | In force — v1.2: reconciled wording in AI_HANDOVER.md procedure 8 | owner instruction 12 Nov (v1.1) |
+| 12 Nov | **Confirmed long-term vision (v1.2):** Fliptimize is to become a broad resale opportunity discovery and distribution platform — find products available to buy for less than their realistically achievable resale value, wherever they are sold, judged with historical eBay sold-price and sales-speed evidence. The existing eBay engine is the foundation, not a temporary system | AGREED PRODUCT DIRECTION (no development approved) | owner, via ChatGPT, 12 Nov (docs/VISION.md §0) |
+| 12 Nov | eBay sold listings are the intended primary resale valuation evidence; no other valuation source required | In force (principle) | owner, 12 Nov (v1.2) |
+| 12 Nov | The nine initial categories are a **test selection** (popular, fast-selling), never permanent product or architectural limits; aim to cover essentially every category with reliable comparable sales (long-term; mass expansion not approved) | In force (principle); expansion AGREED PRODUCT DIRECTION | owner, 12 Nov (v1.2) |
+| 12 Nov | Eligibility: recommend only with sufficient trustworthy comparable sales — multiple sales, correct product/version/condition, defensible price, evidence-based selling speed; keep the conservative calculations; never invent a price, confidence or profit; don't exclude whole categories unnecessarily. No numerical thresholds set | In force (principle); algorithm/threshold changes not approved | owner, 12 Nov (v1.2) |
+| 12 Nov | Buying sources (eBay, Facebook Marketplace, Amazon, retailers, clearance offers, others) are separate from resale evidence; new and used items may qualify. Each source needs separate research; no access assumed | AGREED PRODUCT DIRECTION; no integration approved | owner, 12 Nov (v1.2) |
+| 12 Nov | One shared opportunity pool from all supported sources and categories, distributed fairly (specialist or broad subscribers; budget, preferences, suitability, opportunities already received) | AGREED PRODUCT DIRECTION; no prices, guarantees, recipient counts, algorithms or first-look windows approved | owner, 12 Nov (v1.2) |
+| 12 Nov | Current category verification safeguards stay until an expansion is separately designed, tested and approved | In force | owner, 12 Nov (v1.2) |
 
 ### Engineering, security and releases
 | Date | Decision | Status | Evidence |
@@ -70,7 +77,7 @@ the repository shows it.
 | 4 Nov | D7 paid GitHub plan for branch protection — optional; D8 Play developer account — later | Not done | decision table |
 | 4 Nov | D9/D10 separate phone test service and TEST app | Test service partly built; status `DEV-REPORTED` | project docs |
 | 4 Nov | D11 how long other sellers' usernames in fill history are kept | **Open** (privacy) | decision table |
-| 8 Nov | GitHub Actions minutes: commit once per finished task; quick checks on uploads; full suite by hand before phone builds | In force | AI_HANDOVER procedure 8 |
+| 8 Nov | GitHub Actions minutes: commit once per finished task; quick checks on uploads; full suite by hand before phone builds | In force — wording reconciled with the 12 Nov clarification (v1.2, pending approval); original kept | AI_HANDOVER procedure 8 |
 | 11 Nov | Release A (app 2.0.132: Capacitor 8 + Fliptimize redesign) merged to main and built | Done; phone checks passed `OWNER-REPORTED` | `VERIFIED` main 9e7269a, build run 42975706497 |
 | 11 Nov | Release B (Scan service) — owner's words: "I approve deploying Release B to production. Deploy only the reviewed main commit 1620653…" | Deployed 11 Nov 11:22 UTC (version ec61ce36); deploy workflow disabled afterwards | `VERIFIED` main 1620653, workflow disabled; deploy details `DEV-REPORTED` |
 | 11 Nov | Android phase: investigate Back issue, "Back up now" feedback, regression checks — testing branch only | Backup feedback built (2.0.133); Back cause unknown | `VERIFIED` testing |
@@ -86,6 +93,8 @@ the repository shows it.
 | Keep the name FlipScout (22 Oct) | Future brand Fliptimize; app still shows FlipScout until branding is final | Nov 2026 |
 | Navy/green look (21 Oct); "Graphite & Sage" dark mode (25 Oct) | Fliptimize design tokens (Release A) | 7–11 Nov |
 | Debug build with a well-known password (Oct) | Release build (D1); password status unverified (D1b) | 4–11 Nov |
+| "FlipScout is only for eBay — not for pricing items found elsewhere" (25 Oct, reason for removing the Prices tab) | Buying sources may be anywhere; valuation stays on eBay sold history (v1.2 vision). The Prices tab removal itself is not reversed, and no screen for pricing outside items is approved | 12 Nov (v1.2) |
+| Implicit reading that the nine starter categories bound the product | Nine categories are a test selection only (v1.2) | 12 Nov |
 | Capacitor 6, wrangler 3 | Capacitor 8.6.0, wrangler 4.157.0 | 11 Nov |
 | Fliptimize D9 "do not start coding" (7 Nov) | Redesign built and released as 2.0.132 | 8–11 Nov |
 
@@ -97,7 +106,7 @@ the repository shows it.
 | C3 | Separation of owner-only administration from public customer features: "delete database-building tools (admin) before public release" (Oct) vs "keep a manual version of every automatic setting in the admin page for global adjustments" (Oct) | Separate owner-only admin from customer builds; or remove some tools only | **Open** |
 | C4 | Data licensing: current price data comes partly from automatic sold-price learning and phone-side page reading, vs eBay licence concerns and the commercial direction | See VISION §6 | **Open — must resolve before launch** |
 | C5 | £1 testing minimum profit (7 Nov) vs £50 minimum profit and £200 spending limit read on 11 Nov | — | **Not a conflict** (clarified 12 Nov, v1.1): user-adjustable settings at different times; keep them configurable; values unchanged |
-| C6 | "FlipScout is only for eBay" (25 Oct) vs worldwide toolkit and more marketplaces (12 Nov) | — | **Not a conflict** (clarified 12 Nov, v1.1): eBay is the current engine scope; expansion is a FUTURE CONCEPT, not approved |
+| C6 | "FlipScout is only for eBay" (25 Oct) vs worldwide toolkit and more marketplaces (12 Nov) | — | **Not a conflict** (clarified 12 Nov, v1.1): eBay is the current engine scope; expansion is a FUTURE CONCEPT, not approved. *Updated v1.2:* the owner's confirmed vision supersedes the 25 Oct "only for eBay" wording as far as buying sources go (additional buying sources are now AGREED PRODUCT DIRECTION, not approved); eBay sold history remains the valuation evidence |
 | C7 | Prediction Lab "future plan, not to build yet" vs built on `feature/prediction-lab` (8 Nov) | Keep for later; update to current code; or shelve | **Open** |
 | C8 | Sell and Money tabs hidden "until deal-finding is proven" (25 Oct) vs inventory and financial tracking now part of the product focus (12 Nov) | Decide when and how to bring them back | **Open** (timing decision) |
 | C9 | Light theme approved and released (D7, 7 Nov) vs "washed out" feedback (12 Nov) | — | **Not a conflict** (clarified 12 Nov, v1.1): later UX feedback; improvement kept as future work |

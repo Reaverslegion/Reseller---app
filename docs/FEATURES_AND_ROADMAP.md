@@ -1,7 +1,8 @@
 # Fliptimize — feature register and roadmap
 
-Version 1.1 · 12 Nov 2026 · branch `docs/knowledge-system-v1` · v1.0 reviewed by ChatGPT; v1.1 corrections pending final
-review and owner approval. Listing a feature here is **not** approval to build it.
+Version 1.2 · 12 Nov 2026 · branch `docs/knowledge-system-v1` · v1.0 reviewed by ChatGPT; v1.1–v1.2 corrections pending
+final review and owner approval. **Read [VISION.md §0](VISION.md#0-confirmed-long-term-vision-owner-12-nov-2026--read-this-first)
+first:** the eBay engine is the foundation; the nine categories are a test selection, not a limit. Listing a feature here is **not** approval to build it.
 
 **Owner clarification (12 Nov 2026):** work so far has deliberately concentrated on the deal-finding engine, valuation
 calculations, reliability and supporting infrastructure. The subscription business and most future features have **not**
@@ -30,7 +31,13 @@ At the time of writing **no item is APPROVED FOR DEVELOPMENT** — every open it
 
 | Feature | Status | Evidence | Notes |
 |---|---|---|---|
-| 24/7 hunting in chosen eBay UK categories (Browse API); deal list and deal pages | RELEASED | `VERIFIED` main 1620653 | **Current engine scope is eBay** |
+| 24/7 hunting in chosen eBay UK categories (Browse API); deal list and deal pages | RELEASED | `VERIFIED` main 1620653 | Current buying source: eBay UK. The engine is the platform's foundation, not a temporary system |
+| Nine initial **test** categories ("Start with popular categories"); users may also choose other categories | RELEASED | `VERIFIED` `STARTER` list in index.html | Chosen for popular, fast-selling test products — **not permanent product or architectural limits** |
+| Category verification safeguard (only hand-verified categories score high or alert; others capped, never alerted) | RELEASED | `VERIFIED` `VERIFIED_CATS` (12 entries, 26 Oct) | Stays until an expansion is separately designed, tested and approved |
+| Historical eBay sold-price coverage for essentially every category with reliable comparable sales | AGREED PRODUCT DIRECTION | `OWNER-REPORTED` 12 Nov (v1.2) | Long-term objective; broad coverage does not exist today. **Mass category expansion not approved** |
+| Eligibility rule: recommend only with sufficient trustworthy comparable sales (multiple sales, correct product/version/condition, evidence-based selling speed); otherwise no invented price, confidence or profit | AGREED PRODUCT DIRECTION (principle); partly RELEASED today (evidence thresholds, "not verified yet" caps) | `OWNER-REPORTED` 12 Nov; `VERIFIED` code | No numerical thresholds or accuracy targets set in this documentation. Changes to valuation algorithms/thresholds not approved |
+| Multiple buying sources (e.g. Facebook Marketplace, Amazon, online retailers, clearance/discount offers) valued against the eBay sold-price database; new and used items | AGREED PRODUCT DIRECTION | `OWNER-REPORTED` 12 Nov (v1.2) | **No integration approved.** Each source needs separate research (feasibility, terms, licensing, reliability, cost); no API or automated access assumed |
+| Keeping unmatched listings for future research | UNVERIFIED / undecided | `OWNER-REPORTED` 12 Nov | Separate technical decision, subject to costs and data rights |
 | Sell-price estimate from sold evidence ("From N sales", range, trend), careful price | RELEASED | `VERIFIED` code; method `DEV-REPORTED` | Licensing risk: VISION.md §6 |
 | "Fill prices" (owner-only admin): phone reads eBay sold pages the user opens; category fills | RELEASED (admin only) | `VERIFIED` code | Admin vs customer separation unresolved (DECISIONS C3) |
 | Learning sale prices from ended auctions (automatic) | RELEASED | `VERIFIED` worker header | Recorded plan: switch off before going public (VISION §6) |
@@ -82,7 +89,8 @@ subscriber projections or launch dates have been decided.
 | Multiple paid subscription tiers | AGREED PRODUCT DIRECTION | No names or prices decided |
 | Tier-based potential-profit opportunity **targets** | AGREED PRODUCT DIRECTION | Targets, not guarantees; no figures decided |
 | Fair round-robin distribution of opportunities | AGREED PRODUCT DIRECTION | No algorithm decided |
-| Matching by available budget and preferred categories | AGREED PRODUCT DIRECTION | |
+| One shared opportunity pool fed by all supported buying sources and categories | AGREED PRODUCT DIRECTION | v1.2 vision |
+| Matching by available budget and preferred categories (specialist subscribers or broad, many-category subscribers), practical suitability and opportunities already received | AGREED PRODUCT DIRECTION | No algorithm decided |
 | Limited recipients per opportunity to reduce competition | AGREED PRODUCT DIRECTION | No limit decided |
 | Redistribution of unclaimed opportunities | AGREED PRODUCT DIRECTION | No timing decided |
 | Fairness informed by opportunities already received | AGREED PRODUCT DIRECTION | |
@@ -100,9 +108,10 @@ subscriber projections or launch dates have been decided.
 |---|---|---|---|
 | Optional risky-condition opportunities (user opt-in) | FUTURE CONCEPT | `OWNER-REPORTED` 12 Nov | Spares type exists today |
 | Repair & Flip: optional, user-requested repair research (parts, prices, guides) with evidence and compatibility checks | FUTURE CONCEPT | `OWNER-REPORTED` 12 Nov | **Not approved to build**; rule clarification awaiting owner (DECISIONS C10) |
-| Additional marketplaces and countries | FUTURE CONCEPT | `OWNER-REPORTED` 12 Nov | Current engine scope is eBay |
+| Additional buying sources (other marketplaces and retailers) | AGREED PRODUCT DIRECTION — see §1 | `OWNER-REPORTED` 12 Nov (v1.2) | Moved up from FUTURE CONCEPT by the confirmed vision; still **not approved** for development |
+| Other countries / worldwide standalone toolkit | FUTURE CONCEPT | `OWNER-REPORTED` 12 Nov | |
 | Improved light theme (hierarchy, contrast, accessibility, long-session comfort) | AGREED PRODUCT DIRECTION | `OWNER-REPORTED` 12 Nov | Later UX feedback on a released, approved theme; not a redesign now |
-| Other sources (e.g. second-hand marketplaces) | FUTURE CONCEPT | `DEV-REPORTED` (HANDOFF 24 Oct) | |
+| Other sources (e.g. second-hand marketplaces) | Covered by "Additional buying sources" above | `DEV-REPORTED` (HANDOFF 24 Oct) | Earlier idea, now part of the v1.2 vision |
 
 ## 6. Engineering
 
@@ -130,7 +139,7 @@ subscriber projections or launch dates have been decided.
 | Desktop browser identity for eBay pages | REJECTED | eBay rejected sign-in; looks like evasion | HANDOFF 24 Oct |
 | Automatic daily price fill | REJECTED | Kept getting stuck; saved no time | Owner, 25 Oct |
 | Manual copy-paste diagnostics | REJECTED | Owner doesn't want to paste page dumps | HANDOFF 24 Oct |
-| Separate Prices tab | REJECTED | App is for eBay deals | Owner, 25 Oct |
+| Separate Prices tab | REJECTED | App was for eBay deals only (the tab's removal stands; the wider "eBay only" reasoning is SUPERSEDED as to buying sources — see DECISIONS) | Owner, 25 Oct |
 | Third-party sold-data scrapers | REJECTED | Scrape eBay against its terms | soldprices research, 29 Oct |
 | Auto-buy | REJECTED | eBay API restricts it | HANDOFF 24 Oct |
 | Geometric fox as the final logo | REJECTED | Not the intended mark | Owner, 7–8 Nov |

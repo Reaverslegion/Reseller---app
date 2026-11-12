@@ -1,14 +1,16 @@
 # Fliptimize — project status
 
 **Fliptimize — Android app currently named FlipScout.**
-Last reviewed: 2026-11-12 (Claude, documentation phase v1.1, branch `docs/knowledge-system-v1`; v1.0 reviewed by ChatGPT; v1.1 awaiting final review and owner approval)
+Last reviewed: 2026-11-12 (Claude, documentation phase v1.2, branch `docs/knowledge-system-v1`; v1.0 reviewed by ChatGPT; v1.1–v1.2 awaiting final review and owner approval)
 Status: WORKING DRAFT — verify against current GitHub and Cloudflare before relying on it.
 Owner: single nontechnical operator. Explain everything in plain English.
 Evidence labels: see [AI_HANDOVER.md](AI_HANDOVER.md#evidence-labels).
 
 ## Product
-Android eBay reseller opportunity app, intended to become a commercially viable professional reseller platform
-(owner, 12 Nov 2026). Core capabilities include eBay scanning, sold-price analysis, estimated profit and sell-through,
+Android eBay reseller opportunity app, intended to become a commercially viable professional reseller platform and,
+long term, a broad resale opportunity discovery and distribution platform built on the existing eBay engine (owner,
+12 Nov 2026; [docs/VISION.md §0](docs/VISION.md#0-confirmed-long-term-vision-owner-12-nov-2026--read-this-first)).
+Today: eBay UK only, nine initial test categories, category verification safeguards in place. Core capabilities include eBay scanning, sold-price analysis, estimated profit and sell-through,
 deals and alerts. Work has deliberately concentrated on the deal-finding engine, valuation, reliability and infrastructure.
 Subscription tiers, fair deal distribution and multi-user operations are agreed directions or concepts — intentionally not
 designed or built yet.

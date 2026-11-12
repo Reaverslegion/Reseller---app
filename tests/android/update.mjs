@@ -78,7 +78,10 @@ await R.journey(A, "Update to the testing build, installed over the top", async 
       add("your money rule values are unchanged (fees, minimum profit, budget, limits, seller type)", yours.length === 0, yours.length ? "CHANGED: " + diffs.join("; ") : `all kept${diffs.length ? "; extra fields only: " + diffs.join("; ") : ""}`); }
     for (const k of ["set", "hunt", "gate", "base"]) add(`${{ rules: "money rules (fees, minimum profit, budget)", set: "settings (Scan service address and key, theme)", hunt: "hunt settings (categories)", gate: "checklist", base: "tracked items" }[k]} identical after the update`, x[k] === y[k], x[k] === y[k] ? "identical" : "CHANGED");
     add("the unsaved add-item draft survived the update", b.flipscout_draft === c.flipscout_draft && (c.flipscout_draft || "").includes(DRAFT), b.flipscout_draft === c.flipscout_draft ? "identical" : "CHANGED");
-    add("other stored entries unchanged", changed.filter((k) => k !== "resell_helper_v1").length === 0, changed.length ? "changed: " + changed.join(", ") : "none changed");
+    // the app's own start-up markers (crash/close reporting: last start time and last Android close record seen) are rewritten on
+    // every start by design, are not your data and are not in backups, so they are listed but not counted as a change
+    { const MARK = ["flipscout_exit_seen", "flipscout_running"], other = changed.filter((k) => k !== "resell_helper_v1" && !MARK.includes(k)), ign = changed.filter((k) => MARK.includes(k));
+      add("other stored entries unchanged (apart from the app's own start-up markers)", other.length === 0, (other.length ? "CHANGED: " + other.join(", ") : "none changed") + (ign.length ? ` · start-up markers updated as designed: ${ign.join(", ")}` : "")); }
     await app.eval(`tab="stock";render();1`); await sleep(1500); const st = await app.eval(`document.getElementById("app").innerText`); await app.shot("updated - stock");
     add("your items show on screen in the updated app", st.includes(M1.slice(0, 20)), st.replace(/\s+/g, " ").slice(0, 160));
     await app.eval(`tab="settings";render();1`); await sleep(1500); const se = await app.eval(`document.getElementById("app").innerText`); await app.shot("updated - settings");

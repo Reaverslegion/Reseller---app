@@ -341,7 +341,7 @@ export async function runStage4(drv, R, dev = {}) {
       await drv.eval(`S.rules.maxPrice=0;save();if(typeof reLimit==="function")reLimit();render();1`); });
     await step("going back and forth between the tabs 40 times", async () => {
       const m0 = memMB(), errs0 = (await errlog("src='app'")).length;
-      for (let i = 0; i < 40; i++) { await drv.eval(`document.querySelectorAll("#nav button")[${i % 3}].click();1`); await sleep(120); }
+      for (let i = 0; i < 40; i++) { await drv.eval(`document.querySelectorAll("#nav button")[${i % 4}].click();1`); await sleep(120); }
       await toDeals(); await sleep(2000); const m1 = memMB(), errs1 = (await errlog("src='app'")).length;
       D.add("40 tab changes: no errors, and memory doesn't keep growing", ok(errs1 === errs0 && (m0 == null || m1 - m0 < 60)), `memory ${m0} MB → ${m1} MB · new app errors ${errs1 - errs0}`); });
     await step("Scan now tapped 5 times quickly", async () => {

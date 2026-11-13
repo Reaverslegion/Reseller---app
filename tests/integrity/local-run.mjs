@@ -29,7 +29,7 @@ const drv = {
   async relaunch() { await page.reload(); await sleep(800); },
   async back() { await page.evaluate("onBack()"); await sleep(400); },
   shot: (name) => page.screenshot({ path: `screenshots/${name.replace(/[^a-z0-9]+/gi, "-")}.png` }).catch(() => {}),
-  menu: () => drv.tap({ sel: "#nav button", nth: 2 }), dealsTab: () => drv.tap({ sel: "#nav button", nth: 0 }),
+  menu: () => drv.tap({ sel: "#nav button[aria-label=\"Settings\"]" }), dealsTab: () => drv.tap({ sel: "#nav button", nth: 0 }),
 };
 const rows = [], R = {
   add: (area, name, status, detail = "") => rows.push({ area, name, status, detail }),

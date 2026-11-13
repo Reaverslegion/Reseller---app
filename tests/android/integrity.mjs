@@ -27,7 +27,7 @@ const drv = {
   eval: (e) => app.eval(e), waitFor: (e, ms, w) => app.waitFor(e, ms, w), waitText: (t, ms) => app.waitText(t, ms),
   tap: (s) => app.tap(s), fill: (s, t) => app.fill(s, t), back: () => app.back(), shot: (n) => app.shot(n),
   relaunch: async () => { await app.stop(); await app.launch(); app.cal = null; await app.waitFor(`typeof render==="function"`, 30000, "the app"); },
-  menu: () => tabs(2), dealsTab: () => tabs(0),
+  menu: () => app.tap({ sel: "#nav button[aria-label=\"Settings\"]" }), dealsTab: () => tabs(0),
 };
 
 // a clean app, set up through its own screens the way a new user would
@@ -44,7 +44,7 @@ const ready = await R.journey("Android emulator", "Stage 3 set-up (clean app)", 
     // a fresh install that connects to a Scan service with a cloud backup is offered a restore (correct): keep this app clean
     await sleep(3000); if (/Restore your data\?/.test(await app.text())) { await app.tap({ text: "Not now", exact: true }); await sleep(800); } });
   await step("popular categories", async () => { await tabs(0); await app.waitText("Pick what to hunt", 15000); await app.tap("Start with popular categories"); await app.waitText("Added \\d+ popular categor", 15000); });
-  await step("admin tools on (for Scan now)", async () => { await tabs(2); const p = await app.locate({ text: "FlipScout version", sel: "div[onclick]" });
+  await step("admin tools on (for Scan now)", async () => { await app.tap({ sel: "#nav button[aria-label=\"Settings\"]" }); const p = await app.locate({ text: "FlipScout version", sel: "div[onclick]" });
     for (let i = 0; i < 7; i++) { await app.tapXY(p.x, p.y); await sleep(150); } await app.waitText("Admin tools on", 6000); await tabs(0); });
 });
 let log = [];

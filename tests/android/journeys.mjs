@@ -17,7 +17,7 @@ app.netQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 30; i+
 const J = (name, fn) => R.journey("User journeys", name, fn), U = (name, fn) => R.journey("Unusual behaviour", name, fn);
 const ok = (cond, msg) => { if (!cond) throw new Error(msg); };
 const dealsCount = async () => +((await app.text()).match(/(\d+) deals?\b/) || [])[1] || 0;
-const menu = () => app.tap({ sel: "#nav button", nth: 2 });
+const menu = () => app.tap({ sel: "#nav button[aria-label=\"Settings\"]" });
 const dealsTab = () => app.tap({ sel: "#nav button", nth: 0 });
 // Release B (11 Nov 2026): a journey that starts from the deals list gets there itself, with a real tap on the Deals button, so
 // one stuck screen can't make the next journeys fail too. It never hides a failure: the earlier step stays FAIL, and a needed
@@ -187,7 +187,7 @@ await U("Repeated and rapid taps", async (step) => {
   await step("double-tapping a deal opens it once (one Back returns to the list)", async () => { const p = await app.locate({ sel: ".dcard", nth: 0 }); await app.tapXY(p.x, p.y); await sleep(80); await app.tapXY(p.x, p.y);
     await app.waitFor(`document.getElementById("gear").style.visibility==="visible"`, 8000, "deal page"); await app.back(); await sleep(800);
     ok(await app.eval(`document.getElementById("gear").style.visibility==="hidden"&&!!document.querySelector(".dcard")`), "after one Back it was still on a deal page (opened twice)"); });
-  await step("switching tabs quickly 12 times leaves the app working", async () => { for (let i = 0; i < 12; i++) await app.tap({ sel: "#nav button", nth: i % 3, wait: 120 }); await dealsTab(); await app.waitFor(`!!document.querySelector(".dcard")`, 10000, "deals list"); });
+  await step("switching tabs quickly 12 times leaves the app working", async () => { for (let i = 0; i < 12; i++) await app.tap({ sel: "#nav button", nth: i % 4, wait: 120 }); await dealsTab(); await app.waitFor(`!!document.querySelector(".dcard")`, 10000, "deals list"); });
 });
 
 await U("Leaving and coming back", async (step) => {

@@ -153,6 +153,24 @@ nav button.on .pill{background:var(--navacbg)}
 .choice{display:block;width:100%;text-align:left;margin:10px 0 0;background:var(--card);color:var(--tx);border:1.5px solid var(--bd)}
 .choice.on{border-color:var(--ac);background:var(--acbg)}
 .choice small{display:block;font-weight:500;color:var(--mu);font-size:14px}
+.msh{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}.msh h2{margin:6px 4px 10px}
+.ms-seg{margin:0 0 12px}.ms-add{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}.ms-add button{margin:0;flex:1 1 auto;min-height:44px}
+.ms-sum{padding:2px 16px}
+.ms-r{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:12px 0;flex-wrap:wrap}.ms-r+.ms-r{border-top:1px solid var(--bd)}
+.ms-l{font-size:15px;font-weight:650;color:var(--tx);flex:1 1 180px;min-width:0}.ms-l small{display:block;font-size:13px;font-weight:400;color:var(--mu);margin-top:2px;line-height:1.4}
+.ms-v{font-size:22px;font-weight:800;white-space:nowrap;font-variant-numeric:tabular-nums}.ms-v.est{color:var(--t2,var(--tx))}
+.ms-tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:var(--info,var(--ac));background:var(--infobg,var(--acbg));border-radius:5px;padding:1px 6px;vertical-align:2px}
+.ms-sec{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--mu);margin:20px 4px 8px}
+.ms-it .ms-h{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}.ms-it .ms-n{font-size:16px;font-weight:650;line-height:1.3;overflow-wrap:anywhere;min-width:0}
+.ms-note{font-size:13px;margin:2px 0 6px}
+.ms-line{display:flex;justify-content:space-between;gap:10px;font-size:14.5px;color:var(--t2,var(--tx));padding:2px 0;flex-wrap:wrap}.ms-line span:last-child{font-variant-numeric:tabular-nums;white-space:nowrap;margin-left:auto}
+.ms-tot{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-weight:800;font-size:17px;border-top:1px solid var(--bd);margin-top:6px;padding-top:6px}
+.ms-acts{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}.ms-acts button{margin:0;min-height:44px;padding:0 14px}.ms-acts button:first-child{flex:1 1 auto}.ms-more{width:48px;padding:0!important;font-size:20px;margin-left:auto!important}
+.ms-big{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;padding-top:10px;border-top:1px solid var(--bd)}.ms-big>div{flex:1 1 140px}
+.ms-confirm{background:var(--warnbg);border-radius:10px;padding:10px 12px;margin-top:10px;font-size:14px}
+.ms-confirm label{display:flex;gap:10px;align-items:center;margin:8px 0 0;font-weight:650;color:var(--tx)}.ms-confirm input{width:22px;height:22px;margin:0;flex:none}
+nav button{min-width:0;white-space:nowrap}
+.ms-seg{flex-wrap:wrap}.ms-seg button{flex:1 1 auto;min-width:0;white-space:normal}
 .seg{display:flex;background:var(--card2);border-radius:12px;padding:4px;border:1px solid var(--bd)}
 .seg button{flex:1;margin:0;background:none;color:var(--mu);min-height:42px;padding:8px}
 .seg button.on{background:var(--card);color:var(--tx);box-shadow:var(--shadow)}
@@ -445,7 +463,7 @@ function tip(k){const t=TIPS[k];openSheet(`<h2 style="margin-top:0">${t[0]}</h2>
 const ti=k=>`<button class="tip" aria-label="What is this?" onclick="event.stopPropagation();tip('${k}')">?</button>`;
 
 /* ---------- navigation ---------- */
-const TABS=[["deals","Deals","bolt"],["follow","Following","bell"],["settings","Settings","menu"],];
+const TABS=[["deals","Deals","bolt"],["follow","Following","bell"],["stock","My Stock","stock"],["settings","Settings","menu"],];
 /* ---------- ADMIN (hidden): tap the version 7 times in Settings. Remove before public release ---------- */
 let admN=0,admT=0;
 function admTap(){const t=Date.now();admN=t-admT<1500?admN+1:1;admT=t;if(admN>=7){admN=0;S.set.admin=!S.set.admin;save();render();toast(S.set.admin?"Admin tools on.":"Admin tools off.")}}
@@ -538,6 +556,7 @@ function onBack(){
   if(pickOn){pickClose();return true}
   if(sheetOn){closeSheet();return true}
   if($("onb").style.display==="flex"){if(ob>0){ob--;renderOnb()}return true}
+  if(tab==="stock"&&MS.view!=="stock"){MS.view="stock";render();return true}
   if(prev.length){tab=prev.pop();render.restore=true;render();return true}
   if(tab!=="deals"){tab="deals";render();return true}
   return false;
@@ -565,6 +584,7 @@ function render(){
   $("gear").style.visibility=back?"visible":"hidden";$("gear").innerHTML=I.back;$("gear").onclick=()=>{onBack()};
   $("gear").setAttribute("aria-label","Back");
   $("nav").innerHTML=TABS.map(t=>`<button class="${tab===t[0]||(t[0]==="settings"&&menuOn)?"on":""}" onclick="go('${t[0]}')" aria-label="${t[1]}"><span class="pill">${I[t[2]]}</span>${t[1]}</button>`).join("");
+  try{fitNav()}catch(e){}
   $("app").innerHTML=({calc:vCalc,deals:vHunt,follow:vFollow,cats:vCats,deal:vDeal,book:vBook,stock:vStock,dash:vDash,settings:vSettings,admin:vAdmin,plist:vPList,scan:vScan,saved:vDeals})[tab]();
   if(tab==="calc")recalc();
   if(tab!==render.last){const y=render.restore?SCROLLS[tab]||0:0,a=render.restore&&ANCH[tab];window.scrollTo(0,y);
@@ -757,7 +777,102 @@ function vDeals(){
 }
 function bought(id){const it=S.items.find(i=>i.id===id);if(!it)return;it.status="Bought";it.boughtOn=today();save();render();toast("Moved to Sell.","Undo",()=>{it.status="Considered";it.boughtOn="";save();render()})}
 const NEXT={Bought:["Listed","Mark as listed"],Listed:["Sold","Mark as sold"],Sold:["Done","Mark as done"],Returned:["Listed","Relist it"]};
+/* ---------- MY STOCK (toolkit stage 1, 13 Nov 2026) ----------
+   One place for what you bought, what it cost and what it really made. Estimated and actual profit are always kept apart.
+   itemProfit is the existing sale sum (sale - fees - postage out - paid - packaging); the extra parts are 0 for existing items,
+   so their profit is unchanged. */
+/* with large Android text sizes four tab labels may not fit: shrink the bottom-bar labels just enough (icons and spoken
+   names are unchanged); does nothing at normal sizes */
+function fitNav(){const bs=[...document.querySelectorAll("#nav button")];if(!bs.length)return;bs.forEach(b=>b.style.fontSize="");
+  for(let g=0;g<14&&bs.some(b=>b.scrollWidth>b.clientWidth+1);g++)bs.forEach(b=>{b.style.fontSize=parseFloat(getComputedStyle(b).fontSize)*0.92+"px"})}
+addEventListener("resize",()=>{try{fitNav()}catch(e){}});
+let MS={view:"stock"},CALC={sell:"",low:"",sp:"",post:"",pack:"",buy:"",ship:"",bpf:null,name:""};
+const isSold=i=>i.soldPrice!=null&&i.soldPrice!=="";
+function itemProfit(i){const n=x=>+x||0;
+  return(isSold(i)?n(i.soldPrice)-n(i.refund)-n(i.fees)+n(i.feesBack)-n(i.outPost):0)-n(i.buy)-n(i.pack)-n(i.other)-n(i.sunk)+n(i.recovered)}
+/* estimate for an unsold item at its expected sale total, with today's seller setting; costs already lost on failed sales
+   (sunk) are counted in actual profit instead, so they are not counted twice */
+function itemEst(i){const n=x=>+x||0,e=n(i.exp);return e>0?e-fee(e)-n(i.outPost)-n(i.buy)-n(i.pack)-n(i.other):null}
+function stockSums(){const it=S.items.filter(i=>!PRE.includes(i.status)),hold=it.filter(i=>HOLD.includes(i.status)),done=it.filter(i=>DONE.includes(i.status));
+  const n=x=>+x||0,ex=(S.expenses||[]).reduce((t,e)=>t+n(e.amount),0);
+  return{it,hold,done,invested:hold.reduce((t,i)=>t+n(i.buy)+n(i.pack)+n(i.other),0),
+    est:hold.reduce((t,i)=>t+(itemEst(i)??0),0),noEst:hold.filter(i=>itemEst(i)==null).length,
+    actual:done.reduce((t,i)=>t+itemProfit(i),0)-hold.reduce((t,i)=>t+n(i.sunk),0),expenses:ex}}
+const sgnP=v=>(v<0?"−":"+")+gbp(Math.abs(v));
 function vStock(){
+  const v=MS.view,tabs=[["stock","Stock"],["expenses","Expenses"],["calc","Calculator"]];
+  return`<div class="msh"><h2>My Stock</h2></div>
+  <div class="seg ms-seg" role="tablist" aria-label="My Stock sections">${tabs.map(t=>`<button role="tab" aria-selected="${v===t[0]}" class="${v===t[0]?"on":""}" onclick="MS.view='${t[0]}';render()">${t[1]}</button>`).join("")}</div>
+  ${v==="calc"?vToolCalc():v==="expenses"?(typeof vExpenses==="function"?vExpenses():""):vStockList()}`}
+function vStockList(){
+  const m=stockSums(),l=m.it;
+  const add=`<div class="ms-add"><button onclick="itemSheet()">+ Add item</button>${typeof bundleSheet==="function"?`<button class="s" onclick="bundleSheet()">+ Bundle / job lot</button>`:""}</div>`;
+  if(!l.length)return add+`<div class="card empty">${I.stock}<b>Nothing here yet</b><div class="mu">Tap <b>I bought this</b> on a deal, or add an item yourself. You'll see what's tied up in stock and the profit you've actually made.</div></div>`+(typeof csvCard==="function"?csvCard():"");
+  const sum=`<div class="card ms-sum">
+   <div class="ms-r"><div class="ms-l">Money in unsold stock<small>What you paid for ${m.hold.length} item${m.hold.length===1?"":"s"} not sold yet</small></div><div class="ms-v">${gbp(m.invested)}</div></div>
+   <div class="ms-r"><div class="ms-l">Estimated profit on unsold stock <span class="ms-tag">Estimate</span><small>If they sell at your expected prices, after fees and postage. Not guaranteed.${m.noEst?` ${m.noEst} item${m.noEst===1?" has":"s have"} no expected price yet.`:""}</small></div><div class="ms-v est">${sgnP(m.est)}</div></div>
+   <div class="ms-r"><div class="ms-l">Actual profit from sales<small>${m.done.length} completed sale${m.done.length===1?"":"s"}, after fees, postage and refunds${m.expenses?` · after ${gbp(m.expenses)} expenses: <b class="${m.actual-m.expenses>=0?"ok":"bad"}">${sgnP(m.actual-m.expenses)}</b>`:""}</small></div><div class="ms-v ${m.actual>=0?"ok":"bad"}">${sgnP(m.actual)}</div></div></div>`;
+  const un=l.filter(i=>HOLD.includes(i.status)),so=l.filter(i=>DONE.includes(i.status));
+  const ord=s=>({Bought:0,Listed:1,Returned:2})[s]??3;
+  return add+sum+(un.length?`<h3 class="ms-sec">Unsold · ${un.length}</h3>`+[...un].sort((a,b)=>ord(a.status)-ord(b.status)).map(stockCard).join(""):"")
+    +(so.length?`<h3 class="ms-sec">Sold and finished · ${so.length}</h3>`+so.map(stockCard).join(""):"")+(typeof csvCard==="function"?csvCard():"")}
+function stockCard(i){const n=x=>+x||0,nx=NEXT[i.status],paid=n(i.buy)+n(i.pack)+n(i.other),est=itemEst(i),pr=itemProfit(i);
+  const slow=i.boughtOn&&HOLD.includes(i.status)&&(Date.now()-new Date(i.boughtOn))/864e5>S.rules.staleDays;
+  const cls={Bought:"",Listed:"warn",Sold:"ok",Done:"ok",Returned:"bad","Written off":"bad"}[i.status]||"";
+  const L=(a,b)=>`<div class="ms-line"><span>${a}</span><span>${b}</span></div>`;
+  const body=DONE.includes(i.status)?(isSold(i)?L("Sale total",gbp(i.soldPrice))+(n(i.refund)?L("Refunded to buyer","− "+gbp(i.refund)):"")+L("eBay fees","− "+gbp(n(i.fees)-n(i.feesBack)))+L("Your postage","− "+gbp(i.outPost||0)):"")
+      +L("You paid (incl. packaging"+(n(i.other)?" and other costs":"")+")","− "+gbp(paid))+(n(i.sunk)?L("Lost on earlier returns","− "+gbp(i.sunk)):"")+(n(i.recovered)?L("Money recovered","+ "+gbp(i.recovered)):"")
+      +`<div class="ms-tot"><span>${pr>=0?"Profit":"Loss"}</span><span class="${pr>=0?"ok":"bad"}">${sgnP(pr)}</span></div>${i.expProfit!=null&&isSold(i)?`<div class="mu ms-note">You expected ${sgnP(i.expProfit)}</div>`:""}`
+    :L("You paid (incl. packaging"+(n(i.other)?" and other costs":"")+")",gbp(paid))+L("Expected sale total",n(i.exp)?gbp(i.exp):"—")+L(`Estimated profit <span class="ms-tag">Estimate</span>`,est==null?"—":sgnP(est))+(n(i.sunk)?L("Already lost on a return","− "+gbp(i.sunk)):"");
+  return`<div class="card ms-it"><div class="ms-h"><span class="ms-n">${esc(i.name)}</span><span class="chip ${cls}">${esc(i.status)}</span></div>
+   <div class="mu ms-note">${i.boughtOn?"Bought "+esc(i.boughtOn):""}${i.soldOn?" · sold "+esc(i.soldOn):""}${slow?` · <span class="warn">slow seller</span>`:""}${i.bundle&&i.bundle.name?` · from bundle “${esc(i.bundle.name)}”`:""}</div>${body}
+   <div class="ms-acts">${nx?`<button onclick="setStage(${i.id},'${nx[0]}')">${nx[1]}</button>`:""}<button class="s" onclick="edit(${i.id})">Edit</button><button class="s ms-more" onclick="stockMore(${i.id})" aria-label="More for ${esc(i.name)}: change stage, return or delete">⋯</button></div></div>`}
+function stockMore(id){const i=S.items.find(x=>x.id===id);if(!i)return;
+  const st=STOCK.filter(x=>x!==i.status&&x!=="Written off"&&!(x==="Returned"&&typeof retSheet==="function"));
+  openSheet(`<h2 style="margin-top:0">${esc(i.name)}</h2><div class="mu">Now: ${esc(i.status)}</div><div class="btns" style="flex-direction:column;align-items:stretch">
+   ${st.map(x=>`<button class="s" onclick="closeSheet();setStage(${id},'${x}')">Move to ${x}</button>`).join("")}
+   ${typeof retSheet==="function"&&DONE.includes(i.status)&&isSold(i)?`<button class="s" onclick="retSheet(${id})">Buyer return or refund…</button>`:""}
+   ${typeof woSheet==="function"&&i.status!=="Written off"?`<button class="s" onclick="woSheet(${id})">Write off (lost, broken, kept)…</button>`:""}
+   <button class="d" onclick="closeSheet();del(${id})">Delete item</button><button class="s" onclick="closeSheet()">Cancel</button></div>`)}
+/* ---------- quick profit calculator (Tools): the same sums the deals use ----------
+   fee() = eBay selling fee for your Private/Business setting; maxPay() = the most you can pay and keep your minimum profit
+   (and the "must not lose money at the cheap end" rule); bpfFee() = the Scan service's buyer protection fee estimate. */
+function bpfFee(p){return 0.1+Math.min(p,20)*0.07+Math.max(0,Math.min(p,300)-20)*0.04+Math.max(0,Math.min(p,4000)-300)*0.02}
+function calcResult(c){const r=S.rules,rows=parse(c.sp||"").rows.map(x=>x.p),fromList=rows.length>0;
+  const sell=fromList?median(rows):num(c.sell),low=fromList?pct(rows,.25):(String(c.low).trim()?num(c.low):sell);
+  if(!(sell>0))return null;
+  const post=num(c.post),pack=num(c.pack),ship=num(c.ship),useBpf=!!c.bpf,hasBuy=String(c.buy).trim()!=="",buy=num(c.buy);
+  const f=fee(sell),mp=maxPay(sell,low,post,pack,false),mpOk=mp>0;
+  const out={sell,low,fromList,n:rows.length,post,pack,fee:f,maxTotal:mpOk?mp:null,
+    maxItem:mpOk?Math.floor((mp-ship-(useBpf?bpfFee(mp):0))*100)/100:null,minProfit:r.minProfit,cheap:r.cheap!==false,seller:r.seller};
+  if(hasBuy){out.buy=buy;out.profit=sell-f-post-pack-buy;out.lowProfit=low-fee(low)-post-pack-buy;out.roi=buy+pack>0?out.profit/(buy+pack)*100:null}
+  return out}
+function calcSet(k,v){CALC[k]=v;const e=$("calc_res");if(e)e.innerHTML=calcOut()}
+function calcOut(){const c=calcResult(CALC);
+  if(!c)return`<div class="mu">Enter what it sells for (or paste some sold prices) to see the most you should pay.</div>`;
+  const L=(a,b,cls)=>`<div class="ms-line"><span>${a}</span><span class="${cls||""}">${b}</span></div>`;
+  return`${c.fromList?`<div class="mu ms-note">From ${c.n} sold price${c.n===1?"":"s"}: typical ${gbp(c.sell)}, low end ${gbp(c.low)}</div>`:""}
+   ${c.buy!=null?L("Sells for",gbp(c.sell))+L(`eBay fees (${c.seller==="private"?"Private seller":"Business seller"})`,"− "+gbp(c.fee))+L("Your postage and packaging","− "+gbp(c.post+c.pack))+L("You pay","− "+gbp(c.buy))
+     +`<div class="ms-tot"><span>Profit <span class="ms-tag">Estimate</span></span><span class="${c.profit>=0?"ok":"bad"}">${sgnP(c.profit)}</span></div>
+     <div class="mu ms-note">${c.roi!=null?`That's a ${Math.round(c.roi)}% return. `:""}At the low end (${gbp(c.low)}) it would be ${sgnP(c.lowProfit)}.</div>`:""}
+   <div class="ms-big"><div><div class="mu">Most you'd pay in total</div><div class="ms-v">${c.maxTotal==null?"—":gbp(c.maxTotal)}</div><div class="mu ms-note">incl. postage to you${CALC.bpf?" and buyer fee":""}</div></div>
+    <div><div class="mu">Highest item price or bid</div><div class="ms-v">${c.maxItem==null||c.maxItem<0?"—":gbp(c.maxItem)}</div><div class="mu ms-note">before postage to you${CALC.bpf?" and buyer fee":""}</div></div></div>
+   <div class="mu ms-note">${c.maxTotal==null?"Even at £0 this wouldn't leave your minimum profit. ":""}Keeps your ${gbp(c.minProfit)} minimum profit${c.cheap?" and doesn't lose money if it only sells at the low end":""}. A ceiling, not a suggested price. Change your rules in Settings.</div>`}
+function vToolCalc(){const h=H(),C=CALC;if(C.post==="")C.post=String(h.post??"");if(C.pack==="")C.pack=String(h.pack??"");if(C.bpf==null)C.bpf=!!h.bpf;
+  const inp=(k,lab,ph)=>`<label for="cl_${k}">${lab}</label><input id="cl_${k}" inputmode="decimal" value="${esc(C[k])}" placeholder="${ph||""}" oninput="calcSet('${k}',this.value)">`;
+  return`<div class="card"><b>Quick profit check</b><div class="mu ms-note">For anything you're thinking of buying: a car boot, a shop, another website. Uses your ${S.rules.seller==="private"?"Private":"Business"} seller fees and your rules.</div>
+   <label for="cl_name">What is it? (optional)</label><input id="cl_name" value="${esc(C.name)}" oninput="CALC.name=this.value">
+   <div class="row"><div>${inp("sell","Sells for £ (typical, incl. buyer's postage)","e.g. 120")}</div><div>${inp("low","Low-end sale £ (optional)","")}</div></div>
+   <details${C.sp?" open":""}><summary>Or paste sold prices</summary><textarea id="cl_sp" placeholder="158.50&#10;164.32&#10;£147.17" oninput="calcSet('sp',this.value)">${esc(C.sp)}</textarea><div class="mu ms-note">One per line. FlipScout uses the middle price as typical and the lower quarter as the low end.</div></details>
+   <div class="row"><div>${inp("post","Your postage out £","")}</div><div>${inp("pack","Packaging £","")}</div></div>
+   ${inp("buy","Price you'd pay £ (optional, incl. delivery and any buyer fee)","")}
+   ${inp("ship","Postage to you £ (for the highest bid)","0")}
+   <label class="chkrow"><input type="checkbox" ${C.bpf?"checked":""} onchange="calcSet('bpf',this.checked)"><span>Private seller's item: add eBay's buyer protection fee (estimate) ${ti("bpf")}</span></label></div>
+  <div class="card" id="calc_res" aria-live="polite">${calcOut()}</div>
+  ${String(C.buy).trim()?`<button onclick="calcToStock()">I bought it: add to My Stock</button>`:""}`}
+function calcToStock(){const c=calcResult(CALC);if(!c||c.buy==null)return;
+  itemSheet(0,{name:CALC.name||"",buy:c.buy,exp:c.sell,outPost:c.post,pack:c.pack,confirm:false})}
+function vStockOldSell(){
   const l=S.items.filter(i=>!PRE.includes(i.status));
   if(!l.length)return`<h2>Sell</h2><div class="card empty">${I.stock}<b>Nothing to sell yet</b><div class="mu">Add things you've bought, then move them along as you list and sell them. Your profit shows in Money.</div><button onclick="itemSheet()">Add an item</button></div>`;
   const ord=s=>({Bought:0,Listed:1,Returned:2,Sold:3,Done:4})[s]??5;
@@ -887,7 +1002,7 @@ async function backup(){
 function restoreSheet(){openSheet(`<h2 style="margin-top:0">Restore a backup</h2><div class="mu">Paste your backup text. This replaces everything in the app.</div><textarea id="imp" style="min-height:160px"></textarea><div class="btns"><button onclick="restore()">Restore</button><button class="s" onclick="closeSheet()">Cancel</button></div>`)}
 function restore(){
   try{const raw=$("imp").value,txt=raw.slice(raw.indexOf("{"),raw.lastIndexOf("}")+1),x=JSON.parse(txt);if(!x.rules||!Array.isArray(x.items))throw 0;
-   const keep=JSON.stringify(S);localStorage.setItem(KEY,txt);S=load();save();closeSheet();tab="dash";render();
+   const keep=JSON.stringify(S);localStorage.setItem(KEY,txt);S=load();save();closeSheet();tab="stock";render();
    toast("Backup restored.","Undo",()=>{localStorage.setItem(KEY,keep);S=load();render()})}
   catch(e){toast("That doesn't look like a FlipScout backup.")}
 }

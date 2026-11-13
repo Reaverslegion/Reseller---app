@@ -99,7 +99,7 @@ for (let k = 1; k <= CYCLES; k++) {
   await tryStep("sheet", async () => { await toDeals(); const link = await app.eval(`(()=>{const e=[...document.querySelectorAll("#app *")].find(x=>!x.children.length&&/^From \\d+ sales?/.test(x.textContent.trim()));return e?e.textContent.trim():""})()`);
     if (!link) throw new Error("no 'From N sales' link on screen"); await app.tap({ text: link }); await app.waitFor(`sheetOn`, 8000, "the sales sheet");
     await sleep(1500); await app.back(); await app.waitFor(`!sheetOn`, 5000, "Back closed the sales sheet"); });
-  await tryStep("theme", async () => { await app.tap({ sel: "#nav button", nth: 2 }); await app.tap({ text: k % 2 ? "Dark" : "Light", exact: true });
+  await tryStep("theme", async () => { await app.tap({ sel: "#nav button[aria-label=\"Settings\"]" }); await app.tap({ text: k % 2 ? "Dark" : "Light", exact: true });
     await app.waitFor(`document.documentElement.dataset.theme===${JSON.stringify(k % 2 ? "dark" : "light")}`, 4000, "the theme"); await toDeals(); });
   if (k % 3 === 0) await tryStep("restart", async () => { await app.stop(); await sleep(1000); await app.launch(); await app.waitFor(`typeof render==="function"`, 30000, "the app");
     await app.waitFor(`!!document.querySelector(".dcard")`, 30000, "deal cards"); await app.eval(COUNTER); });
@@ -112,7 +112,7 @@ report(C);
 // the new "Back up now" feedback on the real app (test Scan service): busy at once, success only after the reply, announced
 await R.journey("Backup button", "Back up now shows progress and the result", async (step) => {
   await step("Settings → Back up now: 'Backing up…' and disabled straight away", async () => {
-    await app.tap({ sel: "#nav button", nth: 2 }); await app.waitFor(`!!document.getElementById("bk_now")`, 8000, "the Back up now button");
+    await app.tap({ sel: "#nav button[aria-label=\"Settings\"]" }); await app.waitFor(`!!document.getElementById("bk_now")`, 8000, "the Back up now button");
     await app.eval(`(()=>{window.__bk=[];const s=document.getElementById("bk_st"),b=document.getElementById("bk_now");new MutationObserver(()=>window.__bk.push([b.textContent,b.disabled,s.textContent])).observe(document.getElementById("app"),{subtree:true,childList:true,characterData:true,attributes:true});return 1})()`);
     await app.tap({ sel: "#bk_now" });
     await app.waitFor(`(window.__bk||[]).some(x=>x[0]==="Backing up…"&&x[1]===true)`, 3000, "'Backing up…' on a disabled button"); });

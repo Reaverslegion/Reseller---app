@@ -20,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       part:
-        description: "Emulator part to run: all, journeys, integrity (Stage 3), stage4, back (Back-button investigation only), or none (skip the main emulator suites)"
+        description: "Emulator part to run: all, journeys, integrity (Stage 3), stage4, back (Back-button investigation only), toolkit (reseller toolkit on the emulator only, incl. an update from the testing app), or none (skip the main emulator suites)"
         default: all
       level:
         description: "full = everything incl. the emulator (default); quick = the fast checks only"
@@ -225,7 +225,7 @@ jobs:
     name: Other Android versions
     needs: [build-e2e, build-cap8]
     # skipped for the focused Back-button investigation (part=back) to save minutes
-    if: always() && needs.build-e2e.result == 'success' && inputs.part != 'back'
+    if: always() && needs.build-e2e.result == 'success' && inputs.part != 'back' && inputs.part != 'toolkit'
     # (build-e2e only runs at the FULL level, so this only runs then too)
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -347,6 +347,33 @@ jobs:
           bash tests/android/prepare-test-app.sh before
           python3 tests/ci/live-build-steps.py
           test -s FlipScout.apk
+      - name: Toolkit test only - the testing branch's app as the "before" version, both signed with one throwaway key
+        # EMULATOR ONLY: never the real signing key. The "before" app is this same test app with the testing branch's index.html.
+        if: github.event_name == 'workflow_dispatch' && inputs.part == 'toolkit'
+        run: |
+          set -euo pipefail
+          git fetch -q --depth=1 origin testing
+          mkdir -p /tmp/old && git show FETCH_HEAD:index.html > /tmp/old/index.html
+          (cd /tmp/old && bash "$GITHUB_WORKSPACE/tests/android/prepare-test-app.sh" before)
+          P=$(unzip -Z1 FlipScout.apk | grep -m1 'assets/public/index.html$'); test -n "$P"; echo "web page inside the app: $P"
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          PW=$(openssl rand -hex 16); echo "::add-mask::$PW"; export PW
+          keytool -genkeypair -keystore /tmp/t.jks -alias t -keyalg RSA -keysize 2048 -validity 2 -storepass "$PW" -keypass "$PW" -dname "CN=FlipScout EMULATOR TEST ONLY" >/dev/null 2>&1
+          cp FlipScout.apk /tmp/new-u.apk; cp FlipScout.apk /tmp/old-u.apk
+          mkdir -p "/tmp/z/$(dirname "$P")"; cp /tmp/old/index.html "/tmp/z/$P"; (cd /tmp/z && zip -q /tmp/old-u.apk "$P")
+          for f in new old; do zip -q -d /tmp/$f-u.apk 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.EC' 'META-INF/*.DSA' 'META-INF/MANIFEST.MF' || true
+            $BT/zipalign -p -f 4 /tmp/$f-u.apk /tmp/$f-a.apk; $BT/apksigner sign --ks /tmp/t.jks --ks-pass env:PW --key-pass env:PW --out /tmp/$f.apk /tmp/$f-a.apk; done
+          rm -f /tmp/t.jks
+          test "$(unzip -p /tmp/new.apk "$P" | grep -c '"stock","My Stock"')" = 1; test "$(unzip -p /tmp/old.apk "$P" | grep -c '"stock","My Stock"')" = 0
+          C1=$($BT/apksigner verify --print-certs /tmp/new.apk | grep -m1 "SHA-256 digest"); C2=$($BT/apksigner verify --print-certs /tmp/old.apk | grep -m1 "SHA-256 digest"); test "$C1" = "$C2"
+          mkdir -p old-apk; mv /tmp/old.apk old-apk/FlipScout-old.apk; mv /tmp/new.apk FlipScout.apk
+          echo "before (testing) and after (this branch) apps ready, same throwaway certificate"
+      - if: github.event_name == 'workflow_dispatch' && inputs.part == 'toolkit'
+        uses: actions/upload-artifact@v4
+        with:
+          name: flipscout-emulator-test-apk-OLD-testing
+          path: old-apk/FlipScout-old.apk
+          retention-days: 3
       - uses: actions/upload-artifact@v4
         with:
           name: flipscout-emulator-test-apk
@@ -358,7 +385,7 @@ jobs:
     needs: [build-e2e, build]
     if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.level != 'quick'))
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: ${{ inputs.part == 'toolkit' && 80 || 180 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -368,6 +395,11 @@ jobs:
         with:
           name: flipscout-emulator-test-apk
           path: apk
+      - if: github.event_name == 'workflow_dispatch' && inputs.part == 'toolkit'
+        uses: actions/download-artifact@v4
+        with:
+          name: flipscout-emulator-test-apk-OLD-testing
+          path: apk-old
       - uses: actions/download-artifact@v4
         with:
           name: flipscout-TEST-apk
@@ -399,7 +431,7 @@ jobs:
           disk-size: 4096M
           ram-size: 3072M
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -no-metrics
-          script: APK=apk/FlipScout.apk RELEASE_APK=apk-release/FlipScout.apk AXE_JS=/tmp/axe/node_modules/axe-core/axe.min.js PART=${{ inputs.part || 'all' }} DIAG=${{ inputs.diag && '1' || '0' }} bash tests/android/run-all.sh
+          script: APK=apk/FlipScout.apk OLD_APK=apk-old/FlipScout-old.apk RELEASE_APK=apk-release/FlipScout.apk AXE_JS=/tmp/axe/node_modules/axe-core/axe.min.js PART=${{ inputs.part || 'all' }} DIAG=${{ inputs.diag && '1' || '0' }} bash tests/android/run-all.sh
       - name: Small copies of the screenshots (readable from the log)
         if: always()
         run: |

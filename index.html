@@ -1077,7 +1077,7 @@ async function csvCopy(){const t=$("csv_out");if(!t)return;try{await navigator.c
   catch(e){t.focus();t.select();try{document.execCommand("copy");toast("Copied. Paste it into a spreadsheet.")}catch(_){toast("Select the text and copy it.")}}}
 async function csvShare(kind){const t=$("csv_out");if(!t)return;try{await navigator.share({title:`FlipScout ${kind==="items"?"stock":"expenses"} ${today()}`,text:t.value})}catch(e){}}
 let CI={kind:"items",text:"",name:"",plan:null};
-function csvImportSheet(kind){if(kind)CI.kind=kind;else{CI.text="";CI.name="";CI.plan=null}if(typeof Papa==="undefined"){toast("The spreadsheet tool didn't load. Restart the app and try again.");return}const k=CI.kind;
+function csvImportSheet(kind){if(kind)CI.kind=kind;else{CI.text="";CI.name="";CI.plan=null;CI.kind=MS.view==="expenses"?"expenses":"items"}if(typeof Papa==="undefined"){toast("The spreadsheet tool didn't load. Restart the app and try again.");return}const k=CI.kind;
   openSheet(`<h2 style="margin-top:0">Import from a spreadsheet</h2><div class="mu">Save or export your spreadsheet as CSV. The first line must be column names. Nothing is added until you check and confirm.</div>
   <div class="seg" role="radiogroup" aria-label="What's in the file" style="margin-top:10px"><button role="radio" aria-checked="${k==="items"}" class="${k==="items"?"on":""}" onclick="CI.plan=null;csvImportSheet('items')">Stock items</button><button role="radio" aria-checked="${k==="expenses"}" class="${k==="expenses"?"on":""}" onclick="CI.plan=null;csvImportSheet('expenses')">Expenses</button></div>
   <div class="mu ms-note">${k==="items"?"Columns FlipScout reads: Name (needed), Status, Bought on, Paid, Packaging, Other costs, Postage out, Expected sale total, Sold on, Sale total, eBay fees, Refunded. Profit is worked out by FlipScout.":"Columns FlipScout reads: Date and Amount (needed), Description, Type."}</div>
@@ -1124,7 +1124,9 @@ function calcResult(c){const r=S.rules,rows=parse(c.sp||"").rows.map(x=>x.p),fro
     maxItem:mpOk?Math.floor((mp-ship-(useBpf?bpfFee(mp):0))*100)/100:null,minProfit:r.minProfit,cheap:r.cheap!==false,seller:r.seller};
   if(hasBuy){out.buy=buy;out.profit=sell-f-post-pack-buy;out.lowProfit=low-fee(low)-post-pack-buy;out.roi=buy+pack>0?out.profit/(buy+pack)*100:null}
   return out}
-function calcSet(k,v){CALC[k]=v;const e=$("calc_res");if(e)e.innerHTML=calcOut()}
+function calcSet(k,v){CALC[k]=v;const e=$("calc_res");if(e)e.innerHTML=calcOut();const b=$("calc_buy");if(b)b.innerHTML=calcBuyBtn()}
+// shown as soon as a price you'd pay is typed (the screen isn't redrawn while you type)
+const calcBuyBtn=()=>String(CALC.buy).trim()?`<button onclick="calcToStock()">I bought it: add to My Stock</button>`:"";
 function calcOut(){const c=calcResult(CALC);
   if(!c)return`<div class="mu">Enter what it sells for (or paste some sold prices) to see the most you should pay.</div>`;
   const L=(a,b,cls)=>`<div class="ms-line"><span>${a}</span><span class="${cls||""}">${b}</span></div>`;
@@ -1146,7 +1148,7 @@ function vToolCalc(){const h=H(),C=CALC;if(C.post==="")C.post=String(h.post??"")
    ${inp("ship","Postage to you £ (for the highest bid)","0")}
    <label class="chkrow"><input type="checkbox" ${C.bpf?"checked":""} onchange="calcSet('bpf',this.checked)"><span>Private seller's item: add eBay's buyer protection fee (estimate) ${ti("bpf")}</span></label></div>
   <div class="card" id="calc_res" aria-live="polite">${calcOut()}</div>
-  ${String(C.buy).trim()?`<button onclick="calcToStock()">I bought it: add to My Stock</button>`:""}`}
+  <div id="calc_buy">${calcBuyBtn()}</div>`}
 function calcToStock(){const c=calcResult(CALC);if(!c||c.buy==null)return;
   itemSheet(0,{name:CALC.name||"",buy:c.buy,exp:c.sell,outPost:c.post,pack:c.pack,confirm:false})}
 function vStockOldSell(){

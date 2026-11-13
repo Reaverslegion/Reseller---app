@@ -60,7 +60,10 @@ const item = async (name) => (await store()).items.find((i) => i.name === name);
 const undo = async () => { await app.tap({ text: "Undo", exact: true }); await sleep(700); };
 const overflow = () => app.eval(`(()=>{const W=innerWidth+1,o=[...document.querySelectorAll("#app *,#sheet.on *")].filter(e=>e.offsetParent&&e.getBoundingClientRect().right>W).map(e=>e.id||e.className||e.tagName).slice(0,4);
   const nav=[...document.querySelectorAll("#nav button")].filter(b=>b.scrollWidth>b.clientWidth+1).map(b=>b.getAttribute("aria-label"));return{o,nav}})()`);
-const reopen = async () => { await app.stop(); await app.launch(); await app.waitFor(`typeof render==="function"&&!!document.getElementById("app")`, 30000, "the app"); await sleep(800); };
+// close like a person (Home, then the phone stops the app): Android's web view writes saved data to storage a moment after it
+// changes, so the app is given 8 seconds in the background first (as in tests/android/update.mjs). Force-closing instantly
+// can lose the last change, which no person can do.
+const reopen = async () => { sh("input keyevent KEYCODE_HOME"); await sleep(8000); await app.stop(); await app.launch(); await app.waitFor(`typeof render==="function"&&!!document.getElementById("app")`, 30000, "the app"); await sleep(800); };
 
 // ---------- the phone ----------
 adb("reverse", "tcp:8787", "tcp:8789"); adb("reverse", "tcp:8790", "tcp:8790");

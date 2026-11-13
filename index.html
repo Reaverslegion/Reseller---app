@@ -68,7 +68,8 @@ label{display:block;font-size:14px;color:var(--mu);margin:12px 0 5px;font-weight
 input,textarea,select{width:100%;min-height:48px;padding:11px 12px;font:inherit;border:1.5px solid var(--bd);border-radius:12px;background:var(--bg);color:var(--tx);outline:none}
 input:focus,textarea:focus,select:focus{border-color:var(--ac)}
 .dctl input,.dctl select{min-height:42px;padding:8px 12px;font-size:15px}
-input[type=checkbox]{width:22px;height:22px;min-height:0;padding:0;flex:none;accent-color:var(--ac);margin:0}
+input[type=checkbox],input[type=radio]{width:22px;height:22px;min-height:0;padding:0;flex:none;accent-color:var(--ac);margin:0}
+.ms-radio{align-items:flex-start}.ms-radio input{margin-top:2px}
 .chkrow{display:flex;gap:12px;align-items:center;font-size:15px;cursor:pointer}
 textarea{min-height:120px;font-family:ui-monospace,Menlo,monospace;font-size:15px}
 .hint{font-size:14px;color:var(--mu);margin-top:6px}
@@ -265,8 +266,8 @@ a{color:inherit;text-decoration:none}
 <div id="onb"></div>
 <script>
 const KEY="resell_helper_v1",DKEY="flipscout_draft",OKEY="flipscout_seen_v2",VER="2.0";
-const DEF={rules:{cheap:true,maxPrice:0,minProfit:20,minRoi:0,budget:200,maxStock:150,minSales:5,feePct:12.8,feeFixed:0.40,staleDays:30,minPct:35,seller:"business"},gate:[],items:[],base:[],hunt:null,set:{url:"",key:"",region:"uk",theme:"auto"}};
-const PRE=["Considered"],HOLD=["Bought","Listed","Returned"],DONE=["Sold","Done"],STOCK=["Bought","Listed","Sold","Done","Returned"];
+const DEF={rules:{cheap:true,maxPrice:0,minProfit:20,minRoi:0,budget:200,maxStock:150,minSales:5,feePct:12.8,feeFixed:0.40,staleDays:30,minPct:35,seller:"business"},gate:[],items:[],base:[],hunt:null,set:{url:"",key:"",region:"uk",theme:"auto"},expenses:[]};
+const PRE=["Considered"],HOLD=["Bought","Listed","Returned"],DONE=["Sold","Done","Written off"],STOCK=["Bought","Listed","Sold","Done","Returned","Written off"];
 const OLDMAP={Identified:"Considered",Considered:"Considered",Purchased:"Bought",Received:"Bought",Tested:"Bought",Listed:"Listed",Sold:"Sold",Dispatched:"Sold",Completed:"Done",Returned:"Returned"};
 const BLANK={n:"",b:"",p:"",k:"",a:"",c:"Used",sp:"",q:"",x:"",cat:"",catName:"",catPath:""};
 const EXAMPLE={n:"Sony WH-1000XM4 headphones",c:"Used",sp:"95\n102\n88\n110\n99\n105\n92\n97\n101\n94",b:"60",p:"4",k:"1",q:"sony wh-1000xm4",x:"case, box only, faulty, parts",a:""};
@@ -292,7 +293,7 @@ function load(){
     if(old&&Math.abs(rules.feeFixed-0.3)<1e-9)rules.feeFixed=0.40;
     if(!rules.v2){if(rules.minProfit===15)rules.minProfit=20;if(rules.minRoi===30)rules.minRoi=0;rules.v2=1;window._rulesNew=1}
     const items=(x.items||[]).map(i=>({...i,status:OLDMAP[i.status]||i.status}));
-    return{rules,gate:x.gate||[],items,base:x.base||[],hunt:x.hunt||null,set:{...DEF.set,...x.set}}}}catch(e){}
+    return{rules,gate:x.gate||[],items,base:x.base||[],hunt:x.hunt||null,set:{...DEF.set,...x.set},expenses:Array.isArray(x.expenses)?x.expenses:[]}}}catch(e){}
   return JSON.parse(JSON.stringify(DEF))}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast("Couldn't save on this phone.")}cloudSoon()}
 /* ---------- automatic cloud backup (to your Scan service) ---------- */
@@ -686,7 +687,7 @@ function vResult(c){
   const btns=ei?`<button onclick="addItem('Considered')">Update ${PRE.includes(ei.status)?"deal":"item"}</button>${PRE.includes(ei.status)?`<button class="s" onclick="addItem('Bought')">I bought it</button>`:""}`
     :`<button onclick="addItem('Bought')">I bought it</button><button class="s" onclick="addItem('Considered')">Save check</button>`;
   return v+why+`<div class="card"><div class="btns" style="margin-top:-10px">${btns}</div>
-   <div class="hint">Saved checks appear under Following. "I bought it" adds it to Sell.</div>
+   <div class="hint">Saved checks appear under Following. "I bought it" adds it to My Stock.</div>
    ${c.bad.length?`<div class="hint warn">Skipped ${c.bad.length} line(s) it couldn't read: ${esc(c.bad.slice(0,3).join(" · "))}${c.bad.length>3?"…":""}</div>`:""}
    <details><summary>Show the maths</summary>
     <div class="grid">
@@ -716,7 +717,7 @@ function addItem(status){
   const d={name:F.n||"Unnamed item",cond:F.c,buy:c.buy,pack:c.pack,outPost:c.post,exp:c.med,expProfit:c.p,conf:c.conf,score:c.score,maxBuy:c.maxBuy,pricesOn:today(),f:{...F}};
   const old=ED&&S.items.find(i=>i.id===ED);
   if(old){Object.assign(old,d);if(status==="Bought"&&PRE.includes(old.status)){old.status="Bought";old.boughtOn=today()}
-    if(DONE.includes(old.status)&&old.soldPrice!=null)old.profit=old.soldPrice-(old.fees||0)-(old.outPost||0)-old.buy-old.pack}
+    if(DONE.includes(old.status)&&old.soldPrice!=null)old.profit=itemProfit(old)}
   else S.items.unshift({id:Date.now(),status,boughtOn:status==="Bought"?today():"",...d});
   const st=old?old.status:status;
   save();ED=null;F={...BLANK};saveDraft();prev=[];tab=PRE.includes(st)?"follow":"stock";render();
@@ -775,7 +776,7 @@ function vDeals(){
     <div class="mu" style="margin-top:4px">${esc(i.cond||"")} · cost ${gbp(i.buy)} · profit ${gbp(i.expProfit||0)}${i.maxBuy!=null?` · pay up to ${gbp(i.maxBuy)}`:""}</div>
     <div class="btns"><button onclick="bought(${i.id})">I bought it</button><button class="s" onclick="scanDeal(${i.id})">Scan eBay</button><button class="s" onclick="edit(${i.id})">Edit</button>${i.url?`<a href="${esc(ukUrl(i.url))}" target="_blank" rel="noopener"><button class="s">Open on eBay</button></a>`:""}<button class="d" onclick="del(${i.id})">Delete</button></div></div>`}).join("");
 }
-function bought(id){const it=S.items.find(i=>i.id===id);if(!it)return;it.status="Bought";it.boughtOn=today();save();render();toast("Moved to Sell.","Undo",()=>{it.status="Considered";it.boughtOn="";save();render()})}
+function bought(id){const it=S.items.find(i=>i.id===id);if(!it)return;it.status="Bought";it.boughtOn=today();save();render();toast("Moved to My Stock.","Undo",()=>{it.status="Considered";it.boughtOn="";save();render()})}
 const NEXT={Bought:["Listed","Mark as listed"],Listed:["Sold","Mark as sold"],Sold:["Done","Mark as done"],Returned:["Listed","Relist it"]};
 /* ---------- MY STOCK (toolkit stage 1, 13 Nov 2026) ----------
    One place for what you bought, what it cost and what it really made. Estimated and actual profit are always kept apart.
@@ -821,9 +822,9 @@ function stockCard(i){const n=x=>+x||0,nx=NEXT[i.status],paid=n(i.buy)+n(i.pack)
   const cls={Bought:"",Listed:"warn",Sold:"ok",Done:"ok",Returned:"bad","Written off":"bad"}[i.status]||"";
   const L=(a,b)=>`<div class="ms-line"><span>${a}</span><span>${b}</span></div>`;
   const body=DONE.includes(i.status)?(isSold(i)?L("Sale total",gbp(i.soldPrice))+(n(i.refund)?L("Refunded to buyer","− "+gbp(i.refund)):"")+L("eBay fees","− "+gbp(n(i.fees)-n(i.feesBack)))+L("Your postage","− "+gbp(i.outPost||0)):"")
-      +L("You paid (incl. packaging"+(n(i.other)?" and other costs":"")+")","− "+gbp(paid))+(n(i.sunk)?L("Lost on earlier returns","− "+gbp(i.sunk)):"")+(n(i.recovered)?L("Money recovered","+ "+gbp(i.recovered)):"")
+      +L("You paid (incl. packaging"+(n(i.other)?" and other costs":"")+")","− "+gbp(paid))+(n(i.sunk)?L(n(i.sunk)>0?"Lost on earlier returns":"Kept from an earlier return",sgnP(-n(i.sunk))):"")+(n(i.recovered)?L("Money recovered","+ "+gbp(i.recovered)):"")
       +`<div class="ms-tot"><span>${pr>=0?"Profit":"Loss"}</span><span class="${pr>=0?"ok":"bad"}">${sgnP(pr)}</span></div>${i.expProfit!=null&&isSold(i)?`<div class="mu ms-note">You expected ${sgnP(i.expProfit)}</div>`:""}`
-    :L("You paid (incl. packaging"+(n(i.other)?" and other costs":"")+")",gbp(paid))+L("Expected sale total",n(i.exp)?gbp(i.exp):"—")+L(`Estimated profit <span class="ms-tag">Estimate</span>`,est==null?"—":sgnP(est))+(n(i.sunk)?L("Already lost on a return","− "+gbp(i.sunk)):"");
+    :L("You paid (incl. packaging"+(n(i.other)?" and other costs":"")+")",gbp(paid))+L("Expected sale total",n(i.exp)?gbp(i.exp):"—")+L(`Estimated profit <span class="ms-tag">Estimate</span>`,est==null?"—":sgnP(est))+(n(i.sunk)?L(n(i.sunk)>0?"Already lost on a return":"Kept from an earlier return",sgnP(-n(i.sunk))):"")+(i.spares&&!n(i.other)?`<div class="mu ms-note warn">Repair costs not added yet, so this isn't complete.</div>`:"");
   return`<div class="card ms-it"><div class="ms-h"><span class="ms-n">${esc(i.name)}</span><span class="chip ${cls}">${esc(i.status)}</span></div>
    <div class="mu ms-note">${i.boughtOn?"Bought "+esc(i.boughtOn):""}${i.soldOn?" · sold "+esc(i.soldOn):""}${slow?` · <span class="warn">slow seller</span>`:""}${i.bundle&&i.bundle.name?` · from bundle “${esc(i.bundle.name)}”`:""}</div>${body}
    <div class="ms-acts">${nx?`<button onclick="setStage(${i.id},'${nx[0]}')">${nx[1]}</button>`:""}<button class="s" onclick="edit(${i.id})">Edit</button><button class="s ms-more" onclick="stockMore(${i.id})" aria-label="More for ${esc(i.name)}: change stage, return or delete">⋯</button></div></div>`}
@@ -832,8 +833,130 @@ function stockMore(id){const i=S.items.find(x=>x.id===id);if(!i)return;
   openSheet(`<h2 style="margin-top:0">${esc(i.name)}</h2><div class="mu">Now: ${esc(i.status)}</div><div class="btns" style="flex-direction:column;align-items:stretch">
    ${st.map(x=>`<button class="s" onclick="closeSheet();setStage(${id},'${x}')">Move to ${x}</button>`).join("")}
    ${typeof retSheet==="function"&&DONE.includes(i.status)&&isSold(i)?`<button class="s" onclick="retSheet(${id})">Buyer return or refund…</button>`:""}
-   ${typeof woSheet==="function"&&i.status!=="Written off"?`<button class="s" onclick="woSheet(${id})">Write off (lost, broken, kept)…</button>`:""}
+   ${typeof woSheet==="function"&&HOLD.includes(i.status)?`<button class="s" onclick="woSheet(${id})">Write off (lost, broken, kept)…</button>`:""}
    <button class="d" onclick="closeSheet();del(${id})">Delete item</button><button class="s" onclick="closeSheet()">Cancel</button></div>`)}
+/* ---------- returns and refunds (toolkit step 2) ----------
+   "back": the item came back and the buyer was refunded. What that sale made or lost (sale - refunds - fees + fees credited
+     back - your postage - return postage) is kept as "sunk" in actual profit, and the item goes back to Unsold to relist.
+   "partial": the buyer keeps it and gets part of the money back. "kept": a full refund and the buyer keeps it (or it was
+     lost in the post); the item is finished as Written off. Each one is kept in the item's return history (rets). */
+function retApply(it,kind,v,day){const n=x=>+x||0,r2=x=>Math.round(x*100)/100;
+  if(!DONE.includes(it.status)||!isSold(it))return"Only a sold item can have a return or refund.";
+  const refund=n(v.refund),back=n(v.feesBack),left=n(it.soldPrice)-n(it.refund);
+  if(refund<0||back<0||n(v.retPost)<0)return"Amounts can't be negative.";
+  if(kind!=="back"&&!(refund>0))return"Add how much you refunded.";
+  if(refund>left+0.005)return`That's more than the ${gbp(left)} the buyer still has from this sale.`;
+  const rec={on:day,kind,refund:r2(refund),feesBack:r2(back),retPost:r2(n(v.retPost)),soldPrice:n(it.soldPrice),fees:n(it.fees),outPost:n(it.outPost)};
+  if(kind==="back"){
+    const net=n(it.soldPrice)-n(it.refund)-refund-n(it.fees)+n(it.feesBack)+back-n(it.outPost)-n(v.retPost);
+    rec.net=r2(net);(it.rets=it.rets||[]).push(rec);it.sunk=r2(n(it.sunk)-net);it.status="Returned";
+    for(const k of["soldPrice","fees","refund","feesBack","soldOn","profit"])delete it[k];return null}
+  if(kind!=="partial"&&kind!=="kept")return"Choose what happened.";
+  (it.rets=it.rets||[]).push(rec);it.refund=r2(n(it.refund)+refund);it.feesBack=r2(n(it.feesBack)+back);
+  if(kind==="kept"){it.status="Written off";it.writtenOn=day}
+  it.profit=itemProfit(it);return null}
+let RT={kind:"back"};
+function retSheet(id,kind){const it=S.items.find(i=>i.id===id);if(!it)return;if(kind)RT.kind=kind;const k=RT.kind,n=x=>+x||0;
+  const left=n(it.soldPrice)-n(it.refund),opt=(v,t,sub)=>`<label class="chkrow ms-radio" style="margin:8px 0"><input type="radio" name="rt_k" ${k===v?"checked":""} onchange="retSheet(${id},'${v}')"><span><b>${t}</b><br><span class="mu">${sub}</span></span></label>`;
+  openSheet(`<h2 style="margin-top:0">Buyer return or refund</h2><div class="mu">${esc(it.name)} · sold for ${gbp(it.soldPrice)}${n(it.refund)?`, ${gbp(it.refund)} already refunded`:""}</div>
+  <fieldset style="border:0;padding:0;margin:10px 0 0"><legend class="mu">What happened?</legend>
+   ${opt("back","It came back to me","The buyer returned it and got a refund. It goes back to Unsold so you can sell it again.")}
+   ${opt("partial","Part refund, buyer keeps it","You gave some money back. It stays sold.")}
+   ${opt("kept","Full refund, buyer keeps it or it was lost","The sale is finished as Written off.")}</fieldset>
+  <label for="rt_r">Refunded to the buyer £</label><input id="rt_r" inputmode="decimal" value="${k==="partial"?"":left.toFixed(2)}" oninput="retCalc(${id})">
+  ${k==="back"?`<label for="rt_p">Return postage you paid £</label><input id="rt_p" inputmode="decimal" value="0" oninput="retCalc(${id})">`:""}
+  <label for="rt_f">eBay fees credited back to you £</label><input id="rt_f" inputmode="decimal" value="0" oninput="retCalc(${id})">
+  <div class="hint">eBay sometimes credits back some selling fees after a refund. Check your eBay account and enter what it shows; leave 0 if you're not sure.</div>
+  <div id="rt_res" class="card" style="margin-top:10px" aria-live="polite"></div>
+  <div class="btns"><button onclick="retSave(${id})">Save</button><button class="s" onclick="closeSheet()">Cancel</button></div>`);retCalc(id)}
+function retVals(){return{refund:num($("rt_r").value),feesBack:num($("rt_f").value),retPost:$("rt_p")?num($("rt_p").value):0}}
+function retCalc(id){const it=S.items.find(i=>i.id===id),o=$("rt_res");if(!it||!o)return;
+  const t=JSON.parse(JSON.stringify(it)),err=retApply(t,RT.kind,retVals(),today());
+  if(err){o.innerHTML=`<span class="bad">${esc(err)}</span>`;return}
+  o.innerHTML=RT.kind==="back"?`This sale ${t.rets[t.rets.length-1].net<0?"lost you":"left you"} <b class="${t.rets[t.rets.length-1].net<0?"bad":"ok"}">${gbp(Math.abs(t.rets[t.rets.length-1].net))}</b>. That stays in your actual profit; the item goes back to Unsold.`
+    :`Profit on this item becomes <b class="${t.profit>=0?"ok":"bad"}">${sgnP(t.profit)}</b> (was ${sgnP(itemProfit(it))}).`}
+function retSave(id){const it=S.items.find(i=>i.id===id);if(!it)return;const before=JSON.parse(JSON.stringify(it));
+  const err=retApply(it,RT.kind,retVals(),today());if(err){toast(err);return}
+  save();closeSheet();render();toast(RT.kind==="back"?"Return saved. It's back in Unsold.":"Refund saved.","Undo",()=>{for(const k of Object.keys(it))delete it[k];Object.assign(it,before);save();render()})}
+/* ---------- write off an unsold item (lost, broken, kept for yourself); any money you got back counts as recovered ---------- */
+function woApply(it,v,day){const n=x=>+x||0;if(!HOLD.includes(it.status))return"Only an unsold item can be written off here.";
+  if(n(v.recovered)<0)return"Amounts can't be negative.";
+  it.status="Written off";it.writtenOn=day;it.recovered=Math.round((n(it.recovered)+n(v.recovered))*100)/100;if(v.note)it.woNote=String(v.note).slice(0,200);
+  it.profit=itemProfit(it);return null}
+function woSheet(id){const it=S.items.find(i=>i.id===id);if(!it)return;
+  openSheet(`<h2 style="margin-top:0">Write off</h2><div class="mu">${esc(it.name)}: for something lost, broken beyond repair or kept for yourself. It moves to Sold and finished, and what it cost counts as a loss.</div>
+  <label for="wo_r">Money you got back £ (insurance, a claim, a part sold on)</label><input id="wo_r" inputmode="decimal" value="0" oninput="woCalc(${id})">
+  <label for="wo_n">Note (optional)</label><input id="wo_n" placeholder="e.g. lost in the post">
+  <div id="wo_res" class="card" style="margin-top:10px" aria-live="polite"></div>
+  <div class="btns"><button class="d" onclick="woSave(${id})">Write it off</button><button class="s" onclick="closeSheet()">Cancel</button></div>`);woCalc(id)}
+function woCalc(id){const it=S.items.find(i=>i.id===id),o=$("wo_res");if(!it||!o)return;const t=JSON.parse(JSON.stringify(it)),e=woApply(t,{recovered:num($("wo_r").value)},today());
+  o.innerHTML=e?`<span class="bad">${esc(e)}</span>`:`This counts as <b class="${t.profit>=0?"ok":"bad"}">${sgnP(t.profit)}</b> in your actual profit.`}
+function woSave(id){const it=S.items.find(i=>i.id===id);if(!it)return;const before=JSON.parse(JSON.stringify(it));
+  const e=woApply(it,{recovered:num($("wo_r").value),note:$("wo_n").value.trim()},today());if(e){toast(e);return}
+  save();closeSheet();render();toast("Written off.","Undo",()=>{for(const k of Object.keys(it))delete it[k];Object.assign(it,before);save();render()})}
+/* ---------- bundles / job lots: one price split across the items, to the penny ---------- */
+function splitBundle(total,weights){const P=Math.round((+total||0)*100),k=weights.length;if(!k)return[];
+  const w=weights.every(x=>+x>0)?weights.map(Number):weights.map(()=>1),W=w.reduce((a,b)=>a+b,0);
+  const raw=w.map(x=>P*x/W),fl=raw.map(Math.floor);let left=P-fl.reduce((a,b)=>a+b,0);
+  raw.map((x,i)=>[x-fl[i],i]).sort((a,b)=>b[0]-a[0]||a[1]-b[1]).forEach(([,i])=>{if(left>0){fl[i]++;left--}});
+  return fl.map(x=>x/100)}
+function bundleLines(t){return String(t||"").split(/\r?\n/).map(l=>l.trim()).filter(Boolean).slice(0,100).map(l=>{
+  const m=l.match(/^(.*?)\s*[,;\t]\s*£?\s*(\d+(?:\.\d+)?)\s*$/);return m&&m[1]?{name:m[1].slice(0,120),exp:+m[2]}:{name:l.slice(0,120),exp:0}})}
+let BN={by:"even"};
+function bundleSheet(){const h=H();
+  openSheet(`<h2 style="margin-top:0">Bundle or job lot</h2><div class="mu">One price for several items. FlipScout splits what you paid across them, so each item's profit is right.</div>
+  <label for="bn_n">Name (optional)</label><input id="bn_n" placeholder="e.g. Car boot GPUs">
+  <label for="bn_t">You paid in total £ (incl. delivery + any buyer fee)</label><input id="bn_t" inputmode="decimal" oninput="bnCalc()">
+  <label for="bn_l">Items: one per line, with the expected sale total after a comma if you know it</label><textarea id="bn_l" style="min-height:120px" placeholder="GTX 1080, 140&#10;RX 580, 60&#10;Power cable" oninput="bnCalc()"></textarea>
+  <div class="seg" role="radiogroup" aria-label="How to split the price" style="margin-top:10px"><button role="radio" aria-checked="${BN.by==="even"}" class="${BN.by==="even"?"on":""}" onclick="BN.by='even';bnSeg()">Split evenly</button><button role="radio" aria-checked="${BN.by==="exp"}" class="${BN.by==="exp"?"on":""}" onclick="BN.by='exp';bnSeg()">By expected price</button></div>
+  <div class="row"><div><label for="bn_o">Your postage out £ (each)</label><input id="bn_o" inputmode="decimal" value="${h.post}"></div><div><label for="bn_k">Packaging £ (each)</label><input id="bn_k" inputmode="decimal" value="${h.pack}"></div></div>
+  <div id="bn_res" class="card" style="margin-top:10px" aria-live="polite"></div>
+  <div class="btns"><button onclick="bundleSave()">Add to My Stock</button><button class="s" onclick="closeSheet()">Cancel</button></div>`);bnCalc()}
+function bnSeg(){document.querySelectorAll('#sheet [role=radio]').forEach((b,i)=>{const on=(i===0)===(BN.by==="even");b.classList.toggle("on",on);b.setAttribute("aria-checked",on)});bnCalc()}
+function bnPlan(){const L=bundleLines($("bn_l").value),t=num($("bn_t").value);
+  if(!(t>0))return{err:"Add what you paid in total."};if(L.length<2)return{err:"Add at least two items, one per line."};
+  if(BN.by==="exp"&&L.some(x=>!(x.exp>0)))return{err:"To split by expected price, add one to every line (e.g. “RX 580, 60”), or split evenly."};
+  const sh=splitBundle(t,BN.by==="exp"?L.map(x=>x.exp):L.map(()=>1));return{L,t,sh}}
+function bnCalc(){const o=$("bn_res");if(!o)return;const p=bnPlan();
+  o.innerHTML=p.err?`<span class="mu">${esc(p.err)}</span>`:p.L.map((x,i)=>`<div class="ms-line"><span>${esc(x.name)}</span><span>${gbp(p.sh[i])}</span></div>`).join("")+`<div class="ms-tot"><span>Total</span><span>${gbp(p.sh.reduce((a,b)=>a+b,0))}</span></div>`}
+function bundleSave(){const p=bnPlan();if(p.err){toast(p.err);return}
+  const bid=Date.now(),name=$("bn_n").value.trim().slice(0,80)||"Bundle "+today(),post=num($("bn_o").value),pack=num($("bn_k").value),ids=[];
+  p.L.forEach((x,i)=>{const it={id:bid+i,status:"Bought",boughtOn:today(),cond:"",url:"",name:x.name,buy:p.sh[i],exp:x.exp||0,outPost:post,pack,other:0,
+    bundle:{id:bid,name,total:p.t,n:p.L.length,i}};it.expProfit=it.exp?it.exp-fee(it.exp)-post-it.buy-pack:null;ids.push(it.id);S.items.unshift(it)});
+  save();closeSheet();MS.view="stock";render();
+  toast(`Added ${ids.length} items.`,"Undo",()=>{S.items=S.items.filter(i=>!ids.includes(i.id));save();render()})}
+/* ---------- business expenses (not tied to one item), totalled by UK tax year (6 April to 5 April) ---------- */
+const EXCAT=["Postage supplies","Packaging","Fees and subscriptions","Travel","Equipment","Other"];
+function taxYear(d){const y=+String(d).slice(0,4),st=String(d).slice(5,10)>="04-06"?y:y-1;return`${st}/${String((st+1)%100).padStart(2,"0")}`}
+function expSums(list){const n=x=>+x||0,Y={};let total=0;
+  for(const e of list||[]){const k=taxYear(e.date);Y[k]=Y[k]||{total:0,count:0,cats:{}};Y[k].total+=n(e.amount);Y[k].count++;Y[k].cats[e.cat||"Other"]=(Y[k].cats[e.cat||"Other"]||0)+n(e.amount);total+=n(e.amount)}
+  return{total,years:Object.keys(Y).sort().reverse().map(k=>({year:k,...Y[k]}))}}
+function vExpenses(){const L=[...(S.expenses||[])].sort((a,b)=>String(b.date).localeCompare(String(a.date))||b.id-a.id),m=expSums(L);
+  const add=`<div class="ms-add"><button onclick="expSheet()">+ Add expense</button></div>`;
+  const intro=`<div class="mu ms-note" style="margin:0 4px 10px">Business costs that aren't for one item: postage supplies, subscriptions, travel. They're kept apart from each item's profit.</div>`;
+  if(!L.length)return add+intro+`<div class="card empty"><b>No expenses yet</b><div class="mu">Add one with the button above.</div></div>`+(typeof csvCard==="function"?csvCard():"");
+  return add+intro+`<div class="card ms-sum">${m.years.map(y=>`<div class="ms-r"><div class="ms-l">Tax year ${y.year}<small>${y.count} expense${y.count===1?"":"s"} · 6 April to 5 April</small></div><div class="ms-v">${gbp(y.total)}</div></div>`).join("")}</div>
+   ${L.map(e=>`<div class="card ms-it"><div class="ms-h"><span class="ms-n">${esc(e.desc||e.cat||"Expense")}</span><b>${gbp(e.amount)}</b></div><div class="mu ms-note">${esc(e.date)} · ${esc(e.cat||"Other")}</div>
+    <div class="ms-acts"><button class="s" onclick="expSheet(${e.id})" aria-label="Edit ${esc(e.desc||"expense")}">Edit</button></div></div>`).join("")}`+(typeof csvCard==="function"?csvCard():"")}
+function expSheet(id){const e=id?(S.expenses||[]).find(x=>x.id===id):null,v=e||{date:today(),cat:EXCAT[0]};
+  openSheet(`<h2 style="margin-top:0">${e?"Edit expense":"Add expense"}</h2>
+  <label for="ex_a">Amount £</label><input id="ex_a" inputmode="decimal" value="${e?(+e.amount).toFixed(2):""}">
+  <label for="ex_d">What was it?</label><input id="ex_d" value="${esc(v.desc||"")}" placeholder="e.g. 100 padded envelopes">
+  <div class="row"><div><label for="ex_c">Type</label><select id="ex_c">${EXCAT.map(c=>`<option ${c===v.cat?"selected":""}>${c}</option>`).join("")}</select></div><div><label for="ex_t">Date</label><input id="ex_t" type="date" value="${esc(v.date)}"></div></div>
+  <div class="btns"><button onclick="expSave(${e?e.id:0})">Save</button>${e?`<button class="d" onclick="expDel(${e.id})">Delete</button>`:""}<button class="s" onclick="closeSheet()">Cancel</button></div>`)}
+function expSave(id){const a=num($("ex_a").value),d=$("ex_t").value,ok=/^\d{4}-\d{2}-\d{2}$/.test(d)&&!isNaN(new Date(d));
+  if(!(a>0)){toast("Add the amount.");return}if(!ok){toast("Add the date.");return}
+  const L=S.expenses||(S.expenses=[]),x={date:d,desc:$("ex_d").value.trim().slice(0,200),cat:$("ex_c").value,amount:Math.round(a*100)/100};
+  const e=id&&L.find(z=>z.id===id),before=e&&{...e};
+  const nx=e?null:{id:Date.now(),...x};if(e)Object.assign(e,x);else L.push(nx);
+  save();closeSheet();render();toast(e?"Saved.":"Expense added.","Undo",()=>{if(e)Object.assign(e,before);else S.expenses=S.expenses.filter(z=>z!==nx);save();render()})}
+function expDel(id){const L=S.expenses||[],k=L.findIndex(z=>z.id===id);if(k<0)return;const [e]=L.splice(k,1);
+  save();closeSheet();render();toast("Expense deleted.","Undo",()=>{S.expenses.splice(k,0,e);save();render()})}
+/* ---------- deal page: I bought this. Buy It Now fills in what FlipScout worked out (you confirm it); auctions leave the
+   price empty; spares leave the sale price and repair costs to you. ---------- */
+function dealBought(){const d=DV;if(!d)return;const h=H(),sp=d.kind==="spares",auc=d.type==="AUC";
+  const pay=auc?"":Math.round((known(d.cost)?d.cost:(+d.price||0)+(+d.ship||0))*100)/100;
+  itemSheet(0,{name:d.title||"",buy:pay,exp:sp||!(d.med>0)?"":d.med,outPost:h.post,pack:h.pack,url:d.url||"",confirm:true,auc,spares:sp})}
 /* ---------- quick profit calculator (Tools): the same sums the deals use ----------
    fee() = eBay selling fee for your Private/Business setting; maxPay() = the most you can pay and keep your minimum profit
    (and the "must not lose money at the cheap end" rule); bpfFee() = the Scan service's buyer protection fee estimate. */
@@ -891,25 +1014,25 @@ function setStage(id,st){
   if(st==="Sold"&&!DONE.includes(it.status)){soldSheet(id);return}
   const before={...it};
   if(!DONE.includes(st)){delete it.profit}
-  if(DONE.includes(st)&&it.profit==null&&it.soldPrice!=null)it.profit=it.soldPrice-(it.fees||0)-(it.outPost||0)-it.buy-it.pack;
+  if(DONE.includes(st)&&it.profit==null&&it.soldPrice!=null)it.profit=itemProfit(it);
   if(DONE.includes(st)&&it.soldPrice==null){soldSheet(id,st);return}
   it.status=st;save();render();toast(`Moved to ${st}.`,"Undo",()=>{Object.assign(it,before);if(before.profit==null)delete it.profit;save();render()});
 }
 function soldSheet(id,target="Sold"){
   const it=S.items.find(i=>i.id===id);if(!it)return;
   openSheet(`<h2 style="margin-top:0">Mark as sold</h2><div class="mu">${esc(it.name)}</div>
-  <label for="sd_p">Sale price £ (what the buyer paid for the item)</label><input id="sd_p" inputmode="decimal" value="${it.exp?it.exp.toFixed(2):""}" oninput="$('sd_f').value=fee(num(this.value)).toFixed(2);sdCalc(${id})">
+  <label for="sd_p">Sale total £ (item price + postage the buyer paid)</label><input id="sd_p" inputmode="decimal" value="${it.exp?it.exp.toFixed(2):""}" oninput="$('sd_f').value=fee(num(this.value)).toFixed(2);sdCalc(${id})">
   <label for="sd_f">eBay fees £ ${ti("fees")}</label><input id="sd_f" inputmode="decimal" value="${fee(it.exp||0).toFixed(2)}" oninput="sdCalc(${id})">
-  <label for="sd_o">Postage you paid £</label><input id="sd_o" inputmode="decimal" value="${it.outPost||0}" oninput="sdCalc(${id})">
+  <label for="sd_o">Your postage cost £</label><input id="sd_o" inputmode="decimal" value="${it.outPost||0}" oninput="sdCalc(${id})">
   <div id="sd_r" class="stat" style="margin-top:12px"></div>
   <div class="btns"><button onclick="sdSave(${id},'${target}')">Save sale</button><button class="s" onclick="closeSheet()">Cancel</button></div>`);
   sdCalc(id);
 }
-function sdCalc(id){const it=S.items.find(i=>i.id===id),p=num($("sd_p").value)-num($("sd_f").value)-num($("sd_o").value)-it.buy-it.pack;$("sd_r").innerHTML=`Profit <span class="${p>=0?"ok":"bad"}">${gbp(p)}</span>`}
+function sdCalc(id){const it=S.items.find(i=>i.id===id),p=itemProfit({...it,soldPrice:num($("sd_p").value),fees:num($("sd_f").value),outPost:num($("sd_o").value)});$("sd_r").innerHTML=`Profit <span class="${p>=0?"ok":"bad"}">${gbp(p)}</span>`}
 function sdSave(id,target){
   const it=S.items.find(i=>i.id===id),before={...it};
   Object.assign(it,{soldPrice:num($("sd_p").value),fees:num($("sd_f").value),outPost:num($("sd_o").value),soldOn:today(),status:target});
-  it.profit=it.soldPrice-it.fees-it.outPost-it.buy-it.pack;save();closeSheet();render();
+  it.profit=itemProfit(it);save();closeSheet();render();
   toast(`Sold for ${gbp(it.profit)} profit.`,"Undo",()=>{for(const k of Object.keys(it))delete it[k];Object.assign(it,before);save();render()});
 }
 function del(id){
@@ -1629,7 +1752,7 @@ function vDeal(){
   if(sp)return head+`<div class="verdict info" style="margin-top:12px"><div class="mu">Seller says</div><div style="font-size:16px;margin-top:4px">${d.sellerSays?"“"+esc(d.sellerSays)+"”":"Read the description on eBay. Only the title is available here."}</div>
    <div class="hint">FlipScout can't check what's wrong or how hard it is to fix. You judge it.</div></div>
    <div class="card"><div class="grid"><div><div class="mu">Total you pay</div><div class="stat">${gbp(d.cost)}</div><div class="mu" style="font-size:12px">${pp(d)} + fee</div></div><div><div class="mu">Working ones sell for</div><div class="stat">${gbp(d.workMed)}</div></div></div>
-   <label for="rc">Your repair cost £</label><input id="rc" inputmode="decimal" placeholder="e.g. 25" oninput="$('rcr').innerHTML=spProfit(this.value)">
+   <button class="s" style="width:100%;margin:0 0 10px" onclick="dealBought()">I bought this: add to My Stock</button><label for="rc">Your repair cost £</label><input id="rc" inputmode="decimal" placeholder="e.g. 25" oninput="$('rcr').innerHTML=spProfit(this.value)">
    <div id="rcr" class="stat" style="margin-top:10px"></div><div class="hint">Based on ${d.n} ${d.src==="sold"?"sold":"asking"} prices for working ones. Includes eBay fees and your postage.</div></div>
    ${ended?`<div class="actbar"><a href="${url}" target="_blank" rel="noopener" style="flex:1;display:flex"><button class="s" style="margin:0;flex:1">View on eBay</button></a></div>`:`<div class="actbar"><button class="s" style="margin:0;flex:1" onclick="followSheet()">Follow</button><a href="${url}" target="_blank" rel="noopener" style="flex:1.7;display:flex"><button style="margin:0;flex:1">Open on eBay</button></a></div>`}`;
   const sum=`<div class="fzsum">${fzEv(d,1)}${d.rangeLo!=null&&d.rangeHi!=null?`<br>Most sold for <b style="color:var(--tx)">${gbp0(d.rangeLo)}–${gbp0(d.rangeHi)}</b>`:""}${d.bookAt||d.lastAt?` · checked ${esc(ago(d.bookAt||d.lastAt))}`:""}
@@ -1647,7 +1770,7 @@ function vDeal(){
   const actions=ended?`<div class="actbar"><a href="${url}" target="_blank" rel="noopener" style="flex:1;display:flex"><button class="s" style="margin:0;flex:1">View on eBay</button></a></div>`
    :`<div class="actbar">${isFollowed(d.id)?`<button class="s" style="margin:0;flex:1;color:var(--ok)" onclick="go('follow')">✓ Following</button>`:`<button class="s" style="margin:0;flex:1" onclick="followSheet()">${auc?"Follow &amp; alert":"Follow"}</button>`}<a href="${url}" target="_blank" rel="noopener" style="flex:1.7;display:flex"><button style="margin:0;flex:1">Open on eBay</button></a></div>`;
   return head+sum+tiles+money+`<div class="fzsh">How well it sells</div>${speedCard(d)}${trustCard(d)}${info.length?`<div class="card"><b>Tags</b>${tagChips(info)}</div>`:""}${aboutCard(d)}
-  <div class="hint" style="margin:0 4px 90px">Estimates use recent eBay sales and your settings. Always read the listing before you pay.<br><button class="link" style="margin:8px 0 0;min-height:44px;padding:0;color:var(--ac)" onclick="flagAsk(${esc(JSON.stringify(d.id))},1)">⚑ Report a wrong deal</button></div>`+actions;
+  ${ended?"":`<button class="s" style="width:100%;margin:4px 0 12px" onclick="dealBought()">I bought this: add to My Stock</button>`}<div class="hint" style="margin:0 4px 90px">Estimates use recent eBay sales and your settings. Always read the listing before you pay.<br><button class="link" style="margin:8px 0 0;min-height:44px;padding:0;color:var(--ac)" onclick="flagAsk(${esc(JSON.stringify(d.id))},1)">⚑ Report a wrong deal</button></div>`+actions;
 }
 /* ---------- PRICES (price book + the old Check, in one place) ---------- */
 // Search any item, open eBay Research in the eBay app with the search built for you, then type in what it showed:
@@ -1962,19 +2085,27 @@ function vBook(){
   ${stale?`<div class="hint" style="margin:10px 4px">${stale} price${stale>1?"s are":" is"} older than 30 days. Tap one, then Check again.</div>`:""}
   <h3 style="margin:14px 4px 6px">Your prices</h3><div id="bk_list">${bookList()}</div>`}
 /* ---------- SELL: add or edit an item by hand ---------- */
-function itemSheet(id,pre){const it=id?S.items.find(i=>i.id===id):null,v=it||pre||{};
+function itemSheet(id,pre){const it=id?S.items.find(i=>i.id===id):null,v=it||pre||{},cf=!it&&pre&&pre.confirm;
+  const f2=x=>x!=null&&x!==""?(+x).toFixed(2):"";
   openSheet(`<h2 style="margin-top:0">${it?"Edit item":"I bought it"}</h2>
   <label for="it_n">What is it?</label><input id="it_n" value="${esc(v.name||"")}" placeholder="e.g. RTX 2080 Gaming X">
-  <div class="row"><div><label for="it_b">You paid £ (incl. delivery)</label><input id="it_b" inputmode="decimal" value="${v.buy!=null?(+v.buy).toFixed(2):""}"></div><div><label for="it_e">Expect to sell for £</label><input id="it_e" inputmode="decimal" value="${v.exp!=null?(+v.exp).toFixed(2):""}"></div></div>
+  <div class="row"><div><label for="it_b">You paid £ (item + delivery + any buyer fee)</label><input id="it_b" inputmode="decimal" value="${f2(v.buy)}"></div><div><label for="it_e">Expected sale total £ (incl. postage the buyer pays)</label><input id="it_e" inputmode="decimal" value="${f2(v.exp)}"></div></div>
   <div class="row"><div><label for="it_o">Your postage out £</label><input id="it_o" inputmode="decimal" value="${v.outPost!=null?v.outPost:H().post}"></div><div><label for="it_k">Packaging £</label><input id="it_k" inputmode="decimal" value="${v.pack!=null?v.pack:H().pack}"></div></div>
-  <div class="btns"><button onclick="itemSave(${it?it.id:0})">${it?"Save":"Add to Sell"}</button><button class="s" onclick="closeSheet()">Cancel</button></div>`);window._itPre=pre||null}
+  <label for="it_x">Other costs £ (repairs, parts, cleaning)</label><input id="it_x" inputmode="decimal" value="${f2(v.other)}" placeholder="0">
+  ${pre&&pre.spares&&!it?`<div class="hint">Spares or repairs: FlipScout doesn't know the repair cost, so the profit won't be complete until you add it under Other costs. Leave the expected sale total empty if you're not sure yet.</div>`:""}
+  ${pre&&pre.auc&&!it?`<div class="hint">Auction: type the final price you actually paid, including postage and any buyer fee.</div>`:""}
+  ${cf?`<label class="chkrow" style="margin-top:12px"><input type="checkbox" id="it_cf"><span>I've checked that "You paid" is what I actually paid</span></label>`:""}
+  <div class="btns"><button onclick="itemSave(${it?it.id:0})">${it?"Save":"Add to My Stock"}</button><button class="s" onclick="closeSheet()">Cancel</button></div>`);window._itPre=pre||null}
 function itemSave(id){const n=$("it_n").value.trim();if(!n){toast("Add what it is.");return}
-  const d={name:n,buy:num($("it_b").value),exp:num($("it_e").value),outPost:num($("it_o").value),pack:num($("it_k").value)};
-  d.expProfit=d.exp?d.exp-fee(d.exp)-d.outPost-d.buy-d.pack:0;
+  const pre=window._itPre||{};
+  if(!id&&pre.confirm){if(!String($("it_b").value).trim()){toast("Add what you paid.");$("it_b").focus();return}
+    if(!$("it_cf").checked){toast("Tick the box to confirm what you paid.");return}}
+  const d={name:n,buy:num($("it_b").value),exp:num($("it_e").value),outPost:num($("it_o").value),pack:num($("it_k").value),other:num($("it_x").value)};
+  d.expProfit=d.exp?d.exp-fee(d.exp)-d.outPost-d.buy-d.pack-d.other:null;
   const it=id&&S.items.find(i=>i.id===id);
-  if(it){Object.assign(it,d);if(DONE.includes(it.status)&&it.soldPrice!=null)it.profit=it.soldPrice-(it.fees||0)-(it.outPost||0)-it.buy-it.pack}
-  else S.items.unshift({id:Date.now(),status:"Bought",boughtOn:today(),cond:"",url:(window._itPre||{}).url||"",...d});
-  save();closeSheet();if(!it){prev=[];tab="stock"}render();toast(it?"Saved.":"Added to Sell.")}
+  if(it){Object.assign(it,d);if(DONE.includes(it.status))it.profit=itemProfit(it)}
+  else S.items.unshift({id:Date.now(),status:"Bought",boughtOn:today(),cond:"",url:pre.url||"",...(pre.spares?{spares:true}:{}),...d});
+  save();closeSheet();if(!it){prev=[];tab="stock";MS.view="stock"}render();toast(it?"Saved.":"Added to My Stock.")}
 function spProfit(v){const d=DV,r=S.rules,h=H();if(!String(v).trim())return"";const fee=r.seller==="private"?0:d.workMed*r.feePct/100+(d.workMed>10?r.feeFixed:0.3);
   const rc=num(v),out=h.post+h.pack,p=d.workMed-fee-out-d.cost-rc;
   return`<div style="font-size:15px;font-weight:400">${[["Working ones sell for",d.workMed,""],["eBay fees when you sell",fee,"-"],["Postage + packaging out",out,"-"],["Total you pay for it",d.cost,"-"],["Your repair cost",rc,"-"]].map(([l,x,k])=>`<div class="li"><span style="flex:1">${l}</span><span>${k?"− ":""}${gbp(x)}</span></div>`).join("")}

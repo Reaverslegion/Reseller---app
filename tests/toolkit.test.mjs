@@ -23,7 +23,7 @@ function load(rules = {}, items = [], expenses = []) {
   const names = [...NAMES, ...OPT.filter(have)];
   const src = consts + names.map((n) => grab(html, n)).join("\n") + `\nreturn {${names.join(",")}};`;
   const Papa = have("itemsToCsv") ? loadPapa() : undefined;
-  return new Function("S", "money", "MON", "Papa", src)(S, () => ({ cash: 1e9, committed: 0 }), { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 }, Papa);
+  return new Function("S", "money", "MON", "Papa", "gbp", src)(S, () => ({ cash: 1e9, committed: 0 }), { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 }, Papa, (x) => "£" + (+x).toFixed(2));
 }
 function loadPapa() { // the copy bundled inside index.html
   const m = html.match(/<script id="papaparse">([\s\S]*?)<\/script>/); assert.ok(m, "Papa Parse is bundled in index.html");
@@ -84,5 +84,64 @@ t("My Stock sums: money in stock, estimate and actual profit are kept separate",
   const A = load({}, items), m = A.stockSums();
   close(m.invested, 101 + 51, "invested"); close(m.est, 150 - 5 - 101, "estimate"); assert.equal(m.noEst, 1);
   close(m.actual, (120 - 5 - 81) + (20 - 3 - 30), "actual");
+});
+
+const pennies = (a) => Math.round(a.reduce((x, y) => x + y, 0) * 100);
+if (have("splitBundle")) t("bundles: the split adds up to the total to the penny, evenly or by expected price", () => {
+  const A = load();
+  assert.deepEqual(A.splitBundle(10, [1, 1, 1]), [3.34, 3.33, 3.33]);
+  assert.deepEqual(A.splitBundle(100, [150, 50]), [75, 25]);
+  for (let k = 0; k < 500; k++) {
+    const total = Math.round(Math.random() * 100000) / 100, w = Array.from({ length: 2 + Math.floor(Math.random() * 12) }, () => Math.random() < 0.2 ? 0 : Math.round(Math.random() * 300));
+    const sh = A.splitBundle(total, w); assert.equal(sh.length, w.length); assert.equal(pennies(sh), Math.round(total * 100), `total ${total}`);
+    assert.ok(sh.every((x) => x >= 0 && Math.round(x * 100) === x * 100 || Math.abs(Math.round(x * 100) - x * 100) < 1e-6), "whole pennies");
+  }
+});
+if (have("retApply")) t("returns: item back → the loss stays in actual profit once, and the item can be sold again", () => {
+  const it = { id: 1, status: "Sold", buy: 40, pack: 1, soldPrice: 100, fees: 13.2, outPost: 5 }, A = load({}, [it]);
+  const before = A.stockSums().actual; close(before, 100 - 13.2 - 5 - 41, "before");
+  assert.equal(A.retApply(it, "back", { refund: 100, feesBack: 12.8, retPost: 4 }, "2026-11-13"), null);
+  assert.equal(it.status, "Returned"); assert.equal(it.soldPrice, undefined); assert.equal(it.profit, undefined);
+  close(it.sunk, 9.4, "lost on the return (13.20 - 12.80 fees + 5 + 4 postage)"); assert.equal(it.rets.length, 1);
+  let m = A.stockSums(); close(m.actual, -9.4, "actual while unsold"); close(m.invested, 41, "back in unsold stock");
+  Object.assign(it, { status: "Sold", soldPrice: 90, fees: 11.92, outPost: 5 });
+  m = A.stockSums(); close(m.actual, 90 - 11.92 - 5 - 41 - 9.4, "actual after resale (loss counted once)");
+});
+if (have("retApply")) t("refunds: part refund keeps it sold; full refund kept by buyer → Written off; too much or unsold refused", () => {
+  const a = { id: 1, status: "Done", buy: 40, pack: 1, soldPrice: 100, fees: 13.2, outPost: 5 }, A = load({ seller: "business" }, [a]);
+  assert.equal(A.retApply(a, "partial", { refund: 20, feesBack: 2.56 }, "d"), null); assert.equal(a.status, "Done");
+  close(a.profit, 100 - 20 - 13.2 + 2.56 - 5 - 41, "after part refund"); close(A.itemProfit(a), a.profit, "stored = sum");
+  assert.match(A.retApply(a, "kept", { refund: 80.01 }, "d"), /more than/);
+  assert.equal(A.retApply(a, "kept", { refund: 80, feesBack: 0 }, "d"), null); assert.equal(a.status, "Written off");
+  close(a.profit, 100 - 100 - 13.2 + 2.56 - 5 - 41, "after full refund"); assert.equal(a.rets.length, 2);
+  assert.match(A.retApply({ status: "Listed", buy: 5 }, "partial", { refund: 1 }, "d"), /sold item/);
+  assert.match(A.retApply({ status: "Sold", soldPrice: 10, fees: 0 }, "partial", { refund: -1 }, "d"), /negative/);
+});
+if (have("woApply")) t("write off: an unsold item's costs become a loss, less anything recovered; not counted as stock any more", () => {
+  const it = { id: 1, status: "Listed", buy: 50, pack: 1, other: 10, exp: 120 }, A = load({}, [it]);
+  close(A.stockSums().invested, 61, "in stock before");
+  assert.equal(A.woApply(it, { recovered: 15, note: "lost" }, "2026-11-13"), null); assert.equal(it.status, "Written off");
+  const m = A.stockSums(); close(m.invested, 0, "no longer in stock"); close(m.actual, -46, "loss"); close(it.profit, -46, "stored");
+  assert.match(A.woApply(it, {}, "d"), /unsold/);
+});
+if (have("taxYear")) t("expenses: UK tax years run 6 April to 5 April and totals add up", () => {
+  const A = load();
+  assert.equal(A.taxYear("2026-04-05"), "2025/26"); assert.equal(A.taxYear("2026-04-06"), "2026/27"); assert.equal(A.taxYear("2099-12-31"), "2099/00");
+  const m = A.expSums([{ date: "2026-04-05", amount: 10, cat: "Travel" }, { date: "2026-04-06", amount: 2.5 }, { date: "2026-11-13", amount: "7.25", cat: "Packaging" }]);
+  close(m.total, 19.75, "total"); assert.equal(m.years[0].year, "2026/27"); close(m.years[0].total, 9.75, "this year"); assert.equal(m.years[0].count, 2);
+  close(m.years[0].cats.Other, 2.5, "no type = Other");
+  const S2 = load({}, [{ id: 1, status: "Done", buy: 10, pack: 0, soldPrice: 30, fees: 0, outPost: 0 }], [{ amount: 5 }]).stockSums();
+  close(S2.actual, 20, "item profit before expenses"); close(S2.expenses, 5, "expenses kept separate");
+});
+t("stored data: opening the app keeps items, settings and expenses exactly; older saves get an empty expenses list", () => {
+  const src = ["DEF", "OLDMAP", "load"].map((n) => grab(html, n)).join("\n").replace(/^const DEF=/, "const DEF=") + "\nreturn load;";
+  const run = (stored) => new Function("localStorage", "KEY", "window", "PRE", src)({ getItem: () => stored }, "k", {}, ["Considered"])();
+  const items = [{ id: 1, status: "Sold", buy: 1, soldPrice: 5, profit: 4, f: { n: "x" } }, { id: 2, status: "Written off", buy: 3, recovered: 1 }];
+  const exp = [{ id: 7, date: "2026-11-01", desc: "tape", cat: "Packaging", amount: 3.5 }];
+  const rules = { cheap: true, maxPrice: 0, minProfit: 25, minRoi: 0, budget: 200, maxStock: 150, minSales: 5, feePct: 12.8, feeFixed: 0.4, staleDays: 30, minPct: 35, seller: "private", v2: 1 };
+  const a = run(JSON.stringify({ rules, items, gate: ["g"], base: [], hunt: { post: 3 }, set: { url: "u", key: "k", theme: "dark" }, expenses: exp }));
+  assert.deepEqual(a.items, items); assert.deepEqual(a.expenses, exp); assert.equal(a.rules.seller, "private"); assert.equal(a.rules.minProfit, 25); assert.equal(a.set.theme, "dark");
+  assert.deepEqual(run(JSON.stringify({ rules, items })).expenses, []);
+  assert.deepEqual(run(JSON.stringify({ rules, items, expenses: "bad" })).expenses, []);
 });
 console.log(`\n${n} checks passed`);

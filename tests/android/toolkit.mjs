@@ -81,6 +81,14 @@ const SEED = { rules: { cheap: true, maxPrice: 0, minProfit: 25, minRoi: 0, budg
     { id: 4, name: "Apple iPad 9th gen 64GB", status: "Done", boughtOn: day(25), soldOn: day(10), buy: 180, pack: 1, exp: 199, outPost: 5, soldPrice: 182, fees: 0, profit: -4, expProfit: 13 },
     { id: 5, name: "Kindle Paperwhite 11th gen", status: "Considered", buy: 35 },
     { id: 6, name: "Canon 50mm lens", status: "Listed", boughtOn: day(2), buy: 45.67, pack: 0.33, exp: 0, outPost: 3.2, expProfit: 0 }] };
+// TRANSPARENCY CHECK (information only): a change, then an INSTANT force-close with no wait (like a crash or the phone killing
+// the app straight away). Run on the old app and the new one, so any risk shows as either already there or new.
+async function instantKill(label) { await app.eval(`(()=>{S.rules.staleDays=31;save();return 1})()`); await app.stop(); await app.launch();
+  await app.waitFor(`typeof render==="function"&&typeof S==="object"`, 30000, "the app"); const kept = await app.eval(`S.rules.staleDays===31`);
+  await app.eval(`(()=>{S.rules.staleDays=30;save();return 1})()`); await reopen();
+  ok(await app.eval(`S.rules.staleDays===30`), "couldn't put the setting back");
+  R.add("Toolkit: saving", `${label}: a change survives an INSTANT force-close (no wait)`, kept ? "PASS" : "PARTIALLY TESTED",
+    kept ? "kept" : "lost: Android's web view writes saved data to storage a moment after a change; information only (see the matching old-app row)"); }
 let before = null, beforeText = "";
 
 const setup = await R.journey("Android emulator", "Toolkit: install the current testing app and save data in it", async (step) => {
@@ -89,6 +97,7 @@ const setup = await R.journey("Android emulator", "Toolkit: install the current 
     await app.eval(`(()=>{localStorage.setItem("flipscout_seen_v2","1");localStorage.setItem("flipscout_restore_asked","1");localStorage.setItem("resell_helper_v1",${JSON.stringify(JSON.stringify(SEED))});return 1})()`);
     await reopen(); ok(await app.eval(`S.items.length===6&&S.rules.seller==="private"&&S.rules.minProfit===25`), "the old app didn't keep the data");
     await app.eval(`(async()=>{await pushConfig();return 1})()`); await sleep(1500); await app.shot("old app with data"); });
+  await step("information: old app, instant force-close straight after a change", () => instantKill("old app (2.0.133 code)"));
   await step("the old app backs up to the test Scan service ('Back up now')", async () => { await tabTo("Settings"); await app.tap({ sel: "#bk_now" }); await app.waitText("Backed up at", 25000);
     beforeText = await storeText(); before = JSON.parse(beforeText); });
 });
@@ -282,6 +291,8 @@ await T("Cloud backup and restore with the new data", async (step) => {
 await T("Closing and reopening keeps everything exactly", async (step) => {
   await step("force-close and reopen: saved data is byte-for-byte the same and the figures match", async () => { await toStock(); const a = await storeText(), s = await shown();
     await reopen(); await toStock(); ok((await storeText()) === a, "saved data changed"); ok(JSON.stringify(await shown()) === JSON.stringify(s), "figures changed"); await checkFigures("after reopen"); });
+  await step("information: new app, instant force-close straight after a change", async () => { const a = await storeText(); await instantKill("new app (toolkit)");
+    ok((await storeText()) === a, "saved data not back to the same after the check"); });
 });
 
 await B("Phone Back button on the new screens (10 rounds)", async (step) => {

@@ -13,7 +13,11 @@ import { makeDeals, seedDeals } from "./seed.mjs";
 const KEY = process.env.TEST_APP_KEY, APK = process.env.APK, OLD = process.env.OLD_APK;
 const CHAOS = (m) => fetch(`http://127.0.0.1:8791/${m === "stats" ? "stats" : m === "reset" ? "reset" : "mode?m=" + m}`).then((r) => r.json()).catch(() => ({}));
 const app = new App("screenshots/toolkit"), R = new Results(app, "results/toolkit.json");
-app.beforeJourney = () => CHAOS("normal");
+// if a sheet is still open from an earlier section (e.g. Back didn't close it), close it with its own Cancel/Close button,
+// as a person would, so one stuck sheet can't stop every later section (the first run's knock-on failures). Counted.
+let UNSTUCK = 0;
+app.beforeJourney = async () => { await CHAOS("normal"); try { if (await app.eval(`document.getElementById("sheet").classList.contains("on")`)) { UNSTUCK++;
+  await app.tap({ sel: "#sheet button", text: "Cancel", exact: true }).catch(() => app.tap({ sel: "#sheet button", text: "Close", exact: true })); await sleep(700); } } catch (e) {} };
 app.netQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 20; i++) { let n = 0; try { n = Object.values((await CHAOS("stats")).stats || {}).reduce((a, b) => a + b, 0); } catch (e) { return; }
   if (n === last) { if (++same >= 2) return; } else { same = 0; last = n; } await sleep(700); } };
 const T = (name, fn) => R.journey("Toolkit", name, fn), B = (name, fn) => R.journey("Toolkit: Back button", name, fn);
@@ -64,6 +68,28 @@ const overflow = () => app.eval(`(()=>{const W=innerWidth+1,o=[...document.query
 // changes, so the app is given 8 seconds in the background first (as in tests/android/update.mjs). Force-closing instantly
 // can lose the last change, which no person can do.
 const reopen = async () => { sh("input keyevent KEYCODE_HOME"); await sleep(8000); await app.stop(); await app.launch(); await app.waitFor(`typeof render==="function"&&!!document.getElementById("app")`, 30000, "the app"); await sleep(800); };
+
+// ---------- Back-button and large-text DIAGNOSIS (13 Nov): records where each Back press went ----------
+// onBack calls: how many times the app's own Back handler ran; page events: Android "backbutton" events reaching the page
+// (Capacitor sends one per press). If the press reaches neither, Android delivered it somewhere else (focused window shown).
+const DIAG = `(()=>{if(window.__obN===undefined){window.__obN=0;const o=onBack;onBack=function(){window.__obN++;return o.apply(this,arguments)};window.__pgBack=0;document.addEventListener("backbutton",()=>{window.__pgBack++})}
+  const a=document.activeElement,sh=document.getElementById("sheet");return JSON.stringify({tab,sheetOn,on:sh.classList.contains("on"),pick:!!pickOn,active:a?a.tagName+(a.id?"#"+a.id:""):null,ob:window.__obN,pg:window.__pgBack,
+  inputs:sh.querySelectorAll("input,textarea,select").length,sheetH:Math.round(sh.getBoundingClientRect().height),scrollable:sh.scrollHeight>sh.clientHeight+1})})()`;
+const focusWin = () => { try { return sh("dumpsys window | grep -E 'mCurrentFocus'").replace(/\s+/g, " ").trim().slice(0, 160); } catch (e) { return "?"; } };
+// press Back with a sheet open; record everything; if it didn't close, try a 2nd press, then close it with its own button
+async function backProbe(area, label) { await app.eval(DIAG); await sleep(300);
+  const b = JSON.parse(await app.eval(DIAG)), fw = focusWin(), kb = app.keyboardShown(); await app.back(); await sleep(700);
+  const a = JSON.parse(await app.eval(DIAG)), closed = !a.on; let second = null, fw2 = "";
+  if (!closed) { fw2 = focusWin(); await app.back(); await sleep(900); second = !(await app.eval(`document.getElementById("sheet").classList.contains("on")`));
+    if (!second) { await app.tap({ sel: "#sheet button", text: "Cancel", exact: true }).catch(() => app.tap({ sel: "#sheet button", text: "Close", exact: true }).catch(() => {})); await sleep(600); } }
+  R.add(area, `${label}: Back closed the sheet`, closed ? "PASS" : "FAIL",
+    `app Back handler ${b.ob}→${a.ob}, page Back events ${b.pg}→${a.pg}; focus ${b.active}; ${b.inputs} boxes; sheet ${b.sheetH}px${b.scrollable ? " scrollable" : ""}; keyboard ${kb ? "up" : "down"}; window: ${fw}` +
+    (closed ? "" : `; after: sheetOn=${a.sheetOn}, window: ${fw2}; 2nd press ${second ? "closed it" : "didn't either"}`));
+  return closed; }
+const LAYOUT = `JSON.stringify((()=>{const r=e=>e?Math.round(e.getBoundingClientRect().top):null,v=window.visualViewport;return{scrollY:Math.round(scrollY),docH:document.scrollingElement.scrollHeight,
+  innerH:innerHeight,vv:v?{offTop:Math.round(v.offsetTop),pageTop:Math.round(v.pageTop),h:Math.round(v.height),scale:v.scale}:null,nav:r(document.getElementById("nav")),app:r(document.getElementById("app")),
+  body:r(document.body),onb:getComputedStyle(document.getElementById("onb")).display,sheet:document.getElementById("sheet").classList.contains("on"),tab,dpr:devicePixelRatio,
+  navPos:getComputedStyle(document.getElementById("nav")).position,fs:getComputedStyle(document.body).fontSize}})())`;
 
 // ---------- the phone ----------
 adb("reverse", "tcp:8787", "tcp:8789"); adb("reverse", "tcp:8790", "tcp:8790");
@@ -209,7 +235,7 @@ await T("Deal page 'I bought this' and the Following list", async (step) => {
     ok(r2(i.expProfit) === r2(d.med - i.outPost - i.buy - i.pack), `expected profit ${i.expProfit}`); await checkFigures("after deal purchase"); });
   await step("auction deal: the price is left empty for you to type", async () => { await tabTo("Deals"); const k = await app.eval(`(HD.deals||[]).findIndex(x=>x.type==="AUC")`); ok(k >= 0, "no auction");
     await app.eval(`openDeal(${k});1`); await app.waitFor(`tab==="deal"`, 10000, "deal page"); await app.tap({ text: "I bought this: add to My Stock" }); await sleep(500);
-    ok((await app.eval(`document.getElementById("it_b").value`)) === "", "auction price filled in"); await app.back(); ok(!(await sheetOpen()), "Back didn't close the sheet"); });
+    ok((await app.eval(`document.getElementById("it_b").value`)) === "", "auction price filled in"); await sheetBtn("Cancel"); await sleep(500); ok(!(await sheetOpen()), "Cancel didn't close the sheet"); });
   await step("Following list: no purchase button there (so no second, unconfirmed way to record a purchase)", async () => { await tabTo("Following"); await sleep(800);
     const t = await app.eval(`document.getElementById("app").innerText`); ok(!/I bought/i.test(t), "Following shows an 'I bought' button"); ok(await app.eval(`!document.querySelector('#app [onclick^="bought("]')`), "old bought() button on screen"); });
 });
@@ -303,14 +329,37 @@ await B("Phone Back button on the new screens (10 rounds)", async (step) => {
       await toStock(); await section("Calculator"); await app.back(); if (await app.eval(`tab==="stock"&&MS.view==="stock"`)) res.calc++; else fails.push(`round ${k + 1}: Calculator → Back went to ${await app.eval("tab+'/'+MS.view")}`);
       await toStock(); await section("Expenses"); await app.back(); if (await app.eval(`tab==="stock"&&MS.view==="stock"`)) res.exp++; else fails.push(`round ${k + 1}: Expenses → Back`);
       await toStock(); const c = (await store()).items.length; await app.tap({ text: "+ Add item" }); await app.waitFor(`document.getElementById("sheet").classList.contains("on")`, 5000, "sheet"); await app.back(); await sleep(500);
-      if (!(await sheetOpen()) && (await app.eval(`tab`)) === "stock" && (await store()).items.length === c) res.sheet++; else fails.push(`round ${k + 1}: Back on the Add item sheet`);
+      if (!(await sheetOpen()) && (await app.eval(`tab`)) === "stock" && (await store()).items.length === c) res.sheet++; else { fails.push(`round ${k + 1}: Back on the Add item sheet`); if (await sheetOpen()) { await sheetBtn("Cancel"); await sleep(500); } }
       await app.back(); if ((await app.eval(`tab`)) === "deals") res.stock++; else fails.push(`round ${k + 1}: My Stock → Back went to ${await app.eval("tab")}`);
       await app.waitFor(`!!document.querySelector(".dcard")`, 15000, "deal cards"); await app.tap({ sel: ".dcard", nth: k % 2 }); await app.waitFor(`tab==="deal"`, 10000, "deal page");
-      await app.tap({ text: "I bought this: add to My Stock" }); await sleep(600); await app.back(); await sleep(500); const s1 = !(await sheetOpen()) && (await app.eval(`tab`)) === "deal";
+      await app.tap({ text: "I bought this: add to My Stock" }); await sleep(600); await app.back(); await sleep(500); const s1 = !(await sheetOpen()) && (await app.eval(`tab`)) === "deal"; if (await sheetOpen()) { await sheetBtn("Cancel"); await sleep(500); }
       await app.back(); await sleep(800); const s2 = (await app.eval(`tab`)) === "deals"; if (s1 && s2) res.deal++; else fails.push(`round ${k + 1}: deal sheet Back ${s1 ? "ok" : "FAILED"}, deal page Back ${s2 ? "ok" : "FAILED"}`);
     }
     R.add("Toolkit: Back button", `results: Calculator ${res.calc}/${rounds}, Expenses ${res.exp}/${rounds}, sheet ${res.sheet}/${rounds}, My Stock→Deals ${res.stock}/${rounds}, deal sheet + page ${res.deal}/${rounds}`, fails.length ? "FAIL" : "PASS", fails.slice(0, 6).join(" · "));
     ok(!fails.length, fails.slice(0, 3).join(" · ")); });
+});
+
+const DA = "Toolkit: Back diagnosis";
+await R.journey(DA, "Back on each kind of sheet, 3 times each (new app)", async (step) => {
+  const kinds = [
+    ["buttons only (⋯ menu on an item)", async () => { await toStock(); await cardTap("Nintendo Switch", ".ms-more"); }],
+    ["'+ Add item' (typing boxes, tall)", async () => { await toStock(); await app.tap({ text: "+ Add item" }); }],
+    ["expense (typing boxes, short)", async () => { await toStock(); await section("Expenses"); await app.tap({ text: "+ Add expense" }); }],
+    ["export (read-only text)", async () => { await toStock(); await app.tap({ text: "Export stock" }); }],
+    ["simple test sheet (no boxes, opened by the test)", async () => { await toStock(); await app.eval(`openSheet('<h2>Test</h2><div class="btns"><button onclick="closeSheet()">Close</button></div>');1`); }],
+    ["empty item sheet opened by the test (no tap)", async () => { await toStock(); await app.eval(`itemSheet(0);1`); }]];
+  for (const [label, open] of kinds) await step(`${label}`, async () => { let ok3 = 0;
+    for (let k = 0; k < 3; k++) { await open(); await app.waitFor(`document.getElementById("sheet").classList.contains("on")`, 5000, "sheet"); await sleep(400); if (await backProbe(DA, `new app · ${label} · press ${k + 1}`)) ok3++; if (await app.eval(`MS.view!=="stock"`)) await section("Stock"); }
+    ok(ok3 === 3, `${ok3} of 3`); });
+});
+await R.journey(DA, "Saving: how long after a change Android needs before the app is closed (new app)", async (step) => {
+  for (const d of [0, 1, 2, 4]) await step(`change, wait ${d} s, force-close (no Home): change kept?`, async () => { const v = 40 + d;
+    await app.eval(`(()=>{S.rules.staleDays=${v};save();return 1})()`); await sleep(d * 1000); await app.stop(); await app.launch(); await app.waitFor(`typeof S==="object"`, 30000, "the app");
+    const kept = await app.eval(`S.rules.staleDays===${v}`); await app.eval(`(()=>{S.rules.staleDays=30;save();return 1})()`); await reopen();
+    R.add(DA, `saving: change kept after ${d} s then force-close: ${kept ? "yes" : "NO"}`, kept ? "PASS" : "PARTIALLY TESTED", "information only"); });
+  await step("change, Home straight away, force-close after 1 s: change kept?", async () => { await app.eval(`(()=>{S.rules.staleDays=49;save();return 1})()`); sh("input keyevent KEYCODE_HOME"); await sleep(1000);
+    await app.stop(); await app.launch(); await app.waitFor(`typeof S==="object"`, 30000, "the app"); const kept = await app.eval(`S.rules.staleDays===49`); await app.eval(`(()=>{S.rules.staleDays=30;save();return 1})()`); await reopen();
+    R.add(DA, `saving: change, Home, force-close after 1 s: ${kept ? "kept" : "LOST"}`, kept ? "PASS" : "PARTIALLY TESTED", "information only"); });
 });
 
 for (const theme of ["Dark", "Light"]) await T(`${theme} mode on the new screens`, async (step) => {
@@ -322,7 +371,10 @@ for (const theme of ["Dark", "Light"]) await T(`${theme} mode on the new screens
 let BASEFS = 0;
 for (const scale of [1.3, 2.0]) await T(`Phone text size ×${scale}`, async (step) => {
   if (!timeLeft()) throw new Error("not run: time limit");
-  await step(`phone font size ×${scale}, app reopened; the text really gets bigger`, async () => { sh(`settings put system font_scale ${scale}`); await reopen(); await toStock();
+  await step(`phone font size ×${scale}, app reopened; the text really gets bigger`, async () => { sh(`settings put system font_scale ${scale}`); await reopen();
+    const L0 = await app.eval(LAYOUT); await app.shot(`text ${scale} straight after opening`); R.add(DA, `layout at text ×${scale} straight after opening (new app)`, "PASS", L0);
+    if (/"nav":-?\d+/.test(L0) && JSON.parse(L0).nav < 0) { await app.eval(`scrollTo(0,0);1`); await sleep(500); R.add(DA, `layout at ×${scale} after scrollTo(0,0)`, "PASS", await app.eval(LAYOUT)); await app.shot(`text ${scale} after scrollTo`); }
+    await toStock();
     const px = () => app.eval(`parseFloat(getComputedStyle(document.querySelector(".ms-sum .ms-v")||document.body).fontSize)`);
     if (!BASEFS) { sh("settings put system font_scale 1.0"); await reopen(); await toStock(); BASEFS = await px(); sh(`settings put system font_scale ${scale}`); await reopen(); await toStock(); }
     const fs_ = await px(); R.add("Toolkit", `text size ×${scale}: figure text ${fs_}px (normal size ${BASEFS}px)`, "PASS"); ok(fs_ >= BASEFS * (scale - 0.15), `text didn't get bigger: ${fs_}px vs ${BASEFS}px at normal size`); });
@@ -331,6 +383,18 @@ for (const scale of [1.3, 2.0]) await T(`Phone text size ×${scale}`, async (ste
   sh("settings put system font_scale 1.0");
 });
 sh("settings put system font_scale 1.0");
+
+// LAST (it replaces this branch's app): the current testing app (2.0.133 code), same data, same checks, to tell new from existing
+await R.journey(DA, "Comparison: the current testing app (2.0.133 code), same checks", async (step) => {
+  await step("testing app installed over (same data)", async () => { app.install(OLD); await reopen(); ok(await app.eval(`typeof itemSheet==="function"`), "old app didn't open"); });
+  for (const [label, js] of [["simple test sheet (no boxes)", `openSheet('<h2>Test</h2><div class="btns"><button onclick="closeSheet()">Close</button></div>');1`], ["empty item sheet (typing boxes, tall)", `itemSheet(0);1`]])
+    await step(`old app · ${label}: Back ×3`, async () => { let n = 0; for (let k = 0; k < 3; k++) { await app.eval(js); await app.waitFor(`document.getElementById("sheet").classList.contains("on")`, 5000, "sheet"); await sleep(400);
+      if (await backProbe(DA, `old app · ${label} · press ${k + 1}`)) n++; } ok(n === 3, `${n} of 3`); });
+  await step("old app at text ×2: layout straight after opening", async () => { sh("settings put system font_scale 2.0"); await reopen(); const L = await app.eval(LAYOUT); await app.shot("old app text 2 straight after opening");
+    R.add(DA, "layout at text ×2 straight after opening (old app)", "PASS", L); sh("settings put system font_scale 1.0"); await reopen(); });
+});
+sh("settings put system font_scale 1.0");
+R.add(DA, `sheets left open by an earlier section and closed with their own button: ${UNSTUCK}`, UNSTUCK ? "PARTIALLY TESTED" : "PASS", "0 = no knock-on effects");
 
 const rows = R.rows, c = (s) => rows.filter((r) => r.status === s).length;
 console.log(`TOOLKIT: ${c("PASS")} pass · ${c("FAIL")} fail · ${c("PARTIALLY TESTED")} partly · ${c("NOT TESTED")} not tested · ${Math.round((Date.now() - t0) / 60000)} min`);

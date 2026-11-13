@@ -15,7 +15,7 @@ function grab(src, name) {
   return src.slice(i, Math.min(...ends));
 }
 const NAMES = ["num", "isNum", "median", "pct", "parse", "fee", "maxPay", "isSold", "itemProfit", "itemEst", "stockSums", "bpfFee", "calcResult"];
-const OPT = ["splitBundle", "retApply", "woApply", "taxYear", "expSums", "csvSafe", "itemsToCsv", "expensesToCsv", "csvImportPlan", "csvDate", "csvNum"];
+const OPT = ["splitBundle", "retApply", "woApply", "taxYear", "expSums", "EXCAT", "CSV_MAX", "r2c", "ITEM_COLS", "csvKey", "CSV_ALIAS", "csvHeaderMap", "unq", "itemKey", "expKey", "csvSafe", "itemsToCsv", "expensesToCsv", "csvImportPlan", "csvDate", "csvNum"];
 const have = (n) => html.includes(`function ${n}(`) || new RegExp(`(?:const|let) ${n}\\s*=`).test(html);
 const consts = html.match(/const PRE=\[[^\n]*\n/)[0];
 function load(rules = {}, items = [], expenses = []) {
@@ -23,7 +23,7 @@ function load(rules = {}, items = [], expenses = []) {
   const names = [...NAMES, ...OPT.filter(have)];
   const src = consts + names.map((n) => grab(html, n)).join("\n") + `\nreturn {${names.join(",")}};`;
   const Papa = have("itemsToCsv") ? loadPapa() : undefined;
-  return new Function("S", "money", "MON", "Papa", "gbp", src)(S, () => ({ cash: 1e9, committed: 0 }), { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 }, Papa, (x) => "£" + (+x).toFixed(2));
+  return new Function("S", "money", "MON", "Papa", "gbp", "today", src)(S, () => ({ cash: 1e9, committed: 0 }), { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 }, Papa, (x) => "£" + (+x).toFixed(2), () => "2026-11-13");
 }
 function loadPapa() { // the copy bundled inside index.html
   const m = html.match(/<script id="papaparse">([\s\S]*?)<\/script>/); assert.ok(m, "Papa Parse is bundled in index.html");
@@ -144,4 +144,72 @@ t("stored data: opening the app keeps items, settings and expenses exactly; olde
   assert.deepEqual(run(JSON.stringify({ rules, items })).expenses, []);
   assert.deepEqual(run(JSON.stringify({ rules, items, expenses: "bad" })).expenses, []);
 });
+
+if (have("csvImportPlan")) {
+  const crypto = await import("node:crypto");
+  const m = html.match(/<script id="papaparse">([\s\S]*?)<\/script>/)[1];
+  assert.match(m, /Permission is hereby granted, free of charge/); assert.match(m, /Copyright \(c\) 2015 Matthew Holt/);
+  const lib = m.slice(m.indexOf("*/\n") + 3).replace(/\n$/, "");
+  assert.equal(crypto.createHash("sha256").update(lib).digest("hex"), "4d5d2d6e3282b66aafaa5e6de8ca3ae06f8d3440111ae99c6a30f6c00cfac33e", "same bytes as the release file");
+  assert.equal(loadPapa().unparse([[1, 2]]), "1,2"); n++; console.log("✓ CSV: Papa Parse is the verified 5.7.0 file (same SHA-256), bundled unchanged with its MIT licence");
+  t("CSV: numbers and dates are read strictly", () => {
+    const A = load();
+    assert.equal(A.csvNum("£1,234.50"), 1234.5); assert.equal(A.csvNum(""), null); assert.ok(Number.isNaN(A.csvNum("-5"))); assert.ok(Number.isNaN(A.csvNum("12abc"))); assert.ok(Number.isNaN(A.csvNum("1e5")));
+    assert.equal(A.csvDate("2026-11-13"), "2026-11-13"); assert.equal(A.csvDate("13/11/2026"), "2026-11-13"); assert.equal(A.csvDate("1/2/2026"), "2026-02-01");
+    assert.equal(A.csvDate(""), ""); assert.equal(A.csvDate("31/02/2026"), null); assert.equal(A.csvDate("2026-13-01"), null); assert.equal(A.csvDate("yesterday"), null);
+  });
+  t("CSV export: spreadsheet formulas can't run; estimated and actual profit in separate columns; watchlist left out", () => {
+    const items = [{ id: 1, name: "=HYPERLINK(\"x\")", status: "Bought", buy: 10, pack: 1, exp: 30, outPost: 3, boughtOn: "2026-11-01" },
+      { id: 2, name: "@SUM(A1)", status: "Sold", buy: 10, pack: 1, soldPrice: 40, fees: 0, outPost: 3 }, { id: 3, name: "Kindle", status: "Considered", buy: 5 }];
+    const A = load({ seller: "private" }, items), P = loadPapa(), rows = P.parse(A.itemsToCsv(items), { header: true }).data;
+    assert.equal(rows.length, 2); assert.equal(rows[0].Name, "'=HYPERLINK(\"x\")"); assert.equal(rows[1].Name, "'@SUM(A1)");
+    assert.equal(rows[0]["Estimated profit"], "16"); assert.equal(rows[0]["Actual profit"], ""); assert.equal(rows[1]["Actual profit"], "26"); assert.equal(rows[1]["Estimated profit"], "");
+    const e = P.parse(A.expensesToCsv([{ id: 9, date: "2026-11-01", desc: "+tape", cat: "Packaging", amount: 3.5 }]), { header: true }).data[0];
+    assert.equal(e.Description, "'+tape"); assert.equal(e.Amount, "3.5");
+  });
+  t("CSV round trip: export then import into the same app adds nothing; into an empty app gives the same items and profit", () => {
+    const items = [{ id: 1, name: "GPU, \"boxed\"", status: "Listed", buy: 100, pack: 1, exp: 150, outPost: 5, other: 7, boughtOn: "2026-10-01" },
+      { id: 2, name: "Phone", status: "Done", buy: 80, pack: 1, soldPrice: 120, fees: 15.76, outPost: 5, refund: 10, feesBack: 1.2, boughtOn: "2026-09-01", soldOn: "2026-09-20" },
+      { id: 3, name: "Lost thing", status: "Written off", buy: 20, pack: 0, recovered: 5 }];
+    const A = load({ seller: "business" }, items), csv = A.itemsToCsv(items);
+    const same = A.csvImportPlan(csv, "items", items, 1000); assert.equal(same.add.length, 0); assert.equal(same.dups.length, 3); assert.equal(same.errors.length, 0);
+    const fresh = A.csvImportPlan(csv, "items", [], 1000); assert.equal(fresh.add.length, 3, JSON.stringify(fresh.errors));
+    for (const [k, it] of items.entries()) { const b = fresh.add[k];
+      for (const f of ["name", "status", "buy", "pack", "exp", "outPost", "other", "soldPrice", "fees", "refund", "feesBack", "recovered", "boughtOn", "soldOn"]) if (it[f] != null) assert.equal(b[f], it[f], `${it.name} ${f}`);
+      close(A.itemProfit(b), A.itemProfit(it), "same profit"); assert.ok(b.id >= 1000); }
+    assert.equal(fresh.add[1].profit, A.itemProfit(items[1]));
+  });
+  t("CSV import: malformed or wrong files are refused safely, bad rows skipped with the line number, nothing overwritten", () => {
+    const existing = [{ id: 5, name: "Switch", status: "Bought", buy: 190, boughtOn: "2026-11-01" }], A = load({}, existing);
+    const before = JSON.stringify(existing);
+    assert.match(A.csvImportPlan("", "items", existing, 1).fatal, /empty/);
+    assert.match(A.csvImportPlan("x".repeat(2e6 + 1), "items", existing, 1).fatal, /too big/);
+    assert.match(A.csvImportPlan("Paid,Status\n10,Bought", "items", existing, 1).fatal, /Name/);
+    assert.match(A.csvImportPlan("\u0000\u0001binary\u0002", "items", existing, 1).fatal, /Name/);
+    assert.match(A.csvImportPlan("Name\n" + "a\n".repeat(5001), "items", [], 1).fatal, /5000/);
+    const p = A.csvImportPlan([
+      "﻿Item,Paid,Status,Bought on,Sale total,Profit,Colour",
+      "Switch,190,Bought,01/11/2026,,999,red",          // duplicate of what's already there (name+date+price)
+      "New lens,£45.00,listed,2026-11-02,,,",            // ok (status any case, £ sign)
+      "Bad price,abc,Bought,,,,",                        // not a number
+      "Bad date,10,Bought,32/13/2026,,,",                // not a date
+      "Odd status,10,Shipped,,,,",                       // unknown status
+      "Sold no price,10,Sold,,,,",                       // sold needs a sale total
+      ",10,Bought,,,,",                                  // no name
+      "New lens,45,Listed,2026-11-02,,,",                // duplicate inside the file
+      "=cmd|' /C calc'!A0,5,Bought,,,,",
+      "\"Broken quote,10,Bought"].join("\n"), "items", existing, 100);   // malformed: an unclosed quote (reported, not added)
+    assert.equal(p.add.length, 2, JSON.stringify(p));
+    assert.equal(p.add[0].name, "New lens"); assert.equal(p.add[0].status, "Listed"); assert.equal(p.add[0].buy, 45); assert.equal(p.add[0].profit, undefined, "profit not read from the file");
+    assert.equal(p.add[1].name, "=cmd|' /C calc'!A0", "kept as plain text (never run)");
+    assert.equal(p.dups.length, 2); assert.equal(p.errors.length, 6, JSON.stringify(p.errors)); assert.deepEqual(p.errors.filter((e) => /laid out/.test(e.msg)).map((e) => e.line), [11], "broken row reported once, on its own line"); assert.ok(p.errors.every((e) => e.line >= 2));
+    assert.deepEqual(p.unknown, ["Colour"]); assert.equal(JSON.stringify(existing), before, "existing data untouched");
+  });
+  t("CSV import: expenses need a real date and an amount above £0; types are matched or set to Other; duplicates skipped", () => {
+    const A = load(), ex = [{ id: 1, date: "2026-11-01", desc: "Tape", cat: "Packaging", amount: 3.5 }];
+    const p = A.csvImportPlan("Date,Description,Category,Amount\n01/11/2026,tape,packaging,3.50\n2026-11-02,Fuel,travel,12\n2026-11-03,Hat,Clothes,5\n2026-11-04,Zero,,0\n,No date,,4\n2026-11-05,Neg,,-2", "expenses", ex, 50);
+    assert.deepEqual(p.add.map((e) => [e.date, e.cat, e.amount]), [["2026-11-02", "Travel", 12], ["2026-11-03", "Other", 5]]);
+    assert.equal(p.dups.length, 1); assert.equal(p.errors.length, 3);
+  });
+}
 console.log(`\n${n} checks passed`);

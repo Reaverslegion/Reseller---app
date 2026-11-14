@@ -113,6 +113,21 @@ const LAYOUT = `JSON.stringify((()=>{const r=e=>e?Math.round(e.getBoundingClient
   body:r(document.body),onb:getComputedStyle(document.getElementById("onb")).display,sheet:document.getElementById("sheet").classList.contains("on"),tab,dpr:devicePixelRatio,
   navPos:getComputedStyle(document.getElementById("nav")).position,fs:getComputedStyle(document.body).fontSize}})())`;
 
+const BA = "Toolkit: Back button";
+// one Back press with full evidence: which Android window had focus, what Android's input system reports, whether the press
+// reached the app (Capacitor's App plugin / the page event) and what the app did; then classified
+const inputFocus = () => { try { return sh("dumpsys input | grep -E 'FocusedApplication|FocusedWindow' | head -2").replace(/\s+/g, " ").trim().slice(0, 200); } catch (e) { return "?"; } };
+// Android 13+ shows a small preview of copied text (system window "ClipboardOverlay"); the first Back closes it, not the app
+const clipShowing = () => { try { return /clipboard/i.test(sh("dumpsys window windows | grep -iE 'Window\\{.*clipboard' | head -3")); } catch (e) { return false; } };
+async function pressBack(label, expect, quiet = false) { await app.eval(DIAG).catch(() => {}); const b = JSON.parse(await app.eval(DIAG)), fw = focusWin(), fi = inputFocus(), kb = app.keyboardShown(), clip = clipShowing();
+  await app.back(); await sleep(800); const a = JSON.parse(await app.eval(DIAG)), fw2 = focusWin();
+  const d = a.hw && b.hw ? [a.hw[0] - b.hw[0], a.hw[1] - b.hw[1], a.hw[2] - b.hw[2]] : [0, 0, 0], good = await expect();
+  const appWin = /flipscout\.MainActivity/.test(fw);
+  const cls = good && d[2] <= 1 ? "OK" : d[0] + d[1] === 0 ? (kb ? "keyboard took the press" : clip ? "ANDROID: its clipboard preview took the press (normal after copying)" : appWin ? "EMULATOR INPUT: press never reached the app (app window had focus)" : "EMULATOR FOCUS: another window had focus") : d[2] === 0 ? "APP: press arrived but no action" : d[2] > 1 ? "APP: one press, two actions" : "APP: wrong screen after Back";
+  if (!(quiet && cls === "OK")) R.add(BA, `${label}: ${cls}`, cls === "OK" || /^ANDROID/.test(cls) ? "PASS" : /^APP/.test(cls) ? "FAIL" : "PARTIALLY TESTED",
+    `plugin +${d[0]}, page +${d[1]}, actions +${d[2]}; tab ${b.tab}→${a.tab}; sheet ${b.on}→${a.on}; picker ${b.pickOpen}→${a.pickOpen}; keyboard ${kb ? "up" : "down"}; clipboard preview ${clip ? "showing" : "not showing"}; window before: ${fw}; after: ${fw2}; input: ${fi}`);
+  return { good, cls, d }; }
+
 // ---------- the phone ----------
 adb("reverse", "tcp:8787", "tcp:8789"); adb("reverse", "tcp:8790", "tcp:8790");
 fs.mkdirSync("results", { recursive: true });
@@ -272,7 +287,11 @@ await T("CSV export and import on the phone", async (step) => {
     const [txt, cnt] = await app.eval(`[document.getElementById("csv_out").value,S.items.filter(i=>STOCK.includes(i.status)).length]`); const L = txt.split(/\r?\n/);
     ok(L.length === cnt + 1 && /Estimated profit,Actual profit$/.test(L[0]), `${L.length} lines for ${cnt} items; header ${L[0]}`); await app.shot("csv export"); });
   await step("Copy puts it on the phone's clipboard", async () => { await sheetBtn("Copy"); await app.waitText("Copied|Select the text", 5000); });
-  await step("Back closes the export", async () => { await app.back(); ok(!(await sheetOpen()), "still open"); });
+  await step("Back closes the export (after Copy, Android's clipboard preview may take the first press)", async () => {
+    const r1 = await pressBack("CSV export: 1st Back", async () => !(await sheetOpen())); if (r1.cls === "OK") return;
+    // a second press is accepted ONLY with evidence: the first never reached the app AND Android's clipboard preview was showing
+    ok(/^ANDROID: its clipboard preview/.test(r1.cls), `the first Back didn't close the export: ${r1.cls}`);
+    const r2 = await pressBack("CSV export: 2nd Back (clipboard preview gone)", async () => !(await sheetOpen())); ok(r2.cls === "OK", r2.cls); });
   let n0;
   await step("pasted file with good rows, a duplicate, bad numbers/dates/status and a broken quote: preview counts are right, nothing added yet", async () => {
     if (!(await sheetOpen() && await app.eval(`!!document.getElementById("ci_t")`))) { if (await sheetOpen()) { await app.back(); await sleep(500); } await app.tap({ text: "Import…" }); await sleep(600); }
@@ -350,17 +369,26 @@ await T("Closing and reopening keeps everything exactly", async (step) => {
 
 await B("Phone Back button on the new screens (10 rounds)", async (step) => {
   const res = { calc: 0, exp: 0, sheet: 0, stock: 0, deal: 0 }, rounds = 10;
-  await step(`${rounds} rounds from Deals: Calculator → Back, Expenses → Back, open sheet → Back, My Stock → Back (to Deals), deal + 'I bought' sheet → Back → Back`, async () => {
+  await step(`${rounds} rounds from Deals: Calculator → Back, Expenses → Back, open sheet → Back, My Stock → Back (to Deals), deal + 'I bought' sheet → Back → Back (every press recorded)`, async () => {
     const fails = []; await tabTo("Deals"); await app.waitFor(`!!document.querySelector(".dcard")`, 15000, "deal cards");
+    // every press goes through pressBack (focus window, input focus, plugin/page/actions); only problems get their own row.
+    // After a failed press the test puts the screen right itself (Cancel / tab) so one failure can't spoil later rounds.
+    const note = (k, what, r) => { if (r.cls === "OK") return true; fails.push(`round ${k + 1}: ${what}: ${r.cls}`); return false; };
     for (let k = 0; k < rounds && timeLeft(); k++) {
-      await toStock(); await section("Calculator"); await app.back(); if (await app.eval(`tab==="stock"&&MS.view==="stock"`)) res.calc++; else fails.push(`round ${k + 1}: Calculator → Back went to ${await app.eval("tab+'/'+MS.view")}`);
-      await toStock(); await section("Expenses"); await app.back(); if (await app.eval(`tab==="stock"&&MS.view==="stock"`)) res.exp++; else fails.push(`round ${k + 1}: Expenses → Back`);
-      await toStock(); const c = (await store()).items.length; await app.tap({ text: "+ Add item" }); await app.waitFor(`document.getElementById("sheet").classList.contains("on")`, 5000, "sheet"); await app.back(); await sleep(500);
-      if (!(await sheetOpen()) && (await app.eval(`tab`)) === "stock" && (await store()).items.length === c) res.sheet++; else { fails.push(`round ${k + 1}: Back on the Add item sheet`); if (await sheetOpen()) { await sheetBtn("Cancel"); await sleep(500); } }
-      await app.back(); if ((await app.eval(`tab`)) === "deals") res.stock++; else fails.push(`round ${k + 1}: My Stock → Back went to ${await app.eval("tab")}`);
+      await toStock(); await section("Calculator");
+      if (note(k, "Calculator → Back", await pressBack(`round ${k + 1}: Calculator → Back`, () => app.eval(`tab==="stock"&&MS.view==="stock"`), true))) res.calc++; else if (await app.eval(`MS.view!=="stock"`)) await section("Stock");
+      await toStock(); await section("Expenses");
+      if (note(k, "Expenses → Back", await pressBack(`round ${k + 1}: Expenses → Back`, () => app.eval(`tab==="stock"&&MS.view==="stock"`), true))) res.exp++; else if (await app.eval(`MS.view!=="stock"`)) await section("Stock");
+      await toStock(); const c = (await store()).items.length; await app.tap({ text: "+ Add item" }); await app.waitFor(`document.getElementById("sheet").classList.contains("on")`, 5000, "sheet");
+      if (note(k, "Add item sheet → Back", await pressBack(`round ${k + 1}: Add item sheet → Back`, async () => !(await sheetOpen()) && (await app.eval(`tab`)) === "stock" && (await store()).items.length === c, true))) res.sheet++;
+      if (await sheetOpen()) { await sheetBtn("Cancel"); await sleep(500); }
+      if (note(k, "My Stock → Back to Deals", await pressBack(`round ${k + 1}: My Stock → Back to Deals`, async () => (await app.eval(`tab`)) === "deals", true))) res.stock++; else if ((await app.eval(`tab`)) !== "deals") await tabTo("Deals");
       await app.waitFor(`!!document.querySelector(".dcard")`, 15000, "deal cards"); await app.tap({ sel: ".dcard", nth: k % 2 }); await app.waitFor(`tab==="deal"`, 10000, "deal page");
-      await app.tap({ text: "I bought this: add to My Stock" }); await sleep(600); await app.back(); await sleep(500); const s1 = !(await sheetOpen()) && (await app.eval(`tab`)) === "deal"; if (await sheetOpen()) { await sheetBtn("Cancel"); await sleep(500); }
-      await app.back(); await sleep(800); const s2 = (await app.eval(`tab`)) === "deals"; if (s1 && s2) res.deal++; else fails.push(`round ${k + 1}: deal sheet Back ${s1 ? "ok" : "FAILED"}, deal page Back ${s2 ? "ok" : "FAILED"}`);
+      await app.tap({ text: "I bought this: add to My Stock" }); await app.waitFor(`document.getElementById("sheet").classList.contains("on")`, 5000, "sheet");
+      const s1 = note(k, "deal 'I bought' sheet → Back", await pressBack(`round ${k + 1}: deal 'I bought' sheet → Back`, async () => !(await sheetOpen()) && (await app.eval(`tab`)) === "deal", true));
+      if (await sheetOpen()) { await sheetBtn("Cancel"); await sleep(500); }
+      const s2 = note(k, "deal page → Back", await pressBack(`round ${k + 1}: deal page → Back`, async () => (await app.eval(`tab`)) === "deals", true)); if (s1 && s2) res.deal++;
+      if ((await app.eval(`tab`)) !== "deals") await tabTo("Deals");
     }
     R.add("Toolkit: Back button", `results: Calculator ${res.calc}/${rounds}, Expenses ${res.exp}/${rounds}, sheet ${res.sheet}/${rounds}, My Stock→Deals ${res.stock}/${rounds}, deal sheet + page ${res.deal}/${rounds}`, fails.length ? "FAIL" : "PASS", fails.slice(0, 6).join(" · "));
     ok(!fails.length, fails.slice(0, 3).join(" · ")); });
@@ -394,18 +422,6 @@ async function saveTiming(step, who) {
 await R.journey(DA, "Saving: how long after a change Android needs before the app is closed (new app)", (step) => saveTiming(step, "new app"), { independent: true });
 
 // ---------- Back across the app (14 Nov fix: plugin listener + page event, paired) ----------
-const BA = "Toolkit: Back button";
-// one Back press with full evidence: which Android window had focus, what Android's input system reports, whether the press
-// reached the app (Capacitor's App plugin / the page event) and what the app did; then classified
-const inputFocus = () => { try { return sh("dumpsys input | grep -E 'FocusedApplication|FocusedWindow' | head -2").replace(/\s+/g, " ").trim().slice(0, 200); } catch (e) { return "?"; } };
-async function pressBack(label, expect) { await app.eval(DIAG).catch(() => {}); const b = JSON.parse(await app.eval(DIAG)), fw = focusWin(), fi = inputFocus(), kb = app.keyboardShown();
-  await app.back(); await sleep(800); const a = JSON.parse(await app.eval(DIAG)), fw2 = focusWin();
-  const d = a.hw && b.hw ? [a.hw[0] - b.hw[0], a.hw[1] - b.hw[1], a.hw[2] - b.hw[2]] : [0, 0, 0], good = await expect();
-  const appWin = /flipscout\.MainActivity/.test(fw);
-  const cls = good && d[2] <= 1 ? "OK" : d[0] + d[1] === 0 ? (kb ? "keyboard took the press" : appWin ? "EMULATOR INPUT: press never reached the app (app window had focus)" : "EMULATOR FOCUS: another window had focus") : d[2] === 0 ? "APP: press arrived but no action" : d[2] > 1 ? "APP: one press, two actions" : "APP: wrong screen after Back";
-  R.add(BA, `${label}: ${cls}`, cls === "OK" ? "PASS" : /^APP/.test(cls) ? "FAIL" : "PARTIALLY TESTED",
-    `plugin +${d[0]}, page +${d[1]}, actions +${d[2]}; tab ${b.tab}→${a.tab}; sheet ${b.on}→${a.on}; picker ${b.pickOpen}→${a.pickOpen}; keyboard ${kb ? "up" : "down"}; window before: ${fw}; after: ${fw2}; input: ${fi}`);
-  return { good, cls, d }; }
 const hw = async () => app.eval(`typeof HWB!=="undefined"?[HWB.p,HWB.d,HWB.n]:[0,0,0]`);
 await R.journey(BA, "Back across the main screens, pickers, the keyboard, quick repeats and leaving the app", async (step) => {
   await step("Deals → Following → My Stock → Settings, then Back ×3 steps back the same way, one action per press", async () => { await reopen(); await tabTo("Following"); await tabTo("My Stock"); await tabTo("Settings");

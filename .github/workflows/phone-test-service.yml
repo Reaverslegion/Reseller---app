@@ -9,7 +9,8 @@ name: Phone test service (separate, test only)
 on:
   push:
     # claude/capacitor-8-upgrade (approved 10 Nov 2026): builds the Capacitor 8 TEST app for the phone test; no emulator check there
-    branches: [testing, claude/capacitor-8-upgrade]
+    # feature/toolkit-stage1 (approved 14 Nov 2026): the same for the reseller toolkit (Stage 1) phone test, and its "remove"
+    branches: [testing, claude/capacitor-8-upgrade, feature/toolkit-stage1]
     paths: [".github/phone-test/request.txt"]
 permissions:
   contents: read
@@ -67,7 +68,7 @@ jobs:
     needs: [decide, standin]
     # testing: after the stand-in build, as before. Capacitor 8 branch: no stand-in or emulator (Android keeps a different package
     # name fully separate); the finished APK itself is checked instead, below
-    if: always() && needs.decide.result == 'success' && needs.decide.outputs.action == 'set-up' && ((github.ref == 'refs/heads/testing' && needs.standin.result == 'success') || github.ref == 'refs/heads/claude/capacitor-8-upgrade')
+    if: always() && needs.decide.result == 'success' && needs.decide.outputs.action == 'set-up' && ((github.ref == 'refs/heads/testing' && needs.standin.result == 'success') || github.ref == 'refs/heads/claude/capacitor-8-upgrade' || github.ref == 'refs/heads/feature/toolkit-stage1')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -254,7 +255,7 @@ jobs:
   remove:
     name: Remove the test service (test resources only)
     needs: [decide]
-    if: github.ref == 'refs/heads/testing' && needs.decide.outputs.action == 'remove'
+    if: (github.ref == 'refs/heads/testing' || github.ref == 'refs/heads/feature/toolkit-stage1') && needs.decide.outputs.action == 'remove'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/setup-node@v4

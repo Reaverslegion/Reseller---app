@@ -16,7 +16,7 @@ const app = new App("screenshots/toolkit"), R = new Results(app, "results/toolki
 // if a sheet is still open from an earlier section (e.g. Back didn't close it), close it with its own Cancel/Close button,
 // as a person would, so one stuck sheet can't stop every later section (the first run's knock-on failures). Counted.
 let UNSTUCK = 0;
-app.beforeJourney = async () => { await CHAOS("normal"); try { if (await app.eval(`document.getElementById("sheet").classList.contains("on")`)) { UNSTUCK++;
+app.beforeJourney = async () => { await CHAOS("normal"); try { await app.eval(TAPLOG).catch(() => {}); if (await app.eval(`document.getElementById("sheet").classList.contains("on")`)) { UNSTUCK++;
   await app.tap({ sel: "#sheet button", text: "Cancel", exact: true }).catch(() => app.tap({ sel: "#sheet button", text: "Close", exact: true })); await sleep(700); } } catch (e) {} };
 app.netQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 20; i++) { let n = 0; try { n = Object.values((await CHAOS("stats")).stats || {}).reduce((a, b) => a + b, 0); } catch (e) { return; }
   if (n === last) { if (++same >= 2) return; } else { same = 0; last = n; } await sleep(700); } };
@@ -34,6 +34,17 @@ app.tap = async (spec, c) => { try { const s = typeof spec === "string" ? { text
         const l=norm(e.innerText||e.value||e.getAttribute("aria-label")||"");if(want&&!(${!!s.exact}?l===want:l.includes(want)))return false;return r.top>innerHeight||r.bottom<0||(r.bottom>tr.top&&r.top<tr.bottom&&r.right>tr.left&&r.left<tr.right)})})()`, c);
     if (hit) await app.waitFor(`getComputedStyle(document.getElementById("toast")).display==="none"`, 8000, "the message to clear"); } } catch (e) {}
   return _tap(spec, c); };
+// close the keyboard WITHOUT tapping the screen (14 Nov): the driver's own way taps a "blank" spot near the top, picked while
+// the keyboard is up and the page is scrolled; the Calculator false failure most likely came from that tap landing on
+// "Expenses" as the keyboard closed. Leave the box (blur); only if the keyboard is still up, press Back once (the keyboard
+// takes that press; checked by "typing in a sheet: Back first hides the keyboard").
+app.hideKeyboard = async () => { const inBox = () => app.eval(`!!document.activeElement&&/INPUT|TEXTAREA/.test(document.activeElement.tagName)`).catch(() => false);
+  if (!(await inBox())) return; await app.eval(`document.activeElement.blur();1`).catch(() => {}); await sleep(700); if (app.keyboardShown()) { await app.key(4); await sleep(700); } };
+// evidence: every click the page receives and every My Stock view change, with times (read back when a step fails)
+const TAPLOG = `(()=>{if(window.__tl)return 1;window.__tl=[];const L=s=>{window.__tl.push(Date.now()%100000+" "+s);if(window.__tl.length>40)window.__tl.shift()};
+  document.addEventListener("click",e=>{const b=e.target.closest("button,a,[onclick],input,summary");L("click "+(b?(b.id||b.innerText||b.getAttribute("aria-label")||b.tagName).trim().slice(0,30):e.target.tagName)+" at "+Math.round(e.clientX)+","+Math.round(e.clientY))},true);
+  if(typeof MS==="object"){let v=MS.view;Object.defineProperty(MS,"view",{get(){return v},set(x){if(x!==v)L("My Stock view "+v+" -> "+x);v=x},configurable:true})}return 1})()`;
+const tapLog = async () => app.eval(`(window.__tl||[]).slice(-12).join(" | ")`).catch(() => "");
 const t0 = Date.now(), LIMIT = 70 * 60e3;   // the whole script stops starting new journeys after 70 minutes
 const timeLeft = () => Date.now() - t0 < LIMIT;
 
@@ -50,7 +61,11 @@ const fmt = (v) => "£" + Math.abs(v).toLocaleString("en-GB", { minimumFractionD
 const sfmt = (v) => (v < 0 ? "−" : "+") + fmt(v);
 const store = () => app.eval(`JSON.parse(localStorage.getItem("resell_helper_v1"))`);
 const storeText = () => app.eval(`localStorage.getItem("resell_helper_v1")`);
-const tabTo = async (label) => { await app.tap({ sel: `#nav button[aria-label="${label}"]` }); await sleep(500); };
+const TABID = { Deals: "deals", Following: "follow", "My Stock": "stock", Settings: "settings" };
+const tabTo = async (label) => { await app.tap({ sel: `#nav button[aria-label="${label}"]` }); await sleep(500);
+  for (let i = 0; i < 6 && (await app.eval("tab").catch(() => "")) !== TABID[label]; i++) await sleep(500);
+  const now = await app.eval("tab").catch(() => "?"); if (now !== TABID[label]) { let fw = "?"; try { fw = sh("dumpsys window | grep -E 'mCurrentFocus'").replace(/\s+/g, " ").trim().slice(0, 140); } catch (e) {}
+    throw new Error(`tapping the "${label}" tab didn't open it (still on ${now}); window with focus: ${fw}; taps the page received: ${await app.eval(`(window.__tl||[]).slice(-5).join(" | ")`).catch(() => "")}`); } };
 const section = async (name) => { await app.tap({ sel: ".ms-seg button", text: name, exact: true }); await sleep(400); };
 const toStock = async () => { await tabTo("My Stock"); if (await app.eval(`MS.view!=="stock"`)) await section("Stock"); };
 const sheetBtn = (text) => app.tap({ sel: "#sheet button", text, exact: true });
@@ -73,7 +88,7 @@ const overflow = () => app.eval(`(()=>{const W=innerWidth+1,o=[...document.query
 // close like a person (Home, then the phone stops the app): Android's web view writes saved data to storage a moment after it
 // changes, so the app is given 8 seconds in the background first (as in tests/android/update.mjs). Force-closing instantly
 // can lose the last change, which no person can do.
-const reopen = async () => { sh("input keyevent KEYCODE_HOME"); await sleep(8000); await app.stop(); await app.launch(); await app.waitFor(`typeof render==="function"&&!!document.getElementById("app")`, 30000, "the app"); await sleep(800); };
+const reopen = async () => { sh("input keyevent KEYCODE_HOME"); await sleep(8000); await app.stop(); await app.launch(); await app.waitFor(`typeof render==="function"&&!!document.getElementById("app")`, 30000, "the app"); await sleep(800); await app.eval(TAPLOG).catch(() => {}); };
 
 // ---------- Back-button and large-text DIAGNOSIS (13 Nov): records where each Back press went ----------
 // onBack calls: how many times the app's own Back handler ran; page events: Android "backbutton" events reaching the page
@@ -152,9 +167,10 @@ await T("App update keeps everything", async (step) => {
 });
 
 await T("Calculator (real typing, awkward pennies)", async (step) => {
-  await step("open My Stock → Calculator", async () => { await toStock(); await section("Calculator"); await app.waitFor(`!!document.getElementById("cl_sell")`, 5000, "calculator"); });
+  await step("open My Stock → Calculator", async () => { await app.eval(TAPLOG); await toStock(); await section("Calculator"); await app.waitFor(`!!document.getElementById("cl_sell")`, 5000, "calculator"); });
   await step("99.99 sale, £33.33 paid, £3.17 postage, £0.49 packaging → profit +£63.00 (Private seller, no fee)", async () => {
-    await app.fill({ sel: "#cl_sell" }, "99.99"); await app.fill({ sel: "#cl_post" }, "3.17"); await app.fill({ sel: "#cl_pack" }, "0.49"); await app.fill({ sel: "#cl_buy" }, "33.33"); await sleep(400);
+    for (const [s, v] of [["#cl_sell", "99.99"], ["#cl_post", "3.17"], ["#cl_pack", "0.49"], ["#cl_buy", "33.33"]]) { try { await app.fill({ sel: s }, v); } catch (e) { throw new Error(`${e.message} · view now ${await app.eval("MS.view")} · taps: ${await tapLog()}`); }
+      const vw = await app.eval("MS.view"); if (vw !== "calc") throw new Error(`after typing into ${s} the screen changed to ${vw} · taps: ${await tapLog()}`); } await sleep(400);
     const c = await app.eval(`document.getElementById("calc_res").innerText`); ok(/Profit[\s\S]*\+£63\.00/.test(c), c.slice(0, 200)); ok(/Most you'd pay in total[\s\S]*£/.test(c), "no 'most you'd pay'"); await app.shot("calculator"); });
   await step("the most you'd pay leaves the £25 minimum profit", async () => { const v = await app.eval(`calcResult(CALC).maxTotal`); ok(v != null && 99.99 - 3.17 - 0.49 - v >= 25 - 0.01, `max ${v}`); });
   await step("'I bought it: add to My Stock' adds exactly what was typed", async () => { await app.tap({ text: "I bought it: add to My Stock" }); await app.waitFor(`!!document.getElementById("it_n")`, 5000, "item sheet");
@@ -240,8 +256,12 @@ await T("Deal page 'I bought this' and the Following list", async (step) => {
   await step("after ticking: added with exactly the deal's total cost and expected sale price", async () => { await app.tap({ sel: "#it_cf" }); await sheetBtn("Add to My Stock"); await app.waitText("Added to My Stock", 8000);
     const i = (await store()).items[0]; ok(i.name === d.title && i.buy === Math.round(d.cost * 100) / 100 && i.exp === d.med && i.status === "Bought", JSON.stringify(i));
     ok(r2(i.expProfit) === r2(d.med - i.outPost - i.buy - i.pack), `expected profit ${i.expProfit}`); await checkFigures("after deal purchase"); });
-  await step("auction deal: the price is left empty for you to type", async () => { await tabTo("Deals"); const k = await app.eval(`(HD.deals||[]).findIndex(x=>x.type==="AUC")`); ok(k >= 0, "no auction");
-    await app.eval(`openDeal(${k});1`); await app.waitFor(`tab==="deal"`, 10000, "deal page"); await app.tap({ text: "I bought this: add to My Stock" }); await sleep(500);
+  await step("auction deal: the price is left empty for you to type", async () => { await tabTo("Deals"); await app.netQuiet(); await sleep(800);
+    // picked by its ID and opened by tapping its own card (the list reloads when Deals opens, so positions can change)
+    const id = await app.eval(`((HD.deals||[]).find(x=>x.type==="AUC")||{}).id||""`); ok(id, "no auction in the test deals");
+    await app.tap({ sel: `.dcard[data-id="${id}"]` }); await app.waitFor(`tab==="deal"`, 10000, "deal page");
+    const got = await app.eval(`({id:DV.id,type:DV.type})`); ok(got.id === id && got.type === "AUC", `opened ${JSON.stringify(got)}, wanted the auction ${id}`);
+    await app.tap({ text: "I bought this: add to My Stock" }); await sleep(500);
     ok((await app.eval(`document.getElementById("it_b").value`)) === "", "auction price filled in"); await sheetBtn("Cancel"); await sleep(500); ok(!(await sheetOpen()), "Cancel didn't close the sheet"); });
   await step("Following list: no purchase button there (so no second, unconfirmed way to record a purchase)", async () => { await tabTo("Following"); await sleep(800);
     const t = await app.eval(`document.getElementById("app").innerText`); ok(!/I bought/i.test(t), "Following shows an 'I bought' button"); ok(await app.eval(`!document.querySelector('#app [onclick^="bought("]')`), "old bought() button on screen"); });
@@ -375,20 +395,34 @@ await R.journey(DA, "Saving: how long after a change Android needs before the ap
 
 // ---------- Back across the app (14 Nov fix: plugin listener + page event, paired) ----------
 const BA = "Toolkit: Back button";
+// one Back press with full evidence: which Android window had focus, what Android's input system reports, whether the press
+// reached the app (Capacitor's App plugin / the page event) and what the app did; then classified
+const inputFocus = () => { try { return sh("dumpsys input | grep -E 'FocusedApplication|FocusedWindow' | head -2").replace(/\s+/g, " ").trim().slice(0, 200); } catch (e) { return "?"; } };
+async function pressBack(label, expect) { await app.eval(DIAG).catch(() => {}); const b = JSON.parse(await app.eval(DIAG)), fw = focusWin(), fi = inputFocus(), kb = app.keyboardShown();
+  await app.back(); await sleep(800); const a = JSON.parse(await app.eval(DIAG)), fw2 = focusWin();
+  const d = a.hw && b.hw ? [a.hw[0] - b.hw[0], a.hw[1] - b.hw[1], a.hw[2] - b.hw[2]] : [0, 0, 0], good = await expect();
+  const appWin = /flipscout\.MainActivity/.test(fw);
+  const cls = good && d[2] <= 1 ? "OK" : d[0] + d[1] === 0 ? (kb ? "keyboard took the press" : appWin ? "EMULATOR INPUT: press never reached the app (app window had focus)" : "EMULATOR FOCUS: another window had focus") : d[2] === 0 ? "APP: press arrived but no action" : d[2] > 1 ? "APP: one press, two actions" : "APP: wrong screen after Back";
+  R.add(BA, `${label}: ${cls}`, cls === "OK" ? "PASS" : /^APP/.test(cls) ? "FAIL" : "PARTIALLY TESTED",
+    `plugin +${d[0]}, page +${d[1]}, actions +${d[2]}; tab ${b.tab}→${a.tab}; sheet ${b.on}→${a.on}; picker ${b.pickOpen}→${a.pickOpen}; keyboard ${kb ? "up" : "down"}; window before: ${fw}; after: ${fw2}; input: ${fi}`);
+  return { good, cls, d }; }
 const hw = async () => app.eval(`typeof HWB!=="undefined"?[HWB.p,HWB.d,HWB.n]:[0,0,0]`);
 await R.journey(BA, "Back across the main screens, pickers, the keyboard, quick repeats and leaving the app", async (step) => {
   await step("Deals → Following → My Stock → Settings, then Back ×3 steps back the same way, one action per press", async () => { await reopen(); await tabTo("Following"); await tabTo("My Stock"); await tabTo("Settings");
-    const seen = []; for (let k = 0; k < 3; k++) { const h0 = await hw(); await app.back(); await sleep(600); const h1 = await hw(); seen.push(`${await app.eval("tab")} (actions +${h1[2] - h0[2]}, plugin +${h1[0] - h0[0]}, page +${h1[1] - h0[1]})`); }
-    R.add(BA, "main screens Back: " + seen.join(" → "), "PASS"); ok(/^stock .*\+1.*→ follow .*\+1.*→ deals .*\+1/.test(seen.join(" → ")) && !/actions \+[02-9]/.test(seen.join(" ")), seen.join(" → ")); });
+    const want = ["stock", "follow", "deals"], res = [];
+    for (const w of want) res.push(await pressBack(`main screens: Back to ${w}`, async () => (await app.eval("tab")) === w));
+    ok(res.every((r) => r.cls === "OK"), res.map((r) => r.cls).join(" · ")); });
   await step("deal page → Back → deals list", async () => { await app.waitFor(`!!document.querySelector(".dcard")`, 20000, "deal cards"); await app.tap({ sel: ".dcard", nth: 0 }); await app.waitFor(`tab==="deal"`, 10000, "deal page");
-    const h0 = await hw(); await app.back(); await sleep(800); const h1 = await hw(); ok((await app.eval("tab")) === "deals" && h1[2] - h0[2] === 1, `tab ${await app.eval("tab")}, actions +${h1[2] - h0[2]}`); });
+    const r = await pressBack("deal page → deals list", async () => (await app.eval("tab")) === "deals"); ok(r.cls === "OK", r.cls); });
   await step("picker open over a sheet: Back closes only the picker, then Back closes the sheet", async () => { await toStock(); await section("Expenses"); await app.tap({ text: "+ Add expense" }); await app.waitFor(`document.getElementById("sheet").classList.contains("on")`, 5000, "sheet");
-    await app.tap({ sel: "#ex_c" }); await app.waitFor(`document.getElementById("pick").style.display==="block"`, 5000, "picker"); await app.back(); await sleep(600);
-    ok(await app.eval(`document.getElementById("pick").style.display!=="block"&&document.getElementById("sheet").classList.contains("on")`), "first Back didn't close just the picker");
-    await app.back(); await sleep(600); ok(!(await sheetOpen()) && (await app.eval(`tab==="stock"`)), "second Back didn't close the sheet"); await section("Stock"); });
+    await app.tap({ sel: "#ex_c" }); await app.waitFor(`document.getElementById("pick").style.display==="block"`, 5000, "picker");
+    const r1 = await pressBack("picker over a sheet: 1st Back closes only the picker", () => app.eval(`document.getElementById("pick").style.display!=="block"&&document.getElementById("sheet").classList.contains("on")`));
+    if (r1.cls !== "OK" && (await app.eval(`document.getElementById("pick").style.display==="block"`))) await app.eval(`pickClose();1`);   // tidy up (counted above) so later steps can run
+    const r2 = await pressBack("picker over a sheet: 2nd Back closes the sheet", async () => !(await sheetOpen()) && (await app.eval(`tab==="stock"`)));
+    if (await sheetOpen()) await sheetBtn("Cancel"); ok(r1.cls === "OK" && r2.cls === "OK", `${r1.cls} · ${r2.cls}`); await section("Stock"); });
   await step("typing in a sheet: Back first hides the keyboard (sheet stays, nothing lost), then Back closes the sheet", async () => { await toStock(); await section("Expenses"); await app.tap({ text: "+ Add expense" });
     await app.waitFor(`document.getElementById("sheet").classList.contains("on")`, 5000, "sheet"); await app.tap({ sel: "#ex_d" }); sh("input text Tape"); await sleep(1200); const kb = app.keyboardShown();
-    if (!kb) throw new Error("EMULATOR LIMIT: the keyboard didn't appear");
+    if (!kb) { await app.eval(`document.activeElement&&document.activeElement.blur();1`); await sheetBtn("Cancel"); await sleep(500); await section("Stock"); throw new Error("EMULATOR LIMIT: the keyboard didn't appear"); }
     await app.back(); await sleep(900); ok(!app.keyboardShown() && await sheetOpen() && (await app.eval(`document.getElementById("ex_d").value`)) === "Tape", "Back with the keyboard up closed more than the keyboard");
     await app.back(); await sleep(700); ok(!(await sheetOpen()), "second Back didn't close the sheet"); ok(!(await store()).expenses.some((e) => e.desc === "Tape" && e.amount === 0), "something saved"); await section("Stock"); });
   await step("two quick Back presses on the Calculator: exactly two steps (Calculator → Stock list → previous screen)", async () => { await tabTo("Deals"); await toStock(); await section("Calculator"); const h0 = await hw();

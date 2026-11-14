@@ -20,7 +20,7 @@ app.beforeJourney = async () => { await CHAOS("normal"); try { if (await app.eva
   await app.tap({ sel: "#sheet button", text: "Cancel", exact: true }).catch(() => app.tap({ sel: "#sheet button", text: "Close", exact: true })); await sleep(700); } } catch (e) {} };
 app.netQuiet = async () => { let last = -1, same = 0; for (let i = 0; i < 20; i++) { let n = 0; try { n = Object.values((await CHAOS("stats")).stats || {}).reduce((a, b) => a + b, 0); } catch (e) { return; }
   if (n === last) { if (++same >= 2) return; } else { same = 0; last = n; } await sleep(700); } };
-const T = (name, fn) => R.journey("Toolkit", name, fn), B = (name, fn) => R.journey("Toolkit: Back button", name, fn);
+const T = (name, fn, opts) => R.journey("Toolkit", name, fn, opts), B = (name, fn) => R.journey("Toolkit: Back button", name, fn);
 const ok = (c, m) => { if (!c) throw new Error(m); };
 // a message at the bottom of the screen (e.g. "Restored." with Undo) can sit over a button for a few seconds, as it would for
 // a person: wait for it to go only when it is actually covering what we're about to tap
@@ -74,18 +74,19 @@ const reopen = async () => { sh("input keyevent KEYCODE_HOME"); await sleep(8000
 // (Capacitor sends one per press). If the press reaches neither, Android delivered it somewhere else (focused window shown).
 const DIAG = `(()=>{if(window.__obN===undefined){window.__obN=0;const o=onBack;onBack=function(){window.__obN++;return o.apply(this,arguments)};window.__pgBack=0;document.addEventListener("backbutton",()=>{window.__pgBack++})}
   const a=document.activeElement,sh=document.getElementById("sheet");return JSON.stringify({tab,sheetOn,on:sh.classList.contains("on"),pick:!!pickOn,active:a?a.tagName+(a.id?"#"+a.id:""):null,ob:window.__obN,pg:window.__pgBack,
-  inputs:sh.querySelectorAll("input,textarea,select").length,sheetH:Math.round(sh.getBoundingClientRect().height),scrollable:sh.scrollHeight>sh.clientHeight+1})})()`;
+  hw:typeof HWB!=="undefined"?[HWB.p,HWB.d,HWB.n]:null,pickOpen:document.getElementById("pick").style.display==="block",inputs:sh.querySelectorAll("input,textarea,select").length,sheetH:Math.round(sh.getBoundingClientRect().height),scrollable:sh.scrollHeight>sh.clientHeight+1})})()`;
 const focusWin = () => { try { return sh("dumpsys window | grep -E 'mCurrentFocus'").replace(/\s+/g, " ").trim().slice(0, 160); } catch (e) { return "?"; } };
 // press Back with a sheet open; record everything; if it didn't close, try a 2nd press, then close it with its own button
 async function backProbe(area, label) { await app.eval(DIAG); await sleep(300);
   const b = JSON.parse(await app.eval(DIAG)), fw = focusWin(), kb = app.keyboardShown(); await app.back(); await sleep(700);
   const a = JSON.parse(await app.eval(DIAG)), closed = !a.on; let second = null, fw2 = "";
+  const hw = b.hw && a.hw ? `; plugin +${a.hw[0] - b.hw[0]}, page +${a.hw[1] - b.hw[1]}, actions +${a.hw[2] - b.hw[2]}` : "", once = !b.hw || !a.hw || a.hw[2] - b.hw[2] === 1;
   if (!closed) { fw2 = focusWin(); await app.back(); await sleep(900); second = !(await app.eval(`document.getElementById("sheet").classList.contains("on")`));
     if (!second) { await app.tap({ sel: "#sheet button", text: "Cancel", exact: true }).catch(() => app.tap({ sel: "#sheet button", text: "Close", exact: true }).catch(() => {})); await sleep(600); } }
-  R.add(area, `${label}: Back closed the sheet`, closed ? "PASS" : "FAIL",
-    `app Back handler ${b.ob}→${a.ob}, page Back events ${b.pg}→${a.pg}; focus ${b.active}; ${b.inputs} boxes; sheet ${b.sheetH}px${b.scrollable ? " scrollable" : ""}; keyboard ${kb ? "up" : "down"}; window: ${fw}` +
+  R.add(area, `${label}: Back closed the sheet${b.hw ? ", one action for one press" : ""}`, closed && once ? "PASS" : "FAIL",
+    `app Back handler ${b.ob}→${a.ob}, page Back events ${b.pg}→${a.pg}${hw}; focus ${b.active}; ${b.inputs} boxes; sheet ${b.sheetH}px${b.scrollable ? " scrollable" : ""}; keyboard ${kb ? "up" : "down"}; window: ${fw}` +
     (closed ? "" : `; after: sheetOn=${a.sheetOn}, window: ${fw2}; 2nd press ${second ? "closed it" : "didn't either"}`));
-  return closed; }
+  return closed && once; }
 const LAYOUT = `JSON.stringify((()=>{const r=e=>e?Math.round(e.getBoundingClientRect().top):null,v=window.visualViewport;return{scrollY:Math.round(scrollY),docH:document.scrollingElement.scrollHeight,
   innerH:innerHeight,vv:v?{offTop:Math.round(v.offsetTop),pageTop:Math.round(v.pageTop),h:Math.round(v.height),scale:v.scale}:null,nav:r(document.getElementById("nav")),app:r(document.getElementById("app")),
   body:r(document.body),onb:getComputedStyle(document.getElementById("onb")).display,sheet:document.getElementById("sheet").classList.contains("on"),tab,dpr:devicePixelRatio,
@@ -351,7 +352,7 @@ await R.journey(DA, "Back on each kind of sheet, 3 times each (new app)", async 
   for (const [label, open] of kinds) await step(`${label}`, async () => { let ok3 = 0;
     for (let k = 0; k < 3; k++) { await open(); await app.waitFor(`document.getElementById("sheet").classList.contains("on")`, 5000, "sheet"); await sleep(400); if (await backProbe(DA, `new app · ${label} · press ${k + 1}`)) ok3++; if (await app.eval(`MS.view!=="stock"`)) await section("Stock"); }
     ok(ok3 === 3, `${ok3} of 3`); });
-});
+}, { independent: true });
 // save() is one synchronous localStorage.setItem (same in both apps). Each check confirms the page can read the change back
 // from localStorage BEFORE the app is killed, so a loss means Android hadn't written it to disk yet (not that save() failed).
 async function saveTiming(step, who) {
@@ -364,16 +365,42 @@ async function saveTiming(step, who) {
     await app.stop(); await app.launch(); await app.waitFor(`typeof S==="object"`, 30000, "the app"); const kept = await app.eval(`S.rules.staleDays===49`); await app.eval(`(()=>{S.rules.staleDays=30;save();return 1})()`); await reopen();
     R.add(DA, `saving (${who}): change, Home, force-close after 1 s: ${kept ? "kept" : "LOST"}`, kept ? "PASS" : "PARTIALLY TESTED", "information only"); });
 }
-await R.journey(DA, "Saving: how long after a change Android needs before the app is closed (new app)", (step) => saveTiming(step, "new app"));
+await R.journey(DA, "Saving: how long after a change Android needs before the app is closed (new app)", (step) => saveTiming(step, "new app"), { independent: true });
+
+// ---------- Back across the app (14 Nov fix: plugin listener + page event, paired) ----------
+const BA = "Toolkit: Back button";
+const hw = async () => app.eval(`typeof HWB!=="undefined"?[HWB.p,HWB.d,HWB.n]:[0,0,0]`);
+await R.journey(BA, "Back across the main screens, pickers, the keyboard, quick repeats and leaving the app", async (step) => {
+  await step("Deals → Following → My Stock → Settings, then Back ×3 steps back the same way, one action per press", async () => { await reopen(); await tabTo("Following"); await tabTo("My Stock"); await tabTo("Settings");
+    const seen = []; for (let k = 0; k < 3; k++) { const h0 = await hw(); await app.back(); await sleep(600); const h1 = await hw(); seen.push(`${await app.eval("tab")} (actions +${h1[2] - h0[2]}, plugin +${h1[0] - h0[0]}, page +${h1[1] - h0[1]})`); }
+    R.add(BA, "main screens Back: " + seen.join(" → "), "PASS"); ok(/^stock .*\+1.*→ follow .*\+1.*→ deals .*\+1/.test(seen.join(" → ")) && !/actions \+[02-9]/.test(seen.join(" ")), seen.join(" → ")); });
+  await step("deal page → Back → deals list", async () => { await app.waitFor(`!!document.querySelector(".dcard")`, 20000, "deal cards"); await app.tap({ sel: ".dcard", nth: 0 }); await app.waitFor(`tab==="deal"`, 10000, "deal page");
+    const h0 = await hw(); await app.back(); await sleep(800); const h1 = await hw(); ok((await app.eval("tab")) === "deals" && h1[2] - h0[2] === 1, `tab ${await app.eval("tab")}, actions +${h1[2] - h0[2]}`); });
+  await step("picker open over a sheet: Back closes only the picker, then Back closes the sheet", async () => { await toStock(); await section("Expenses"); await app.tap({ text: "+ Add expense" }); await app.waitFor(`document.getElementById("sheet").classList.contains("on")`, 5000, "sheet");
+    await app.tap({ sel: "#ex_c" }); await app.waitFor(`document.getElementById("pick").style.display==="block"`, 5000, "picker"); await app.back(); await sleep(600);
+    ok(await app.eval(`document.getElementById("pick").style.display!=="block"&&document.getElementById("sheet").classList.contains("on")`), "first Back didn't close just the picker");
+    await app.back(); await sleep(600); ok(!(await sheetOpen()) && (await app.eval(`tab==="stock"`)), "second Back didn't close the sheet"); await section("Stock"); });
+  await step("typing in a sheet: Back first hides the keyboard (sheet stays, nothing lost), then Back closes the sheet", async () => { await toStock(); await section("Expenses"); await app.tap({ text: "+ Add expense" });
+    await app.waitFor(`document.getElementById("sheet").classList.contains("on")`, 5000, "sheet"); await app.tap({ sel: "#ex_d" }); sh("input text Tape"); await sleep(1200); const kb = app.keyboardShown();
+    if (!kb) throw new Error("EMULATOR LIMIT: the keyboard didn't appear");
+    await app.back(); await sleep(900); ok(!app.keyboardShown() && await sheetOpen() && (await app.eval(`document.getElementById("ex_d").value`)) === "Tape", "Back with the keyboard up closed more than the keyboard");
+    await app.back(); await sleep(700); ok(!(await sheetOpen()), "second Back didn't close the sheet"); ok(!(await store()).expenses.some((e) => e.desc === "Tape" && e.amount === 0), "something saved"); await section("Stock"); });
+  await step("two quick Back presses on the Calculator: exactly two steps (Calculator → Stock list → previous screen)", async () => { await tabTo("Deals"); await toStock(); await section("Calculator"); const h0 = await hw();
+    sh("input keyevent 4 4"); await sleep(1500); const h1 = await hw(), tb = await app.eval("tab");
+    ok(tb === "deals" && h1[2] - h0[2] === 2, `ended on ${tb} with ${h1[2] - h0[2]} actions (plugin +${h1[0] - h0[0]}, page +${h1[1] - h0[1]})`); });
+  await step("nothing left to go back to: Back leaves the app (Android's normal exit), once; reopening keeps everything", async () => { const before = await storeText(); await reopen(); const h0 = await hw();
+    await app.back(); await sleep(2500); const fw = focusWin(); ok(!/flipscout/i.test(fw), `still in the app after Back on the Deals list: ${fw}`);
+    await app.launch(); await app.waitFor(`typeof S==="object"`, 30000, "the app"); await sleep(800); ok((await storeText()) === before, "saved data changed after leaving and reopening"); R.add(BA, `leaving the app: window afterwards ${fw}`, "PASS"); });
+}, { independent: true });
 
 for (const theme of ["Dark", "Light"]) await T(`${theme} mode on the new screens`, async (step) => {
   await step(`switch to ${theme} in Settings`, async () => { await tabTo("Settings"); await app.tap({ text: theme, exact: true }); await app.waitFor(`document.documentElement.dataset.theme===${JSON.stringify(theme.toLowerCase())}`, 5000, "theme"); });
   for (const s of ["Stock", "Expenses", "Calculator"]) await step(`My Stock › ${s}: shown, nothing off the screen`, async () => { await toStock(); await section(s); await sleep(500); const o = await overflow(); await app.shot(`${theme} ${s}`);
     ok(!o.o.length && !o.nav.length, JSON.stringify(o)); });
-});
+}, { independent: true });
 
 let BASEFS = 0;
-for (const scale of [1.3, 2.0]) await T(`Phone text size ×${scale}`, async (step) => {
+for (const scale of [1.0, 1.3, 2.0]) await T(`Phone text size ×${scale}`, async (step) => {
   if (!timeLeft()) throw new Error("not run: time limit");
   await step(`phone font size ×${scale}, app reopened; the text really gets bigger`, async () => { sh(`settings put system font_scale ${scale}`); await reopen();
     const L0 = await app.eval(LAYOUT); await app.shot(`text ${scale} straight after opening`); R.add(DA, `layout at text ×${scale} straight after opening (new app)`, "PASS", L0);
@@ -385,7 +412,7 @@ for (const scale of [1.3, 2.0]) await T(`Phone text size ×${scale}`, async (ste
   for (const s of ["Stock", "Expenses", "Calculator"]) await step(`${s}: nothing off the screen; all four tab labels fit`, async () => { await section(s); await sleep(500); const o = await overflow(); await app.shot(`text ${scale} ${s}`); ok(!o.o.length && !o.nav.length, JSON.stringify(o)); });
   await step("return/refund sheet fits", async () => { await section("Stock"); await cardTap("Nintendo Switch", ".ms-more"); await sheetBtn("Buyer return or refund…"); await sleep(600); const o = await overflow(); await app.shot(`text ${scale} return sheet`); await app.back(); ok(!o.o.length, JSON.stringify(o)); });
   sh("settings put system font_scale 1.0");
-});
+}, { independent: true });
 sh("settings put system font_scale 1.0");
 
 // LAST (it replaces this branch's app): the current testing app (2.0.133 code), same data, same checks, to tell new from existing
@@ -397,7 +424,7 @@ await R.journey(DA, "Comparison: the current testing app (2.0.133 code), same ch
   await saveTiming(step, "old app");
   await step("old app at text ×2: layout straight after opening", async () => { sh("settings put system font_scale 2.0"); await reopen(); const L = await app.eval(LAYOUT); await app.shot("old app text 2 straight after opening");
     R.add(DA, "layout at text ×2 straight after opening (old app)", "PASS", L); sh("settings put system font_scale 1.0"); await reopen(); });
-});
+}, { independent: true });
 sh("settings put system font_scale 1.0");
 R.add(DA, `sheets left open by an earlier section and closed with their own button: ${UNSTUCK}`, UNSTUCK ? "PARTIALLY TESTED" : "PASS", "0 = no knock-on effects");
 

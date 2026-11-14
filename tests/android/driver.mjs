@@ -241,7 +241,8 @@ export class Results {
     let failed = null, steps = 0, passed = 0;
     const step = async (what, f) => {
       steps++;
-      if (failed) { this.rows.push({ area, name: `${name} › ${what}`, status: "NOT TESTED", detail: "not run because an earlier step failed" }); return; }
+      // opts.independent: the steps don't depend on each other, so a failed step doesn't stop the rest of the journey
+      if (failed && !opts.independent) { this.rows.push({ area, name: `${name} › ${what}`, status: "NOT TESTED", detail: "not run because an earlier step failed" }); return; }
       let note = "";
       try { await app.unblock();
         try { await f(); }

@@ -170,7 +170,7 @@ nav button.on .pill{background:var(--navacbg)}
 .ms-big{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;padding-top:10px;border-top:1px solid var(--bd)}.ms-big>div{flex:1 1 140px}
 .ms-confirm{background:var(--warnbg);border-radius:10px;padding:10px 12px;margin-top:10px;font-size:14px}
 .ms-confirm label{display:flex;gap:10px;align-items:center;margin:8px 0 0;font-weight:650;color:var(--tx)}.ms-confirm input{width:22px;height:22px;margin:0;flex:none}
-nav button{min-width:0;white-space:nowrap}
+nav button{min-width:0;white-space:nowrap}#nav button{font-size:calc(12px * var(--navk,1))}
 .ms-seg{flex-wrap:wrap}.ms-seg button{flex:1 1 auto;min-width:0;white-space:normal}
 .seg{display:flex;background:var(--card2);border-radius:12px;padding:4px;border:1px solid var(--bd)}
 .seg button{flex:1;margin:0;background:none;color:var(--mu);min-height:42px;padding:8px}
@@ -592,7 +592,14 @@ function onBack(){
   if(tab!=="deals"){tab="deals";render();return true}
   return false;
 }
-try{const A=window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.App;if(A)A.addListener("backButton",()=>{if(!onBack())A.exitApp()})}catch(e){}
+// Capacitor sends every press of the phone's Back button twice: to the App plugin listener and as the page's "backbutton"
+// event. On the emulator the plugin listener can stop being called while the page event still arrives (diagnosis 14 Nov),
+// so both are listened to. They are PAIRED, not timed: a source acts only if it isn't behind the other, so each physical
+// press runs onBack() exactly once whichever arrives first, if only one arrives, and even for quick repeated presses.
+const HWB={p:0,d:0,n:0};
+function hwBack(src){const me=src==="p"?"p":"d",other=me==="p"?"d":"p",act=HWB[me]>=HWB[other];HWB[me]++;if(!act)return;HWB.n++;
+  if(!onBack()){const A=window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.App;if(A)A.exitApp()}}
+try{const A=window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.App;if(A){A.addListener("backButton",()=>hwBack("p"));document.addEventListener("backbutton",()=>hwBack("d"))}}catch(e){}
 
 function applyTheme(){
   const t=S.set.theme;if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;else delete document.documentElement.dataset.theme;
@@ -814,8 +821,10 @@ const NEXT={Bought:["Listed","Mark as listed"],Listed:["Sold","Mark as sold"],So
    so their profit is unchanged. */
 /* with large Android text sizes four tab labels may not fit: shrink the bottom-bar labels just enough (icons and spoken
    names are unchanged); does nothing at normal sizes */
-function fitNav(){const bs=[...document.querySelectorAll("#nav button")];if(!bs.length)return;bs.forEach(b=>b.style.fontSize="");
-  for(let g=0;g<14&&bs.some(b=>b.scrollWidth>b.clientWidth+1);g++)bs.forEach(b=>{b.style.fontSize=parseFloat(getComputedStyle(b).fontSize)*0.92+"px"})}
+// shrink the tab labels until they fit, as a fraction of their normal 12px (never by reading the current size: Android's
+// large-text setting is applied on top of whatever is set, so reading and re-setting it made the labels grow at 200%)
+function fitNav(){const n=$("nav"),bs=[...n.querySelectorAll("button")];if(!bs.length)return;let k=1;n.style.setProperty("--navk","1");
+  for(let g=0;g<14&&bs.some(b=>b.scrollWidth>b.clientWidth+1);g++){k*=0.92;n.style.setProperty("--navk",k.toFixed(3))}}
 addEventListener("resize",()=>{try{fitNav()}catch(e){}});
 let MS={view:"stock"},CALC={sell:"",low:"",sp:"",post:"",pack:"",buy:"",ship:"",bpf:null,name:""};
 const isSold=i=>i.soldPrice!=null&&i.soldPrice!=="";

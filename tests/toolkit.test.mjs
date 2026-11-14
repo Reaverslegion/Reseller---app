@@ -212,4 +212,25 @@ if (have("csvImportPlan")) {
     assert.equal(p.dups.length, 1); assert.equal(p.errors.length, 3);
   });
 }
+
+t("phone Back: one press = exactly one onBack(), whether the App plugin, the page event or both arrive, in any order", () => {
+  const src = grab(html, "HWB") + grab(html, "hwBack") + "\nreturn {HWB, hwBack};";
+  const make = (back = () => true) => { const st = { calls: 0, exits: 0 }; const win = { Capacitor: { Plugins: { App: { exitApp: () => st.exits++ } } } };
+    const A = new Function("onBack", "window", src)(() => { st.calls++; return back(); }, win); return { ...A, st }; };
+  const press = (A, order) => { for (const s of order) A.hwBack(s); };
+  for (const order of [["p", "d"], ["d", "p"], ["p"], ["d"]]) { const A = make(); for (let k = 0; k < 7; k++) press(A, order); assert.equal(A.st.calls, 7, `order ${order}`); }
+  // plugin stops after 3 presses (page event still arrives), later resumes: still one action per press
+  const B = make(); for (let k = 0; k < 3; k++) press(B, ["p", "d"]); for (let k = 0; k < 5; k++) press(B, ["d"]); for (let k = 0; k < 4; k++) press(B, ["p", "d"]); assert.equal(B.st.calls, 12, "stop and resume");
+  // the page event stops instead
+  const C = make(); for (let k = 0; k < 2; k++) press(C, ["d", "p"]); for (let k = 0; k < 6; k++) press(C, ["p"]); assert.equal(C.st.calls, 8, "page event stops");
+  // nothing left to go back to: Android's normal exit, once per press, never twice
+  const D = make(() => false); press(D, ["p", "d"]); assert.equal(D.st.exits, 1, "one exit"); assert.equal(D.st.calls, 1);
+  // the same behaviour as before when only the plugin listener exists (old code: if(!onBack())exitApp())
+  const E = make(() => false); press(E, ["p"]); assert.equal(E.st.exits, 1);
+});
+t("200% text: the tab-label shrink never reads the current text size (Android's large text is applied on top)", () => {
+  const f = grab(html, "fitNav"); assert.ok(!/getComputedStyle|fontSize/.test(f), "fitNav reads or sets fontSize directly");
+  assert.match(f, /--navk/); assert.match(html, /#nav button\{font-size:calc\(12px \* var\(--navk,1\)\)\}/);
+  assert.match(html, /nav button\{flex:1;[^}]*font-size:12px/, "normal label size is still 12px");
+});
 console.log(`\n${n} checks passed`);

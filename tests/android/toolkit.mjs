@@ -422,6 +422,11 @@ for (const scale of [1.0, 1.3, 2.0]) await T(`Phone text size ×${scale}`, async
     R.add(DA, `text ×${scale} › ${s}: tab label ${v.labelPx}px (scale ${v.k}), tab bar bottom ${v.navBottom} of ${v.h}`, "PASS");
     ok(!o.o.length && !o.nav.length, JSON.stringify(o)); ok(!v.seg.length, "switcher text outside its button: " + v.seg.join(", "));
     ok(v.navBottom <= v.h + 1 && v.labelPx >= 9, `tab labels not readable or off screen: ${JSON.stringify(v)}`); });
+  await step("Deals: tab labels readable, not clipped, and on screen", async () => { await tabTo("Deals"); await sleep(600); await app.shot(`text ${scale} Deals`);
+    const v = await app.eval(`(()=>{const n=document.getElementById("nav"),nb=n.getBoundingClientRect(),rg=document.createRange();const clip=[...n.querySelectorAll("button")].filter(b=>b.scrollWidth>b.clientWidth+1).map(b=>b.getAttribute("aria-label"));
+      return{k:n.style.getPropertyValue("--navk")||"1",labelPx:parseFloat(getComputedStyle(n.querySelector("button")).fontSize),navBottom:Math.round(nb.bottom),h:innerHeight,clip}})()`);
+    R.add(DA, `text ×${scale} › Deals: tab label ${v.labelPx}px (scale ${v.k}), tab bar bottom ${v.navBottom} of ${v.h}`, "PASS");
+    ok(!v.clip.length && v.navBottom <= v.h + 1 && v.labelPx >= 9, JSON.stringify(v)); await toStock(); });
   await step("return/refund sheet fits", async () => { await section("Stock"); await cardTap("Nintendo Switch", ".ms-more"); await sheetBtn("Buyer return or refund…"); await sleep(600); const o = await overflow(); await app.shot(`text ${scale} return sheet`); await app.back(); ok(!o.o.length, JSON.stringify(o)); });
   sh("settings put system font_scale 1.0");
 }, { independent: true });

@@ -456,6 +456,9 @@ for (const scale of [1.0, 1.3, 2.0]) await T(`Phone text size ×${scale}`, async
     R.add(DA, `text ×${scale} › ${s}: tab label ${v.labelPx}px (scale ${v.k}), tab bar bottom ${v.navBottom} of ${v.h}`, "PASS");
     ok(!o.o.length && !o.nav.length, JSON.stringify(o)); ok(!v.seg.length, "switcher text outside its button: " + v.seg.join(", "));
     ok(v.navBottom <= v.h + 1 && v.labelPx >= 9, `tab labels not readable or off screen: ${JSON.stringify(v)}`); });
+  await step("Calculator: type a sale price and price paid; the keyboard closes and the screen stays on Calculator", async () => { await toStock(); await section("Calculator");
+    for (const [s, v] of [["#cl_sell", "120"], ["#cl_buy", "60"]]) { await app.fill({ sel: s }, v); const vw = await app.eval("MS.view"); if (vw !== "calc") throw new Error(`after typing into ${s} the screen changed to ${vw} · taps: ${await tapLog()}`); }
+    ok(!app.keyboardShown(), "keyboard still up"); ok(/Profit/.test(await app.eval(`document.getElementById("calc_res").innerText`)), "no result shown"); await app.shot(`text ${scale} calculator typed`); });
   await step("Deals: tab labels readable, not clipped, and on screen", async () => { await tabTo("Deals"); await sleep(600); await app.shot(`text ${scale} Deals`);
     const v = await app.eval(`(()=>{const n=document.getElementById("nav"),nb=n.getBoundingClientRect(),rg=document.createRange();const clip=[...n.querySelectorAll("button")].filter(b=>b.scrollWidth>b.clientWidth+1).map(b=>b.getAttribute("aria-label"));
       return{k:n.style.getPropertyValue("--navk")||"1",labelPx:parseFloat(getComputedStyle(n.querySelector("button")).fontSize),navBottom:Math.round(nb.bottom),h:innerHeight,clip}})()`);

@@ -352,15 +352,19 @@ await R.journey(DA, "Back on each kind of sheet, 3 times each (new app)", async 
     for (let k = 0; k < 3; k++) { await open(); await app.waitFor(`document.getElementById("sheet").classList.contains("on")`, 5000, "sheet"); await sleep(400); if (await backProbe(DA, `new app · ${label} · press ${k + 1}`)) ok3++; if (await app.eval(`MS.view!=="stock"`)) await section("Stock"); }
     ok(ok3 === 3, `${ok3} of 3`); });
 });
-await R.journey(DA, "Saving: how long after a change Android needs before the app is closed (new app)", async (step) => {
-  for (const d of [0, 1, 2, 4]) await step(`change, wait ${d} s, force-close (no Home): change kept?`, async () => { const v = 40 + d;
-    await app.eval(`(()=>{S.rules.staleDays=${v};save();return 1})()`); await sleep(d * 1000); await app.stop(); await app.launch(); await app.waitFor(`typeof S==="object"`, 30000, "the app");
+// save() is one synchronous localStorage.setItem (same in both apps). Each check confirms the page can read the change back
+// from localStorage BEFORE the app is killed, so a loss means Android hadn't written it to disk yet (not that save() failed).
+async function saveTiming(step, who) {
+  for (const d of [0, 1, 2, 4]) await step(`${who}: change, wait ${d} s, force-close (no Home): change kept?`, async () => { const v = 40 + d;
+    const conf = await app.eval(`(()=>{S.rules.staleDays=${v};save();return JSON.parse(localStorage.getItem("resell_helper_v1")).rules.staleDays===${v}})()`);
+    await sleep(d * 1000); await app.stop(); await app.launch(); await app.waitFor(`typeof S==="object"`, 30000, "the app");
     const kept = await app.eval(`S.rules.staleDays===${v}`); await app.eval(`(()=>{S.rules.staleDays=30;save();return 1})()`); await reopen();
-    R.add(DA, `saving: change kept after ${d} s then force-close: ${kept ? "yes" : "NO"}`, kept ? "PASS" : "PARTIALLY TESTED", "information only"); });
-  await step("change, Home straight away, force-close after 1 s: change kept?", async () => { await app.eval(`(()=>{S.rules.staleDays=49;save();return 1})()`); sh("input keyevent KEYCODE_HOME"); await sleep(1000);
+    R.add(DA, `saving (${who}): stored before closing ${conf ? "yes" : "NO"}; kept after ${d} s then force-close: ${kept ? "yes" : "NO"}`, kept ? "PASS" : "PARTIALLY TESTED", "information only"); });
+  await step(`${who}: change, Home straight away, force-close after 1 s: change kept?`, async () => { await app.eval(`(()=>{S.rules.staleDays=49;save();return 1})()`); sh("input keyevent KEYCODE_HOME"); await sleep(1000);
     await app.stop(); await app.launch(); await app.waitFor(`typeof S==="object"`, 30000, "the app"); const kept = await app.eval(`S.rules.staleDays===49`); await app.eval(`(()=>{S.rules.staleDays=30;save();return 1})()`); await reopen();
-    R.add(DA, `saving: change, Home, force-close after 1 s: ${kept ? "kept" : "LOST"}`, kept ? "PASS" : "PARTIALLY TESTED", "information only"); });
-});
+    R.add(DA, `saving (${who}): change, Home, force-close after 1 s: ${kept ? "kept" : "LOST"}`, kept ? "PASS" : "PARTIALLY TESTED", "information only"); });
+}
+await R.journey(DA, "Saving: how long after a change Android needs before the app is closed (new app)", (step) => saveTiming(step, "new app"));
 
 for (const theme of ["Dark", "Light"]) await T(`${theme} mode on the new screens`, async (step) => {
   await step(`switch to ${theme} in Settings`, async () => { await tabTo("Settings"); await app.tap({ text: theme, exact: true }); await app.waitFor(`document.documentElement.dataset.theme===${JSON.stringify(theme.toLowerCase())}`, 5000, "theme"); });
@@ -390,6 +394,7 @@ await R.journey(DA, "Comparison: the current testing app (2.0.133 code), same ch
   for (const [label, js] of [["simple test sheet (no boxes)", `openSheet('<h2>Test</h2><div class="btns"><button onclick="closeSheet()">Close</button></div>');1`], ["empty item sheet (typing boxes, tall)", `itemSheet(0);1`]])
     await step(`old app · ${label}: Back ×3`, async () => { let n = 0; for (let k = 0; k < 3; k++) { await app.eval(js); await app.waitFor(`document.getElementById("sheet").classList.contains("on")`, 5000, "sheet"); await sleep(400);
       if (await backProbe(DA, `old app · ${label} · press ${k + 1}`)) n++; } ok(n === 3, `${n} of 3`); });
+  await saveTiming(step, "old app");
   await step("old app at text ×2: layout straight after opening", async () => { sh("settings put system font_scale 2.0"); await reopen(); const L = await app.eval(LAYOUT); await app.shot("old app text 2 straight after opening");
     R.add(DA, "layout at text ×2 straight after opening (old app)", "PASS", L); sh("settings put system font_scale 1.0"); await reopen(); });
 });

@@ -25,8 +25,14 @@ const ok = (c, m) => { if (!c) throw new Error(m); };
 // a message at the bottom of the screen (e.g. "Restored." with Undo) can sit over a button for a few seconds, as it would for
 // a person: wait for it to go only when it is actually covering what we're about to tap
 const _tap = app.tap.bind(app);
-app.tap = async (spec, c) => { try { const p = await app.locate(typeof spec === "string" ? { text: spec } : spec, c);
-  if (p && p.covered && /toast|tmsg|tbtn/i.test(String(p.covered))) await app.waitFor(`getComputedStyle(document.getElementById("toast")).display==="none"`, 8000, "the message to clear"); } catch (e) {}
+// (14 Nov) a target off the screen counts as possibly covered (scrolling may bring it under the message). This check only LOOKS at the screen: it never calls the driver's locate(), which may swipe to scroll and, on a
+// tall sheet at 200% text, a swipe pressed a button by itself (the "refund sheet" false failure).
+app.tap = async (spec, c) => { try { const s = typeof spec === "string" ? { text: spec } : spec;
+  if (s.text !== "Undo") { const hit = await app.eval(`(()=>{const T=document.getElementById("toast");if(!T||getComputedStyle(T).display==="none")return false;const tr=T.getBoundingClientRect();
+      const norm=x=>String(x||"").replace(/\\s+/g," ").trim().toLowerCase(),want=norm(${JSON.stringify(s.text || "")});
+      return [...document.querySelectorAll(${JSON.stringify(s.sel || "button,a,input,select,textarea,summary,[onclick],[role=button]")})].some(e=>{const r=e.getBoundingClientRect();if(!r.width||!r.height)return false;
+        const l=norm(e.innerText||e.value||e.getAttribute("aria-label")||"");if(want&&!(${!!s.exact}?l===want:l.includes(want)))return false;return r.top>innerHeight||r.bottom<0||(r.bottom>tr.top&&r.top<tr.bottom&&r.right>tr.left&&r.left<tr.right)})})()`, c);
+    if (hit) await app.waitFor(`getComputedStyle(document.getElementById("toast")).display==="none"`, 8000, "the message to clear"); } } catch (e) {}
   return _tap(spec, c); };
 const t0 = Date.now(), LIMIT = 70 * 60e3;   // the whole script stops starting new journeys after 70 minutes
 const timeLeft = () => Date.now() - t0 < LIMIT;
@@ -409,7 +415,13 @@ for (const scale of [1.0, 1.3, 2.0]) await T(`Phone text size ×${scale}`, async
     const px = () => app.eval(`parseFloat(getComputedStyle(document.querySelector(".ms-sum .ms-v")||document.body).fontSize)`);
     if (!BASEFS) { sh("settings put system font_scale 1.0"); await reopen(); await toStock(); BASEFS = await px(); sh(`settings put system font_scale ${scale}`); await reopen(); await toStock(); }
     const fs_ = await px(); R.add("Toolkit", `text size ×${scale}: figure text ${fs_}px (normal size ${BASEFS}px)`, "PASS"); ok(fs_ >= BASEFS * (scale - 0.15), `text didn't get bigger: ${fs_}px vs ${BASEFS}px at normal size`); });
-  for (const s of ["Stock", "Expenses", "Calculator"]) await step(`${s}: nothing off the screen; all four tab labels fit`, async () => { await section(s); await sleep(500); const o = await overflow(); await app.shot(`text ${scale} ${s}`); ok(!o.o.length && !o.nav.length, JSON.stringify(o)); });
+  for (const s of ["Stock", "Expenses", "Calculator"]) await step(`${s}: nothing off the screen; switcher and tab labels fit and are readable`, async () => { await section(s); await sleep(500); const o = await overflow(); await app.shot(`text ${scale} ${s}`);
+    const v = await app.eval(`(()=>{const n=document.getElementById("nav"),nb=n.getBoundingClientRect(),rg=document.createRange(),inB=b=>{rg.selectNodeContents(b);const t=rg.getBoundingClientRect(),r=b.getBoundingClientRect();return t.left>=r.left-1&&t.right<=r.right+1};
+      return{k:n.style.getPropertyValue("--navk")||"1",labelPx:parseFloat(getComputedStyle(n.querySelector("button")).fontSize),navBottom:Math.round(nb.bottom),h:innerHeight,
+        seg:[...document.querySelectorAll(".ms-seg button")].filter(b=>!inB(b)).map(b=>b.innerText.replace(/\\n/g,"/"))}})()`);
+    R.add(DA, `text ×${scale} › ${s}: tab label ${v.labelPx}px (scale ${v.k}), tab bar bottom ${v.navBottom} of ${v.h}`, "PASS");
+    ok(!o.o.length && !o.nav.length, JSON.stringify(o)); ok(!v.seg.length, "switcher text outside its button: " + v.seg.join(", "));
+    ok(v.navBottom <= v.h + 1 && v.labelPx >= 9, `tab labels not readable or off screen: ${JSON.stringify(v)}`); });
   await step("return/refund sheet fits", async () => { await section("Stock"); await cardTap("Nintendo Switch", ".ms-more"); await sheetBtn("Buyer return or refund…"); await sleep(600); const o = await overflow(); await app.shot(`text ${scale} return sheet`); await app.back(); ok(!o.o.length, JSON.stringify(o)); });
   sh("settings put system font_scale 1.0");
 }, { independent: true });
